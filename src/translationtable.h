@@ -18,6 +18,9 @@ public:
     QPair<char, QString> next();
     QPair<char, QString> prev();
     void reset();
+    void setItem(uint8_t key, const QString& value);
+    void removeItem(uint8_t key);
+    void clearItems();
     uint32_t generateTable(QString input, QString value);
     uint32_t size();
     static QString escapeNonPrintable(QByteArray src);

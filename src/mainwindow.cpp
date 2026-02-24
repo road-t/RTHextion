@@ -77,7 +77,7 @@ void MainWindow::open()
 
 void MainWindow::revert()
 {
-    auto msg = QMessageBox(QMessageBox::Warning, nullptr, tr("Are you sure want to load last saved version and lose all the changes?"), QMessageBox::Yes | QMessageBox::Cancel, this);
+    QMessageBox msg(QMessageBox::Warning, nullptr, tr("Are you sure want to load last saved version and lose all the changes?"), QMessageBox::Yes | QMessageBox::Cancel, this);
     auto result = msg.exec();
 
     if (result == QMessageBox::Yes)
@@ -277,7 +277,7 @@ void MainWindow::findPointers()
     if (found)
         showPointersAct->setEnabled(true);
 
-    auto msg = QMessageBox(QMessageBox::Information, nullptr, tr("Pointers found: %1").arg(found), QMessageBox::Ok, this);
+    QMessageBox msg(QMessageBox::Information, nullptr, tr("Pointers found: %1").arg(found), QMessageBox::Ok, this);
     msg.exec();
 }
 

@@ -17,43 +17,43 @@ TranslationTable::TranslationTable(QString fileName) : TranslationTable()
 
     if (inputFile.open(QIODevice::ReadOnly))
     {
-       QTextStream in(&inputFile);
+        QTextStream in(&inputFile);
 
-       while (!in.atEnd())
-       {
-          auto line = in.readLine().split('=');
+        while (!in.atEnd())
+        {
+            auto line = in.readLine().split('=');
 
-          // skip weird lines
-          if (line.size() == 2)
-          {
-              bool success;
+            // skip weird lines
+            if (line.size() == 2)
+            {
+                bool success;
 
-              auto val = line[0].toUInt(&success, 16);
+                auto val = line[0].toUInt(&success, 16);
 
-              if (success)
-              {
-                  encodeTable.insert(val, line[1]);
-                  decodeTable[line[1]] = val;
-              }
-          }
-       }
+                if (success)
+                {
+                    encodeTable.insert(val, line[1]);
+                    decodeTable[line[1]] = val;
+                }
+            }
+        }
 
-       inputFile.close();
+        inputFile.close();
 
-       // fill empty bytes in decode table with precompiled byte sequences
-       for (uint16_t i = 0; i < 0x100; i++)
-       {
-           if (!encodeTable.contains(i))
-           {
-               auto btSequence = QString("{%1}").arg(i, 2, 16, QChar('0'));
+        // fill empty bytes in decode table with precompiled byte sequences
+        for (uint16_t i = 0; i < 0x100; i++)
+        {
+            if (!encodeTable.contains(i))
+            {
+                auto btSequence = QString("{%1}").arg(i, 2, 16, QChar('0'));
 
-               decodeTable[btSequence] = i;
+                decodeTable[btSequence] = i;
 
-               // for hex sequences that contain letters we'd better add uppercased version
-               if (i > 0x9F || (i & 0xF) > 9)
-                   decodeTable[btSequence.toUpper()] = i;
-           }
-       }
+                // for hex sequences that contain letters we'd better add uppercased version
+                if (i > 0x9F || (i & 0xF) > 9)
+                    decodeTable[btSequence.toUpper()] = i;
+            }
+        }
     }
 }
 
@@ -98,7 +98,23 @@ QString TranslationTable::encode(QByteArray src, bool keepCodes)
 QString TranslationTable::encodeSymbol(const char symbol, bool keepCode)
 {
     if (encodeTable.contains(static_cast<uint8_t>(symbol)))
-        return encodeTable.value(static_cast<uint8_t>(symbol));
+    {
+        QString code = encodeTable.value(static_cast<uint8_t>(symbol));
+
+        // Если code начинается с '\' и далее идет hex
+        if (keepCode && code.length() > 1 && code[0] == '\\')
+        {
+            bool ok = false;
+
+            int hexVal = code.mid(1).toInt(&ok, 16);
+            if (ok && hexVal >= 0 && hexVal <= 0xFF)
+                return QString(QChar(hexVal));
+            else
+                return code;
+        }
+        else
+            return code;
+    }
     else
         return keepCode ? charToHex(symbol) : "#";
 }
@@ -121,7 +137,7 @@ QString TranslationTable::charToHex(const char symbol)
     return QString("{%1}").arg(QString::number(static_cast<uint8_t>(symbol), 16), 2, '0').toUpper();
 }
 
-QMap<char, QString>* TranslationTable::getItems()
+QMap<char, QString> *TranslationTable::getItems()
 {
     return &encodeTable;
 }
@@ -152,52 +168,77 @@ void TranslationTable::reset()
     it = encodeTable.begin();
 }
 
+void TranslationTable::setItem(uint8_t key, const QString &value)
+{
+    // Remove old decode entry for this key
+    if (encodeTable.contains(key))
+        decodeTable.remove(encodeTable.value(key));
+
+    encodeTable[key] = value;
+    decodeTable[value] = key;
+}
+
+void TranslationTable::removeItem(uint8_t key)
+{
+    if (encodeTable.contains(key))
+    {
+        decodeTable.remove(encodeTable.value(key));
+        encodeTable.remove(key);
+    }
+}
+
+void TranslationTable::clearItems()
+{
+    encodeTable.clear();
+    decodeTable.clear();
+}
+
 uint32_t TranslationTable::generateTable(QString input, QString value)
 {
-   static const auto ucRE = QRegularExpression("([A-Z]+)");
-   static const auto lcRE = QRegularExpression("([a-z]+)");
-   static const auto dRE = QRegularExpression("([0-9]+)");
+    static const auto ucRE = QRegularExpression("([A-Z]+)");
+    static const auto lcRE = QRegularExpression("([a-z]+)");
+    static const auto dRE = QRegularExpression("([0-9]+)");
 
-   auto capitals = value.indexOf(ucRE, 0);
-   auto lowerCased = value.indexOf(lcRE, 0);
-   auto digits = value.indexOf(dRE, 0);
+    auto capitals = value.indexOf(ucRE, 0);
+    auto lowerCased = value.indexOf(lcRE, 0);
+    auto digits = value.indexOf(dRE, 0);
 
-   encodeTable.clear();
+    encodeTable.clear();
 
-   if (capitals != -1)
-   {
-       uint8_t capitalsDistanceToASCII = input[capitals].toLatin1() - value[capitals].toLatin1();
+    if (capitals != -1)
+    {
+        uint8_t capitalsDistanceToASCII = input[capitals].toLatin1() - value[capitals].toLatin1();
 
-       for (uint8_t c = ('A' + capitalsDistanceToASCII); c <= 'Z' + capitalsDistanceToASCII; c++)
-       {
-           encodeTable.insert(c, QChar::fromLatin1(c - capitalsDistanceToASCII));
-       }
-   }
+        for (uint8_t c = ('A' + capitalsDistanceToASCII); c <= 'Z' + capitalsDistanceToASCII; c++)
+        {
+            encodeTable.insert(c, QChar::fromLatin1(c - capitalsDistanceToASCII));
+        }
+    }
 
-   if (lowerCased != -1)
-   {
-       int16_t lcDistanceToASCII = input[lowerCased].toLatin1() - value[lowerCased].toLatin1();
+    if (lowerCased != -1)
+    {
+        int16_t lcDistanceToASCII = input[lowerCased].toLatin1() - value[lowerCased].toLatin1();
 
-       for (char c = ('a' + lcDistanceToASCII); c <= 'z' + lcDistanceToASCII; c++)
-       {
-           encodeTable.insert(c, QChar::fromLatin1(c - lcDistanceToASCII));
-       }
-   }
+        for (char c = ('a' + lcDistanceToASCII); c <= 'z' + lcDistanceToASCII; c++)
+        {
+            encodeTable.insert(c, QChar::fromLatin1(c - lcDistanceToASCII));
+        }
+    }
 
-   if (digits != -1)
-   {
-       int16_t digitsDistanceToASCII = input[digits].toLatin1() - value[digits].toLatin1();
+    if (digits != -1)
+    {
+        int16_t digitsDistanceToASCII = input[digits].toLatin1() - value[digits].toLatin1();
 
-       for (char c = ('0' + digitsDistanceToASCII); c <= '9' + digitsDistanceToASCII; c++)
-       {
-           encodeTable.insert(c, QChar::fromLatin1(c - digitsDistanceToASCII));
-       }
-   }
+        for (char c = ('0' + digitsDistanceToASCII); c <= '9' + digitsDistanceToASCII; c++)
+        {
+            encodeTable.insert(c, QChar::fromLatin1(c - digitsDistanceToASCII));
+        }
+    }
 
-   for (auto it = encodeTable.begin(); it != encodeTable.end(); it++)
-   {
-       qDebug() << QString::number(it.key(), 16) << ": " << encodeTable.value(it.key());
-   }
+    for (auto it = encodeTable.begin(); it != encodeTable.end(); it++)
+    {
+        qDebug() << QString::number(it.key(), 16) << ": " << encodeTable.value(it.key());
+    }
 
     return encodeTable.size();
 }

@@ -17,11 +17,18 @@ public:
     explicit TableEditDialog(TranslationTable** tb, QWidget *parent = nullptr);
     ~TableEditDialog();
 
+private slots:
+    void on_pbAdd_clicked();
+    void on_pbRemove_clicked();
+    void on_pbClear_clicked();
+    void accept() override;
+
 private:
-    void showEvent(QShowEvent *ev);
+    void showEvent(QShowEvent *ev) override;
+    void addRow(uint8_t hex, const QString &value);
+
     Ui::TableEditDialog *ui;
     TranslationTable** _tb = nullptr;
-    QVector<QTableWidgetItem> items;
 };
 
 #endif // TABLEEDITDIALOG_H
