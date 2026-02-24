@@ -369,7 +369,7 @@ public:
 
     qint64 getPointerOfsset(qint64 dataOffset);
 
-    qint64 findPointers(bool bigEndian = false, bool searchBefore = true, bool searchAfter = false, const char* firstPrintable = nullptr, const char* lastPrintable = nullptr, char stopChar = 0);
+    qint64 findPointers(bool bigEndian = false, bool searchBefore = true, bool searchAfter = false, const char *firstPrintable = nullptr, const char *lastPrintable = nullptr, char stopChar = 0, bool excludeSelection = false);
 
     void setHexCaps(const bool isCaps);
     bool hexCaps();

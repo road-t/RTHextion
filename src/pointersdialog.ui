@@ -6,15 +6,15 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>768</width>
-    <height>483</height>
+    <width>540</width>
+    <height>966</height>
    </rect>
   </property>
   <property name="windowTitle">
    <string>Find pointers</string>
   </property>
   <property name="modal">
-   <bool>true</bool>
+   <bool>false</bool>
   </property>
   <layout class="QGridLayout" name="gridLayout">
    <item row="0" column="0">
@@ -34,7 +34,7 @@
         <bool>false</bool>
        </property>
        <property name="selectionMode">
-        <enum>QAbstractItemView::SingleSelection</enum>
+        <enum>QAbstractItemView::ExtendedSelection</enum>
        </property>
        <property name="selectionBehavior">
         <enum>QAbstractItemView::SelectRows</enum>
@@ -48,57 +48,9 @@
       </widget>
      </item>
      <item>
-      <layout class="QGridLayout" name="gridLayout_2">
-       <property name="sizeConstraint">
-        <enum>QLayout::SetFixedSize</enum>
-       </property>
-       <item row="0" column="2">
-        <widget class="QRadioButton" name="rbBoth">
-         <property name="toolTip">
-          <string>Search in the whole file</string>
-         </property>
-         <property name="text">
-          <string>Whole file</string>
-         </property>
-         <property name="checked">
-          <bool>false</bool>
-         </property>
-         <attribute name="buttonGroup">
-          <string notr="true">bgSearchDir</string>
-         </attribute>
-        </widget>
-       </item>
-       <item row="0" column="0">
-        <widget class="QRadioButton" name="rbBefore">
-         <property name="toolTip">
-          <string>Search only before selection</string>
-         </property>
-         <property name="text">
-          <string>Before</string>
-         </property>
-         <property name="checked">
-          <bool>true</bool>
-         </property>
-         <attribute name="buttonGroup">
-          <string notr="true">bgSearchDir</string>
-         </attribute>
-        </widget>
-       </item>
-       <item row="0" column="1">
-        <widget class="QRadioButton" name="rbAfter">
-         <property name="toolTip">
-          <string>Search only after selection</string>
-         </property>
-         <property name="text">
-          <string>After</string>
-         </property>
-         <attribute name="buttonGroup">
-          <string notr="true">bgSearchDir</string>
-         </attribute>
-        </widget>
-       </item>
-       <item row="0" column="3">
-        <spacer name="horizontalSpacer">
+      <layout class="QHBoxLayout" name="pointerEditLayout">
+       <item>
+        <spacer name="horizontalSpacer_5">
          <property name="orientation">
           <enum>Qt::Horizontal</enum>
          </property>
@@ -113,134 +65,437 @@
          </property>
         </spacer>
        </item>
-      </layout>
-     </item>
-     <item>
-      <layout class="QHBoxLayout" name="horizontalLayout">
        <item>
-        <widget class="QRadioButton" name="rbLE">
+        <widget class="QPushButton" name="btnAddPointer">
          <property name="text">
-          <string>Little-endian</string>
+          <string>Add pointer</string>
          </property>
-         <property name="checked">
-          <bool>true</bool>
-         </property>
-         <attribute name="buttonGroup">
-          <string notr="true">bgEndianness</string>
-         </attribute>
         </widget>
        </item>
        <item>
-        <widget class="QRadioButton" name="rbBE">
+        <widget class="QPushButton" name="btnDeletePointer">
          <property name="text">
-          <string>Big-endian</string>
+          <string>Delete pointer</string>
          </property>
-         <attribute name="buttonGroup">
-          <string notr="true">bgEndianness</string>
-         </attribute>
         </widget>
        </item>
        <item>
-        <spacer name="horizontalSpacer_2">
-         <property name="orientation">
-          <enum>Qt::Horizontal</enum>
-         </property>
-         <property name="sizeHint" stdset="0">
-          <size>
-           <width>40</width>
-           <height>20</height>
-          </size>
-         </property>
-        </spacer>
-       </item>
-      </layout>
-     </item>
-     <item>
-      <layout class="QHBoxLayout" name="horizontalLayout_3">
-       <item>
-        <widget class="QCheckBox" name="cbOptimize">
-         <property name="toolTip">
-          <string>Increases speed search for text pointers</string>
-         </property>
+        <widget class="QPushButton" name="btnCleanAll">
          <property name="text">
-          <string>Optimize for text</string>
-         </property>
-         <property name="checked">
-          <bool>true</bool>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <spacer name="horizontalSpacer_4">
-         <property name="orientation">
-          <enum>Qt::Horizontal</enum>
-         </property>
-         <property name="sizeHint" stdset="0">
-          <size>
-           <width>40</width>
-           <height>20</height>
-          </size>
-         </property>
-        </spacer>
-       </item>
-       <item>
-        <widget class="QComboBox" name="cbRangeStart">
-         <property name="maximumSize">
-          <size>
-           <width>80</width>
-           <height>16777215</height>
-          </size>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QLabel" name="lbMinus">
-         <property name="text">
-          <string>-</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QComboBox" name="cbRangeEnd">
-         <property name="maximumSize">
-          <size>
-           <width>80</width>
-           <height>16777215</height>
-          </size>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QLabel" name="lbFirstChar">
-         <property name="text">
-          <string>Pritable characters range</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QComboBox" name="cbStopChar"/>
-       </item>
-       <item>
-        <widget class="QLabel" name="lbStopChar">
-         <property name="text">
-          <string>Stop character</string>
+          <string>Clean all</string>
          </property>
         </widget>
        </item>
       </layout>
      </item>
      <item>
-      <widget class="QDialogButtonBox" name="bbControls">
-       <property name="orientation">
-        <enum>Qt::Horizontal</enum>
+      <layout class="QHBoxLayout" name="rangeWhereLayout">
+       <item>
+        <widget class="QGroupBox" name="gbRange">
+         <property name="title">
+          <string>Range</string>
+         </property>
+         <layout class="QHBoxLayout" name="manualRangeLayout">
+          <item>
+           <widget class="QLineEdit" name="leRangeBegin">
+            <property name="inputMask">
+             <string>hhhhh</string>
+            </property>
+            <property name="maxLength">
+             <number>5</number>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="lbRangeDash">
+            <property name="text">
+             <string>&#8211;</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLineEdit" name="leRangeEnd">
+            <property name="inputMask">
+             <string>hhhhh</string>
+            </property>
+            <property name="maxLength">
+             <number>5</number>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="rangeStretch">
+            <property name="orientation">
+             <enum>Qt::Horizontal</enum>
+            </property>
+            <property name="sizeType">
+             <enum>QSizePolicy::Expanding</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>40</width>
+              <height>20</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QGroupBox" name="gbWhere">
+       <property name="title">
+        <string>Where</string>
        </property>
-       <property name="standardButtons">
-        <set>QDialogButtonBox::Close|QDialogButtonBox::Ok|QDialogButtonBox::Reset</set>
+       <layout class="QGridLayout" name="gridLayout_2">
+        <property name="sizeConstraint">
+         <enum>QLayout::SetFixedSize</enum>
+        </property>
+        <item row="0" column="0">
+         <widget class="QRadioButton" name="rbBefore">
+          <property name="toolTip">
+           <string>Search only before selection</string>
+          </property>
+          <property name="text">
+           <string>before selection</string>
+          </property>
+          <property name="checked">
+           <bool>true</bool>
+          </property>
+          <attribute name="buttonGroup">
+           <string notr="true">bgSearchDir</string>
+          </attribute>
+         </widget>
+        </item>
+        <item row="0" column="1">
+         <widget class="QRadioButton" name="rbAfter">
+          <property name="toolTip">
+           <string>Search only after selection</string>
+          </property>
+          <property name="text">
+           <string>after selection</string>
+          </property>
+          <attribute name="buttonGroup">
+           <string notr="true">bgSearchDir</string>
+          </attribute>
+         </widget>
+        </item>
+        <item row="0" column="2">
+         <widget class="QRadioButton" name="rbBoth">
+          <property name="toolTip">
+           <string>Search in the whole file</string>
+          </property>
+          <property name="text">
+           <string>whole file</string>
+          </property>
+          <attribute name="buttonGroup">
+           <string notr="true">bgSearchDir</string>
+          </attribute>
+         </widget>
+        </item>
+        <item row="0" column="3">
+         <spacer name="horizontalSpacer">
+          <property name="orientation">
+           <enum>Qt::Horizontal</enum>
+          </property>
+          <property name="sizeType">
+           <enum>QSizePolicy::MinimumExpanding</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>20</width>
+            <height>20</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+        <item row="1" column="0" colspan="4">
+         <widget class="QCheckBox" name="cbExcludeSelection">
+          <property name="text">
+           <string>Exclude selected area</string>
+          </property>
+          <property name="checked">
+           <bool>false</bool>
+          </property>
+         </widget>
+        </item>
+       </layout>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item>
+      <layout class="QHBoxLayout" name="byteOrderPointerSizeLayout">
+       <item>
+        <widget class="QGroupBox" name="gbByteOrder">
+         <property name="title">
+          <string>Byte order</string>
+         </property>
+         <layout class="QHBoxLayout" name="byteOrderLayout">
+          <item>
+           <widget class="QRadioButton" name="rbLE">
+            <property name="text">
+             <string>Little-endian</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+            <attribute name="buttonGroup">
+             <string notr="true">bgEndianness</string>
+            </attribute>
+           </widget>
+          </item>
+          <item>
+           <widget class="QRadioButton" name="rbBE">
+            <property name="text">
+             <string>Big-endian</string>
+            </property>
+            <attribute name="buttonGroup">
+             <string notr="true">bgEndianness</string>
+            </attribute>
+           </widget>
+          </item>
+          <item>
+           <spacer name="horizontalSpacer_2">
+            <property name="orientation">
+             <enum>Qt::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>40</width>
+              <height>20</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QGroupBox" name="gbPointerSize">
+         <property name="title">
+          <string>Pointer size</string>
+         </property>
+         <layout class="QHBoxLayout" name="pointerSizeLayout">
+          <item>
+           <widget class="QRadioButton" name="rb2Byte">
+            <property name="text">
+             <string>2-byte</string>
+            </property>
+            <attribute name="buttonGroup">
+             <string notr="true">bgPointerSize</string>
+            </attribute>
+           </widget>
+          </item>
+          <item>
+           <widget class="QRadioButton" name="rb3Byte">
+            <property name="text">
+             <string>3-byte</string>
+            </property>
+            <attribute name="buttonGroup">
+             <string notr="true">bgPointerSize</string>
+            </attribute>
+           </widget>
+          </item>
+          <item>
+           <widget class="QRadioButton" name="rb4Byte">
+            <property name="text">
+             <string>4-byte</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+            <attribute name="buttonGroup">
+             <string notr="true">bgPointerSize</string>
+            </attribute>
+           </widget>
+          </item>
+          <item>
+           <spacer name="horizontalSpacer_3">
+            <property name="orientation">
+             <enum>Qt::Horizontal</enum>
+            </property>
+            <property name="sizeType">
+             <enum>QSizePolicy::Expanding</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>40</width>
+              <height>20</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+         </layout>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item>
+      <widget class="QGroupBox" name="gbTextOptimization">
+       <property name="title">
+        <string>Text optimization</string>
        </property>
-       <property name="centerButtons">
-        <bool>false</bool>
-       </property>
+       <layout class="QHBoxLayout" name="horizontalLayout_3">
+        <item>
+         <widget class="QCheckBox" name="cbOptimize">
+          <property name="toolTip">
+           <string>Increases speed search for text pointers</string>
+          </property>
+          <property name="text">
+           <string>optimize for text</string>
+          </property>
+          <property name="checked">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <spacer name="horizontalSpacer_4">
+          <property name="orientation">
+           <enum>Qt::Horizontal</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>40</width>
+            <height>20</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+        <item>
+         <widget class="QComboBox" name="cbRangeStart">
+          <property name="maximumSize">
+           <size>
+            <width>80</width>
+            <height>16777215</height>
+           </size>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="lbMinus">
+          <property name="text">
+           <string>-</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QComboBox" name="cbRangeEnd">
+          <property name="maximumSize">
+           <size>
+            <width>80</width>
+            <height>16777215</height>
+           </size>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="lbFirstChar">
+          <property name="text">
+           <string>Printable characters range</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QComboBox" name="cbStopChar"/>
+        </item>
+        <item>
+         <widget class="QLabel" name="lbStopChar">
+          <property name="text">
+           <string>Stop character</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
       </widget>
+     </item>
+     <item>
+      <layout class="QHBoxLayout" name="buttonLayout">
+       <item>
+        <widget class="QPushButton" name="btnStop">
+         <property name="enabled">
+          <bool>false</bool>
+         </property>
+         <property name="text">
+          <string>Stop</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="buttonSpacer">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+         <property name="sizeType">
+          <enum>QSizePolicy::Expanding</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>40</width>
+           <height>20</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+       <item>
+        <widget class="QDialogButtonBox" name="bbControls">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+         <property name="standardButtons">
+          <set>QDialogButtonBox::Close|QDialogButtonBox::Ok</set>
+         </property>
+         <property name="centerButtons">
+          <bool>false</bool>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item>
+      <layout class="QHBoxLayout" name="progressLayout">
+       <property name="leftMargin">
+        <number>0</number>
+       </property>
+       <property name="topMargin">
+        <number>0</number>
+       </property>
+       <property name="rightMargin">
+        <number>0</number>
+       </property>
+       <property name="bottomMargin">
+        <number>0</number>
+       </property>
+       <property name="spacing">
+        <number>0</number>
+       </property>
+       <item>
+        <widget class="QProgressBar" name="progressBar">
+         <property name="visible">
+          <bool>false</bool>
+         </property>
+         <property name="minimumSize">
+          <size>
+           <width>0</width>
+           <height>80</height>
+          </size>
+         </property>
+         <property name="minimum">
+          <number>0</number>
+         </property>
+         <property name="maximum">
+          <number>100</number>
+         </property>
+         <property name="value">
+          <number>0</number>
+         </property>
+         <property name="textVisible">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+      </layout>
      </item>
     </layout>
    </item>
@@ -251,5 +506,6 @@
  <buttongroups>
   <buttongroup name="bgSearchDir"/>
   <buttongroup name="bgEndianness"/>
+  <buttongroup name="bgPointerSize"/>
  </buttongroups>
 </ui>

@@ -3,6 +3,8 @@
 
 #include <QAbstractTableModel>
 #include <QMap>
+#include <QVector>
+#include <QPair>
 
 // TODO: get rid of this dependency
 class QHexEdit;
@@ -22,25 +24,34 @@ public:
     int columnCount(const QModelIndex &parent = QModelIndex()) const;
     QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const;
     QVariant headerData(int section, Qt::Orientation orientation, int role = Qt::DisplayRole) const;
+    void sort(int column, Qt::SortOrder order = Qt::AscendingOrder);
     bool setSectionNames(QStringList names);
 
     void clear();
 
     bool dropPointer(const qint64 ptrOffset);
+    quint32 dropPointersBatch(const QVector<qint64> &ptrOffsets);
     quint32 dropOffset(qint64 offset);
     quint32 addPointer(qint64 ptrOffset, qint64 offset);
+    quint32 addPointersBatch(const QVector<QPair<qint64, qint64>> &pointers);
     QList<qint64> getPointers(qint64 dataOffset);
     qint64 getOffset(qint64 ptrOffset);
     QString getOffsetText(qint64 offset) const;
     bool isPointer(qint64 offset);
     bool hasOffset(qint64 offset);
     bool empty();
+    void refreshData();
 
     void setHexEdit(QHexEdit *hexEdit);
 
 private:
+    void rebuildRowOrder();
+
     QMap<qint64, qint64> _pointers;
     QMap<qint64, quint32> _offsets;
+    QVector<qint64> _rowOrder;
+    int _sortColumn = 0;
+    Qt::SortOrder _sortOrder = Qt::AscendingOrder;
 
     QStringList sectionName;
     QHexEdit *_hexEdit = nullptr;

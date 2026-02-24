@@ -1614,84 +1614,106 @@ void QHexEdit::clearPointers()
     viewport()->update();
 }
 
-qint64 QHexEdit::findPointers(bool bigEndian, bool searchBefore, bool searchAfter, const char *firstPrintable, const char *lastPrintable, char stopChar)
+/**
+ * The function searches for pointers in the specified direction(s) and adds them to the pointers list.
+ *
+ * @param bigEndian - whether to search for big-endian or little-endian pointers
+ * @param searchBefore - whether to search for pointers before the current selection
+ * @param searchAfter - whether to search for pointers after the current selection
+ * @param firstPrintable - if set, only consider values as pointers if the previous byte is not a printable character (between firstPrintable and lastPrintable)
+ * @param lastPrintable - see firstPrintable
+ * @param stopChar - if set, skip offsets where the first byte is equal to stopChar
+ * @param excludeSelection - whether to exclude the current selection from search (only applicable if both searchBefore and searchAfter are true)
+ * @return number of pointers found
+ */
+qint64 QHexEdit::findPointers(bool bigEndian, bool searchBefore, bool searchAfter, const char *firstPrintable, const char *lastPrintable, char stopChar, bool excludeSelection)
 {
-    auto buf = data().constData();
+    const QByteArray fileData = data();
+    const char *buf = fileData.constData();
+    const qint64 fileSize = fileData.size();
 
-    uint64_t found = 0, its = 0;
-
-    union off
+    qint64 selBegin = _bSelectionBegin;
+    qint64 selEnd = _bSelectionEnd;
+    if (selBegin >= selEnd)
     {
-        uint32_t i;
-        char b[4];
+        selBegin = 0;
+        selEnd = fileSize;
+    }
+
+    struct SearchRange
+    {
+        qint64 start;
+        qint64 end;
     };
 
-    off offset;
+    QVector<SearchRange> ranges;
+    auto addRange = [&ranges](qint64 start, qint64 end)
+    {
+        if (end - start >= 4)
+        {
+            SearchRange range;
+            range.start = start;
+            range.end = end;
+            ranges.push_back(range);
+        }
+    };
 
-    QProgressDialog progress(this->parentWidget());
-    progress.setMinimum(_bSelectionBegin);
-    progress.setMaximum(_bSelectionEnd);
-    progress.setAutoClose(true);
-    progress.setWindowModality(Qt::WindowModal);
-    progress.setCancelButtonText(tr("Stop"));
-    progress.setLabelText(tr("Searching for pointers..."));
+    if (searchBefore)
+        addRange(0, selBegin);
+    if (searchAfter)
+        addRange(selEnd, fileSize);
+    if (searchBefore && searchAfter && !excludeSelection)
+    {
+        ranges.clear();
+        addRange(0, fileSize);
+    }
 
-    progress.show();
+    auto isCandidateOffset = [&](quint32 value) -> bool
+    {
+        if (value < static_cast<quint32>(selBegin) || value >= static_cast<quint32>(selEnd))
+            return false;
 
+        if (!firstPrintable || !lastPrintable)
+            return true;
+
+        if (value == 0)
+            return true;
+
+        const char prevChar = buf[value - 1];
+        return !(prevChar >= *firstPrintable && prevChar <= *lastPrintable);
+    };
+
+    qint64 found = 0;
+    qint64 its = 0;
     QElapsedTimer timer;
-
     timer.start();
 
-    uint64_t ptrsStart = searchBefore ? 0 : _bSelectionEnd;
-    uint64_t ptrsEnd = searchAfter ? _chunks->size() : _bSelectionBegin;
-
-    // if nothing selected
-    if (_bSelectionBegin >= _bSelectionEnd)
+    for (const auto &range : ranges)
     {
-        // TODO : show prompt
-        _bSelectionBegin = 0;
-        _bSelectionEnd = _chunks->size();
-    }
-
-    for (offset.i = _bSelectionBegin; offset.i < _bSelectionEnd; offset.i++) // pointers
-    {
-        // skip areas that start with printable characters to increase search speed
-        if (firstPrintable && lastPrintable && offset.i)
+        for (qint64 j = range.start; j <= range.end - 4; ++j)
         {
-            auto prevChar = buf[offset.i - 1];
-
-            if (prevChar >= *firstPrintable && prevChar <= *lastPrintable)
-                continue;
-        }
-
-        for (uint64_t j = ptrsStart; j < ptrsEnd; j++) // data
-        {
-            bool match = (bigEndian) ?
-                    (buf[j] == offset.b[3] && buf[j + 1] == offset.b[2] && buf[j + 2] == offset.b[1] && buf[j + 3] == offset.b[0]) :
-                    *(reinterpret_cast<const uint32_t*>(&buf[j])) == offset.i;
-
-            if (match)
+            if (stopChar && buf[j] == stopChar)
             {
-                _pointers.addPointer(j, offset.i);
-                found++;
+                ++its;
+                continue;
             }
 
-            its++;
-        }
+            quint32 value;
+            const uchar *ptr = reinterpret_cast<const uchar *>(buf + j);
+            if (bigEndian)
+                value = qFromBigEndian<quint32>(ptr);
+            else
+                value = qFromLittleEndian<quint32>(ptr);
 
-        if (progress.wasCanceled())
-            break;
-
-        if (offset.i % 100 == 0)
-        {
-            progress.setValue(offset.i);
-            progress.setLabelText(tr("Searching for pointers...\nFound: %1").arg(found));
+            if (isCandidateOffset(value))
+            {
+                _pointers.addPointer(j, value);
+                ++found;
+            }
+            ++its;
         }
     }
 
-    progress.close();
-
     qDebug() << found << " pointers found in " << its << " iterations, " << timer.elapsed() << "ms elapsed";
-
     return found;
 }

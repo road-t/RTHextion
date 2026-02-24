@@ -15,9 +15,11 @@
 
 QT_BEGIN_NAMESPACE
 class QAction;
+class QActionGroup;
 class QMenu;
 class QUndoStack;
 class QLabel;
+class QPushButton;
 class QDragEnterEvent;
 class QDropEvent;
 QT_END_NAMESPACE
@@ -58,10 +60,14 @@ private slots:
     void findPointers();
     void switchShowPointers();
     void switchUseTable();
+    void updateScriptMenuState();
     void editTable();
+    void onTranslationTableChanged();
     void dumpScript();
     void insertScript();
     void updateEndiannes();
+    void toggleOverwriteMode();
+    void setLanguage();
 
 public:
     void loadFile(const QString &fileName);
@@ -89,6 +95,8 @@ private:
     QMenu *tableMenu;
     QMenu *pointersMenu;
     QMenu *scriptMenu;
+    QMenu *viewMenu;
+    QMenu *languageMenu;
     QMenu *helpMenu;
 
     QToolBar *fileToolBar;
@@ -121,8 +129,11 @@ private:
     QAction *pointersSettingsAct;
 
     QAction *aboutAct;
-    QAction *aboutQtAct;
     QAction *optionsAct;
+    QAction *langEnglishAct;
+    QAction *langGermanAct;
+    QAction *langRussianAct;
+    QActionGroup *languageGroup;
 
     QAction *findAct;
     QAction *findNextAct;
@@ -141,7 +152,8 @@ private:
     QLabel *lbValue;
     QLabel *lbSelection;
     QLabel *lbAddress, *lbAddressName;
-    QLabel *lbOverwriteMode, *lbOverwriteModeName;
+    QPushButton *lbOverwriteMode;
+    QLabel *lbOverwriteModeName;
     QLabel *lbSize, *lbSizeName;
 };
 

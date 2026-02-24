@@ -1,5 +1,6 @@
 #include "PointerListModel.h"
 #include "qhexedit/qhexedit.h"
+#include <algorithm>
 
 PointerListModel::PointerListModel(QObject *parent) : QAbstractTableModel(parent)
 {
@@ -8,7 +9,7 @@ PointerListModel::PointerListModel(QObject *parent) : QAbstractTableModel(parent
 int PointerListModel::rowCount(const QModelIndex &parent) const
 {
     Q_UNUSED(parent)
-    return _pointers.count();
+    return _rowOrder.count();
 }
 
 int PointerListModel::columnCount(const QModelIndex &parent) const
@@ -37,23 +38,43 @@ bool PointerListModel::setSectionNames(QStringList names)
 
 QVariant PointerListModel::data(const QModelIndex &index, int role) const
 {
-    if (_pointers.empty() || !index.isValid() || index.row() >= _pointers.count() || role != Qt::DisplayRole)
+    if (_pointers.empty() || !index.isValid() || index.row() >= _rowOrder.count())
         return QVariant();
 
-    auto it = _pointers.cbegin();
+    const qint64 key = _rowOrder[index.row()];
+    const qint64 value = _pointers.value(key);
 
-    std::advance(it, index.row());
+    if (role == KeyRole)
+        return key;
+
+    if (role == ValueRole)
+        return value;
+
+    if (role != Qt::DisplayRole)
+        return QVariant();
 
     if (index.column() == 0)
-        return QString::number(it.key(), 16).toUpper();
+        return QString::number(key, 16).toUpper();
 
     if (index.column() == 1)
-        return QString::number(it.value(), 16).toUpper();
+        return QString::number(value, 16).toUpper();
 
     if (index.column() == 2)
-        return getOffsetText(it.value());
+        return getOffsetText(value);
 
     return QVariant();
+}
+
+void PointerListModel::sort(int column, Qt::SortOrder order)
+{
+    if (column < 0 || column > 1)
+        return;
+
+    beginResetModel();
+    _sortColumn = column;
+    _sortOrder = order;
+    rebuildRowOrder();
+    endResetModel();
 }
 
 bool PointerListModel::empty()
@@ -61,40 +82,117 @@ bool PointerListModel::empty()
     return _pointers.isEmpty();
 }
 
+void PointerListModel::refreshData()
+{
+    if (_rowOrder.isEmpty())
+        return;
+
+    emit dataChanged(index(0, 0), index(_rowOrder.count() - 1, 2));
+}
+
 void PointerListModel::clear()
 {
     beginResetModel();
     _pointers.clear();
     _offsets.clear();
+    _rowOrder.clear();
     endResetModel();
 }
 
 quint32 PointerListModel::addPointer(const qint64 ptrOffset, qint64 offset)
 {
+    const qint64 oldOffset = _pointers.value(ptrOffset, -1);
+
     beginResetModel();
+    if (oldOffset != -1 && oldOffset != offset)
+    {
+        if (!--_offsets[oldOffset])
+            _offsets.remove(oldOffset);
+    }
+
     _pointers.insert(ptrOffset, offset);
     ++_offsets[offset];
+    rebuildRowOrder();
     endResetModel();
 
     return _offsets[offset];
+}
+
+quint32 PointerListModel::addPointersBatch(const QVector<QPair<qint64, qint64>> &pointers)
+{
+    if (pointers.isEmpty())
+        return 0;
+
+    quint32 added = 0;
+
+    beginResetModel();
+    for (const auto &entry : pointers)
+    {
+        const qint64 ptrOffset = entry.first;
+        const qint64 offset = entry.second;
+        const qint64 oldOffset = _pointers.value(ptrOffset, -1);
+
+        if (oldOffset != -1 && oldOffset != offset)
+        {
+            if (!--_offsets[oldOffset])
+                _offsets.remove(oldOffset);
+        }
+
+        _pointers.insert(ptrOffset, offset);
+        ++_offsets[offset];
+        ++added;
+    }
+    rebuildRowOrder();
+    endResetModel();
+
+    return added;
 }
 
 bool PointerListModel::dropPointer(const qint64 offset)
 {
     if (_pointers.contains(offset))
     {
+        const qint64 pointedOffset = _pointers.value(offset);
         beginResetModel();
-        // drop if it was the last pointer to offset
-        if (!--_offsets[offset])
-            _offsets.remove(_pointers.value(offset));
+        if (!--_offsets[pointedOffset])
+            _offsets.remove(pointedOffset);
 
         _pointers.remove(offset);
+        rebuildRowOrder();
         endResetModel();
 
         return true;
     }
     else
         return false;
+}
+
+quint32 PointerListModel::dropPointersBatch(const QVector<qint64> &ptrOffsets)
+{
+    if (ptrOffsets.isEmpty())
+        return 0;
+
+    beginResetModel();
+    quint32 dropped = 0;
+
+    for (const qint64 offset : ptrOffsets)
+    {
+        if (_pointers.contains(offset))
+        {
+            const qint64 pointedOffset = _pointers.value(offset);
+            if (!--_offsets[pointedOffset])
+                _offsets.remove(pointedOffset);
+
+            _pointers.remove(offset);
+            ++dropped;
+        }
+    }
+
+    if (dropped > 0)
+        rebuildRowOrder();
+
+    endResetModel();
+    return dropped;
 }
 
 quint32 PointerListModel::dropOffset(const qint64 offset)
@@ -109,6 +207,7 @@ quint32 PointerListModel::dropOffset(const qint64 offset)
             _pointers.remove(*it);
 
         _offsets.remove(offset);
+        rebuildRowOrder();
         endResetModel();
 
         return true;
@@ -177,4 +276,27 @@ QString PointerListModel::getOffsetText(qint64 offset) const
 void PointerListModel::setHexEdit(QHexEdit *hexEdit)
 {
     _hexEdit = hexEdit;
+}
+
+void PointerListModel::rebuildRowOrder()
+{
+    _rowOrder = _pointers.keys().toVector();
+
+    auto comparator = [this](qint64 lhs, qint64 rhs)
+    {
+        if (_sortColumn == 1)
+        {
+            const qint64 lv = _pointers.value(lhs);
+            const qint64 rv = _pointers.value(rhs);
+
+            if (lv == rv)
+                return (_sortOrder == Qt::AscendingOrder) ? (lhs < rhs) : (lhs > rhs);
+
+            return (_sortOrder == Qt::AscendingOrder) ? (lv < rv) : (lv > rv);
+        }
+
+        return (_sortOrder == Qt::AscendingOrder) ? (lhs < rhs) : (lhs > rhs);
+    };
+
+    std::sort(_rowOrder.begin(), _rowOrder.end(), comparator);
 }
