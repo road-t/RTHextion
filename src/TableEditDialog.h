@@ -17,6 +17,9 @@ public:
     explicit TableEditDialog(TranslationTable** tb, QWidget *parent = nullptr);
     ~TableEditDialog();
 
+signals:
+    void tableChanged();
+
 private slots:
     void on_pbAdd_clicked();
     void on_pbRemove_clicked();

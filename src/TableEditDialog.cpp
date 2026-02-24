@@ -80,11 +80,17 @@ void TableEditDialog::on_pbAdd_clicked()
     }
 
     bool ok;
-    QString input = QInputDialog::getText(this, tr("Add Entry"),
-                                          tr("Enter hex byte value (0x00-0xFF):"),
-                                          QLineEdit::Normal,
-                                          QString::number(suggestedByte, 16).rightJustified(2, '0').toUpper(),
-                                          &ok);
+    QInputDialog hexDialog(this);
+    hexDialog.setWindowTitle(tr("Add Entry"));
+    hexDialog.setLabelText(tr("Enter hex byte value (00-FF):"));
+    hexDialog.setInputMode(QInputDialog::TextInput);
+    hexDialog.setTextValue(QString::number(suggestedByte, 16).rightJustified(2, '0').toUpper());
+
+    if (auto lineEdit = hexDialog.findChild<QLineEdit*>())
+        lineEdit->setInputMask(">hh");
+
+    ok = hexDialog.exec() == QDialog::Accepted;
+    QString input = hexDialog.textValue();
     if (!ok || input.isEmpty())
         return;
 
@@ -104,11 +110,17 @@ void TableEditDialog::on_pbAdd_clicked()
         return;
     }
 
-    addRow(static_cast<uint8_t>(byteVal), "");
+    // Now prompt for the translation value
+    QString valueStr = QInputDialog::getText(this, tr("Add Entry"),
+                                             tr("Enter translation text for byte 0x%1:").arg(QString::number(byteVal, 16).toUpper().rightJustified(2, '0')),
+                                             QLineEdit::Normal,
+                                             QString(),
+                                             &ok);
+    if (!ok)
+        return;
+
+    addRow(static_cast<uint8_t>(byteVal), valueStr);
     ui->twTable->scrollToBottom();
-    // Set focus to the value cell for immediate editing
-    ui->twTable->setCurrentCell(ui->twTable->rowCount() - 1, 1);
-    ui->twTable->editItem(ui->twTable->item(ui->twTable->rowCount() - 1, 1));
 }
 
 void TableEditDialog::on_pbRemove_clicked()
@@ -154,8 +166,14 @@ void TableEditDialog::accept()
         uint8_t key = static_cast<uint8_t>(hexItem->text().toInt(&ok, 16));
         if (!ok) continue;
 
-        tb->setItem(key, valItem->text());
+        const QString value = valItem->text();
+        // Skip empty values
+        if (value.isEmpty()) continue;
+
+        tb->setItem(key, value);
     }
+
+    emit tableChanged();
 
     QDialog::accept();
 }
