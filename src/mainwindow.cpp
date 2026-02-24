@@ -3,7 +3,10 @@
 #include <QApplication>
 #include <QStatusBar>
 #include <QLabel>
+
+#define RTHEXTION_VERSION "0.7"
 #include <QAction>
+#include <QActionGroup>
 #include <QMenuBar>
 #include <QToolBar>
 #include <QColorDialog>
@@ -11,6 +14,7 @@
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QGridLayout>
+#include <QSettings>
 
 #include "QtWidgets/qpushbutton.h"
 #include "mainwindow.h"
@@ -22,7 +26,6 @@ MainWindow::MainWindow()
 {
     setAcceptDrops( true );
     init();
-    setCurrentFile("");
 }
 
 /*****************************************************************************/
@@ -57,8 +60,8 @@ void MainWindow::dropEvent(QDropEvent *event)
 /*****************************************************************************/
 void MainWindow::about()
 {
-   QMessageBox::about(this, tr("About RTHextion"),
-            tr("RTHextion is a tribute to Translhextion hexeditor for ROM hacking based on QHexEdit widget."));
+    QMessageBox::about(this, tr("About RTHextion"),
+                       tr("RTHextion v%1\n\nA tribute to Translhextion hexeditor for ROM hacking based on QHexEdit widget.").arg(RTHEXTION_VERSION));
 }
 
 void MainWindow::dataChanged()
@@ -204,11 +207,12 @@ void MainWindow::setSelection(qint64 start, qint64 end)
     auto text = len ? QString("0x%1-0x%2: %3").arg(start, 2, 16, QChar('0')).arg(end, 2, 16, QChar('0')).arg(end - start) : tr("No selection");
 
     lbSelection->setText(text);
+    saveSelectionReadable->setEnabled(len > 0);
 }
 
 void MainWindow::setOverwriteMode(bool mode)
 {
-    lbOverwriteMode->setText(mode ? tr("OVERWRITE") : ("INSERT"));
+    lbOverwriteMode->setText(mode ? tr("REPLACE") : tr("INSERT"));
 }
 
 void MainWindow::setSize(qint64 size)
@@ -245,6 +249,7 @@ bool MainWindow::loadTable()
         hexEdit->setTranslationTable(tb);
         useTableAct->setDisabled(false);
         editTableAct->setDisabled(false);
+        updateScriptMenuState();
     }
 
     return true;
@@ -253,11 +258,60 @@ bool MainWindow::loadTable()
 void MainWindow::switchUseTable()
 {
     useTableAct->isChecked() ? hexEdit->setTranslationTable(tb) : hexEdit->removeTranslationTable();
+    updateScriptMenuState();
+}
+
+void MainWindow::updateScriptMenuState()
+{
+    bool tableActive = tb && useTableAct->isChecked();
+    scriptMenu->setEnabled(tableActive);
+}
+
+void MainWindow::toggleOverwriteMode()
+{
+    hexEdit->setOverwriteMode(!hexEdit->overwriteMode());
+}
+
+void MainWindow::setLanguage()
+{
+    QAction *action = qobject_cast<QAction *>(sender());
+    if (!action)
+        return;
+
+    const QString language = action->data().toString();
+
+    // Load and install new translator immediately
+    QTranslator *translator = new QTranslator(this);
+    if (translator->load(QString(":/translations/qhexedit_") + language))
+    {
+        qApp->installTranslator(translator);
+    }
+
+    // Save language preference
+    QSettings settings;
+    settings.setValue("Language", language);
+
+    // Now show message in the newly selected language
+    QMessageBox::information(this,
+                             tr("Language"),
+                             tr("Language will be applied after restart."));
 }
 
 void MainWindow::editTable()
 {
     tableEditDialog->show();
+}
+
+void MainWindow::onTranslationTableChanged()
+{
+    if (useTableAct->isChecked())
+        hexEdit->setTranslationTable(tb);
+
+    hexEdit->viewport()->update();
+    hexEdit->update();
+
+    if (pointersDialog)
+        pointersDialog->refreshFromTable();
 }
 
 void MainWindow::dumpScript()
@@ -272,7 +326,7 @@ void MainWindow::insertScript()
 
 void MainWindow::findPointers()
 {
-    auto found = hexEdit->findPointers();
+    auto found = hexEdit->findPointers(false, true, true, nullptr, nullptr, 0, false);
 
     if (found)
         showPointersAct->setEnabled(true);
@@ -306,6 +360,7 @@ void MainWindow::init()
     connect(pointersDialog, SIGNAL(accepted()), this, SLOT(pointersUpdated()));
 
     tableEditDialog = new TableEditDialog(&tb, this);
+    connect(tableEditDialog, SIGNAL(tableChanged()), this, SLOT(onTranslationTableChanged()));
 
     dumpScriptDialog = new DumpScriptDialog(hexEdit, this);
     insertScriptDialog = new InsertScriptDialog(hexEdit, this);
@@ -315,6 +370,7 @@ void MainWindow::init()
     createToolBars();
     createStatusBar();
 
+    setCurrentFile("");
     readSettings();
 
     setUnifiedTitleAndToolBarOnMac(true);
@@ -360,6 +416,7 @@ void MainWindow::createActions()
 
     saveSelectionReadable = new QAction(tr("&Save Selection Readable..."), this);
     saveSelectionReadable->setStatusTip(tr("Save selection in readable form"));
+    saveSelectionReadable->setEnabled(false);
     connect(saveSelectionReadable, SIGNAL(triggered()), this, SLOT(saveSelectionToReadableFile()));
 
     loadTableAct = new QAction(tr("Load table"), this);
@@ -404,10 +461,6 @@ void MainWindow::createActions()
     aboutAct->setStatusTip(tr("Show the application's About box"));
     connect(aboutAct, SIGNAL(triggered()), this, SLOT(about()));
 
-    aboutQtAct = new QAction(tr("About &Qt"), this);
-    aboutQtAct->setStatusTip(tr("Show the Qt library's About box"));
-    connect(aboutQtAct, SIGNAL(triggered()), qApp, SLOT(aboutQt()));
-
     findAct = new QAction(QIcon(":/images/find.png"), tr("&Find/Replace"), this);
     findAct->setShortcuts(QKeySequence::Find);
     findAct->setStatusTip(tr("Show the Dialog for finding and replacing"));
@@ -422,9 +475,40 @@ void MainWindow::createActions()
     gotoAct->setStatusTip(tr("Go to specified offset"));
     connect(gotoAct, SIGNAL(triggered()), this, SLOT(showJumpToDialog()));
 
-    optionsAct = new QAction(tr("&Options"), this);
+    optionsAct = new QAction(tr("&Preferences"), this);
     optionsAct->setStatusTip(tr("Show the Dialog to select applications options"));
     connect(optionsAct, SIGNAL(triggered()), this, SLOT(showOptionsDialog()));
+
+    languageGroup = new QActionGroup(this);
+    languageGroup->setExclusive(true);
+
+    langRussianAct = new QAction(tr("Русский"), this);
+    langRussianAct->setCheckable(true);
+    langRussianAct->setData("ru");
+    connect(langRussianAct, SIGNAL(triggered()), this, SLOT(setLanguage()));
+
+    langEnglishAct = new QAction(tr("English"), this);
+    langEnglishAct->setCheckable(true);
+    langEnglishAct->setData("en");
+    connect(langEnglishAct, SIGNAL(triggered()), this, SLOT(setLanguage()));
+
+    langGermanAct = new QAction(tr("Deutsch"), this);
+    langGermanAct->setCheckable(true);
+    langGermanAct->setData("de");
+    connect(langGermanAct, SIGNAL(triggered()), this, SLOT(setLanguage()));
+
+    languageGroup->addAction(langEnglishAct);
+    languageGroup->addAction(langGermanAct);
+    languageGroup->addAction(langRussianAct);
+
+    QSettings settings;
+    const QString language = settings.value("Language", QLocale::system().name().left(2)).toString();
+    if (language == "de")
+        langGermanAct->setChecked(true);
+    else if (language == "ru")
+        langRussianAct->setChecked(true);
+    else
+        langEnglishAct->setChecked(true);
 }
 
 void MainWindow::createMenus()
@@ -448,8 +532,6 @@ void MainWindow::createMenus()
     editMenu->addAction(findNextAct);
     editMenu->addSeparator();
     editMenu->addAction(gotoAct);
-    editMenu->addSeparator();
-    editMenu->addAction(optionsAct);
 
     tableMenu = menuBar()->addMenu(tr("&Table"));
     tableMenu->addAction(loadTableAct);
@@ -457,6 +539,7 @@ void MainWindow::createMenus()
     tableMenu->addAction(editTableAct);
 
     scriptMenu = menuBar()->addMenu(tr("Script"));
+    scriptMenu->setEnabled(false);
     scriptMenu->addAction(dumpScriptAct);
     scriptMenu->addAction(insertScriptAct);
 
@@ -464,9 +547,18 @@ void MainWindow::createMenus()
     pointersMenu->addAction(findPointersAct);
     pointersMenu->addAction(showPointersAct);
 
+    viewMenu = menuBar()->addMenu(tr("&View"));
+    languageMenu = viewMenu->addMenu(tr("&Language"));
+    languageMenu->addAction(langEnglishAct);
+    languageMenu->addAction(langGermanAct);
+    languageMenu->addAction(langRussianAct);
+    viewMenu->addSeparator();
+    viewMenu->addAction(optionsAct);
+
     helpMenu = menuBar()->addMenu(tr("&Help"));
     helpMenu->addAction(aboutAct);
-    helpMenu->addAction(aboutQtAct);
+
+    connect(useTableAct, SIGNAL(triggered()), this, SLOT(updateScriptMenuState()));
 }
 
 void MainWindow::createStatusBar()
@@ -477,8 +569,8 @@ void MainWindow::createStatusBar()
     // Endiannes label
     lbEndiannes = new QPushButton();
     lbEndiannes->setFlat(true);
-    lbEndiannes->setText("Little-endian");
-    lbEndiannes->setMaximumSize(QSize(90, 24));
+    lbEndiannes->setText(tr("Little-endian"));
+    lbEndiannes->setMaximumSize(QSize(103, 24));
     connect(lbEndiannes, SIGNAL(clicked()), this, SLOT(updateEndiannes()));
     statusBar()->addWidget(lbEndiannes);
 
@@ -524,11 +616,12 @@ void MainWindow::createStatusBar()
     lbOverwriteModeName = new QLabel();
     lbOverwriteModeName->setText(tr("Mode:"));
     statusBar()->addPermanentWidget(lbOverwriteModeName);
-    lbOverwriteMode = new QLabel();
-    lbOverwriteMode->setFrameShape(QFrame::Panel);
-    lbOverwriteMode->setFrameShadow(QFrame::Sunken);
+    lbOverwriteMode = new QPushButton();
+    lbOverwriteMode->setFlat(true);
     lbOverwriteMode->setMinimumWidth(70);
+    lbOverwriteMode->setMaximumSize(QSize(90, 24));
     statusBar()->addPermanentWidget(lbOverwriteMode);
+    connect(lbOverwriteMode, SIGNAL(clicked()), this, SLOT(toggleOverwriteMode()));
     setOverwriteMode(hexEdit->overwriteMode());
 
     statusBar()->showMessage(tr("Ready"), 2000);
@@ -650,15 +743,15 @@ bool MainWindow::saveFile(const QString &fileName)
 void MainWindow::setCurrentFile(const QString &fileName)
 {
     curFile = QFileInfo(fileName).canonicalFilePath();
+    if (curFile.isEmpty())
+        curFile = fileName;
     isUntitled = fileName.isEmpty();
     setWindowModified(false);
 
     if (fileName.isEmpty())
-        setWindowFilePath("RTHextion");
+        setWindowTitle(QString("RTHextion"));
     else
-    {
-        setWindowFilePath(curFile + " - RTHextion");
-    }
+        setWindowTitle(QString("%1[*] - RTHextion").arg(strippedName(curFile)));
 }
 
 QString MainWindow::strippedName(const QString &fullFileName)
@@ -680,7 +773,7 @@ void MainWindow::updateEndiannes()
 {
     hexEdit->bigEndian = !hexEdit->bigEndian;
 
-    lbEndiannes->setText(hexEdit->bigEndian ? "Big-endian" : "Little-endian");
+    lbEndiannes->setText(hexEdit->bigEndian ? tr("Big-endian") : tr("Little-endian"));
 
     setAddress(hexEdit->getCurrentOffset());
 }

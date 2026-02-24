@@ -9,9 +9,44 @@
         <translation>Про QHexEdit</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="59"/>
-        <source>The QHexEdit example is a short Demo of the QHexEdit Widget.</source>
-        <translation>QHexEdit пример это короткая демонстрация работы QHexEdit компоненты.</translation>
+        <source>&amp;Preferences</source>
+        <translation>&amp;Настройки</translation>
+    </message>
+    <message>
+        <source>&amp;View</source>
+        <translation>&amp;Вид</translation>
+    </message>
+    <message>
+        <source>&amp;Language</source>
+        <translation>&amp;Язык</translation>
+    </message>
+    <message>
+        <source>Language</source>
+        <translation>Язык</translation>
+    </message>
+    <message>
+        <source>Language will be applied after restart.</source>
+        <translation>Язык будет применён после перезапуска.</translation>
+    </message>
+    <message>
+        <source>Script</source>
+        <translation>Скрипт</translation>
+    </message>
+    <message>
+        <source>INSERT</source>
+        <translation>ВСТАВКА</translation>
+    </message>
+    <message>
+        <source>REPLACE</source>
+        <translation>ЗАМЕНА</translation>
+    </message>
+    <message>
+        <source>Little-endian</source>
+        <translation>Little-endian</translation>
+    </message>
+    <message>
+        <source>Big-endian</source>
+        <translation>Big-endian</translation>
     </message>
     <message>
         <location filename="../mainwindow.cpp" line="97"/>
@@ -240,6 +275,110 @@
         <source>Cannot write file %1.</source>
         <translation>Не могу записать файл %1.</translation>
     </message>
+    <message>
+        <source>About RTHextion</source>
+        <translation>О программе RTHextion</translation>
+    </message>
+    <message>
+        <source>RTHextion v%1
+
+A tribute to Translhextion hexeditor for ROM hacking based on QHexEdit widget.</source>
+        <translation>RTHextion v%1
+
+Дань уважения Translhextion hex-редактору для ROM-хакинга, основанному на компоненте QHexEdit.</translation>
+    </message>
+    <message>
+        <source>Are you sure want to load last saved version and lose all the changes?</source>
+        <translation>Вы уверены, что хотите загрузить последнюю сохранённую версию и потерять все изменения?</translation>
+    </message>
+    <message>
+        <source>RTHextion</source>
+        <translation>RTHextion</translation>
+    </message>
+    <message>
+        <source>No selection</source>
+        <translation>Нет выделения</translation>
+    </message>
+    <message>
+        <source>&amp;Revert</source>
+        <translation>&amp;Откатить</translation>
+    </message>
+    <message>
+        <source>Revert file to last saved version</source>
+        <translation>Вернуть файл к последней сохранённой версии</translation>
+    </message>
+    <message>
+        <source>Load table</source>
+        <translation>Загрузить таблицу</translation>
+    </message>
+    <message>
+        <source>Load translation table</source>
+        <translation>Загрузить таблицу перевода</translation>
+    </message>
+    <message>
+        <source>Use &amp;table</source>
+        <translation>Использовать &amp;таблицу</translation>
+    </message>
+    <message>
+        <source>Use translation table</source>
+        <translation>Использовать таблицу перевода</translation>
+    </message>
+    <message>
+        <source>Edit table</source>
+        <translation>Редактировать таблицу</translation>
+    </message>
+    <message>
+        <source>Edit translation table</source>
+        <translation>Редактировать таблицу перевода</translation>
+    </message>
+    <message>
+        <source>&amp;Dump script</source>
+        <translation>&amp;Дамп скрипта</translation>
+    </message>
+    <message>
+        <source>Dump text script</source>
+        <translation>Сохранить текстовый скрипт</translation>
+    </message>
+    <message>
+        <source>Insert script</source>
+        <translation>Вставить скрипт</translation>
+    </message>
+    <message>
+        <source>Insert text script</source>
+        <translation>Вставить текстовый скрипт</translation>
+    </message>
+    <message>
+        <source>Fi&amp;nd pointers</source>
+        <translation>На&amp;йти указатели</translation>
+    </message>
+    <message>
+        <source>Find pointers for selected text</source>
+        <translation>Найти указатели для выделенного текста</translation>
+    </message>
+    <message>
+        <source>Show pointers</source>
+        <translation>Показать указатели</translation>
+    </message>
+    <message>
+        <source>&amp;Table</source>
+        <translation>&amp;Таблица</translation>
+    </message>
+    <message>
+        <source>&amp;Pointers</source>
+        <translation>&amp;Указатели</translation>
+    </message>
+    <message>
+        <source>Jump to offset...</source>
+        <translation>Перейти к смещению...</translation>
+    </message>
+    <message>
+        <source>Go to specified offset</source>
+        <translation>Перейти к указанному смещению</translation>
+    </message>
+    <message>
+        <source>Pointers found: %1</source>
+        <translation>Указатели найдены: %1</translation>
+    </message>
 </context>
 <context>
     <name>OptionsDialog</name>
@@ -324,6 +463,54 @@
         <source>Bytes per Line</source>
         <translation>Байт в строке</translation>
     </message>
+    <message>
+        <source>Highlight changes</source>
+        <translation>Подчеркивать изменения</translation>
+    </message>
+    <message>
+        <source>Show ASCII</source>
+        <translation>Показать ASCII</translation>
+    </message>
+    <message>
+        <source>Pointer Color</source>
+        <translation>Цвет указателя</translation>
+    </message>
+    <message>
+        <source>Address Font Color</source>
+        <translation>Цвет шрифта адреса</translation>
+    </message>
+    <message>
+        <source>Hex Font Color</source>
+        <translation>Цвет шрифта Hex</translation>
+    </message>
+    <message>
+        <source>Pointed Color</source>
+        <translation>Цвет указанного</translation>
+    </message>
+    <message>
+        <source>ASCII Area Color</source>
+        <translation>Цвет области ASCII</translation>
+    </message>
+    <message>
+        <source>ASCII Font Color</source>
+        <translation>Цвет шрифта ASCII</translation>
+    </message>
+    <message>
+        <source>Auxiliary</source>
+        <translation>Вспомогательное</translation>
+    </message>
+    <message>
+        <source>Address area bytes</source>
+        <translation>Байты адреса</translation>
+    </message>
+    <message>
+        <source>Autosize</source>
+        <translation>Авторазмер</translation>
+    </message>
+    <message>
+        <source>Show addresses</source>
+        <translation>Показать адреса</translation>
+    </message>
 </context>
 <context>
     <name>SearchDialog</name>
@@ -336,6 +523,11 @@
         <location filename="../searchdialog.ui" line="22"/>
         <source>Find</source>
         <translation>Найти</translation>
+    </message>
+    <message>
+        <location filename="../searchdialog.ui" line="22"/>
+        <source>Text</source>
+        <translation>Текст</translation>
     </message>
     <message>
         <location filename="../searchdialog.ui" line="29"/>
@@ -406,6 +598,143 @@
         <translation>%1 найденых фрагментов заменено.</translation>
     </message>
     <message>
+        <source>Relative search</source>
+        <translation>Относительный поиск</translation>
+    </message>
+    <message>
+        <source>Use table</source>
+        <translation>Использовать таблицу</translation>
+    </message>
+    <message>
+        <location filename="../searchdialog.cpp" line="100"/>
+        <source>Replace occurrence?</source>
+        <translation>заменить найденое?</translation>
+    </message>
+</context>
+<context>
+    <name>TableEditDialog</name>
+    <message>
+        <source>Translation Table</source>
+        <translation>Таблица переводов</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>Добавить</translation>
+    </message>
+    <message>
+        <source>Remove</source>
+        <translation>Удалить</translation>
+    </message>
+    <message>
+        <source>Clear</source>
+        <translation>Очистить</translation>
+    </message>
+</context>
+<context>
+    <name>DumpScriptDialog</name>
+    <message>
+        <source>Dump Script</source>
+        <translation>Дамп скрипта</translation>
+    </message>
+    <message>
+        <source>Split by pointers</source>
+        <translation>Разделить по указателям</translation>
+    </message>
+    <message>
+        <source>Split by character:</source>
+        <translation>Разделить по символу:</translation>
+    </message>
+</context>
+<context>
+    <name>InsertScriptDialog</name>
+    <message>
+        <source>Insert Script</source>
+        <translation>Вставить скрипт</translation>
+    </message>
+    <message>
+        <source>Update pointers</source>
+        <translation>Обновить указатели</translation>
+    </message>
+</context>
+<context>
+    <name>PointersDialog</name>
+    <message>
+        <source>Find pointers</source>
+        <translation>Найти указатели</translation>
+    </message>
+    <message>
+        <source>Delete pointer</source>
+        <translation>Удалить указатель</translation>
+    </message>
+    <message>
+        <source>Clean all</source>
+        <translation>Очистить всё</translation>
+    </message>
+    <message>
+        <source>Range</source>
+        <translation>Диапазон</translation>
+    </message>
+    <message>
+        <source>Where</source>
+        <translation>Где</translation>
+    </message>
+    <message>
+        <source>before selection</source>
+        <translation>перед выделением</translation>
+    </message>
+    <message>
+        <source>after selection</source>
+        <translation>после выделения</translation>
+    </message>
+    <message>
+        <source>whole file</source>
+        <translation>весь файл</translation>
+    </message>
+    <message>
+        <source>Exclude selected area</source>
+        <translation>Исключить выделенную область</translation>
+    </message>
+    <message>
+        <source>Byte order</source>
+        <translation>Порядок байтов</translation>
+    </message>
+    <message>
+        <source>Pointer size</source>
+        <translation>Размер указателя</translation>
+    </message>
+    <message>
+        <source>2-byte</source>
+        <translation>2-байтовый</translation>
+    </message>
+    <message>
+        <source>3-byte</source>
+        <translation>3-байтовый</translation>
+    </message>
+    <message>
+        <source>4-byte</source>
+        <translation>4-байтовый</translation>
+    </message>
+    <message>
+        <source>Text optimization</source>
+        <translation>Оптимизация для текста</translation>
+    </message>
+    <message>
+        <source>optimize for text</source>
+        <translation>оптимизировать для текста</translation>
+    </message>
+    <message>
+        <source>Printable characters range</source>
+        <translation>Диапазон печатаемых символов</translation>
+    </message>
+    <message>
+        <source>Stop character</source>
+        <translation>Символ остановки</translation>
+    </message>
+    <message>
+        <source>Stop</source>
+        <translation>Остановить</translation>
+    </message>
+    <message>
         <location filename="../searchdialog.cpp" line="100"/>
         <source>Replace occurrence?</source>
         <translation>заменить найденое?</translation>
@@ -427,6 +756,91 @@
         <location filename="../../src/commands.cpp" line="159"/>
         <source>Overwrite %1 chars</source>
         <translation>Заменить %1 символов</translation>
+    </message>
+</context>
+<context>
+    <name>PointersDialog</name>
+    <message>
+        <source>Ptr offset</source>
+        <translation>Смещение указателя</translation>
+    </message>
+    <message>
+        <source>Points to</source>
+        <translation>Указывает на</translation>
+    </message>
+    <message>
+        <source>Data</source>
+        <translation>Данные</translation>
+    </message>
+    <message>
+        <source>Invalid range. Use hex values within file size and ensure begin &lt;= end.</source>
+        <translation>Недопустимый диапазон. Используйте hex-значения в пределах размера файла и убедитесь, что начало &lt;= конец.</translation>
+    </message>
+    <message>
+        <source>Ready</source>
+        <translation>Готово</translation>
+    </message>
+    <message>
+        <source>Invalid range values.</source>
+        <translation>Недопустимые значения диапазона.</translation>
+    </message>
+    <message>
+        <source>Warning: 2-byte pointer search in large range (&gt; 0x1000) can take a very long time.
+
+Continue anyway?</source>
+        <translation>Внимание: поиск 2-байтовых указателей в большом диапазоне (&gt; 0x1000) может занять очень много времени.
+
+Продолжить?</translation>
+    </message>
+    <message>
+        <source>0% | Found: 0</source>
+        <translation>0% | Найдено: 0</translation>
+    </message>
+    <message>
+        <source>%1% | Found: %2</source>
+        <translation>%1% | Найдено: %2</translation>
+    </message>
+    <message>
+        <source>Search stopped.
+Pointers found: %1
+Time elapsed %2ms</source>
+        <translation>Поиск остановлен.
+Найдено указателей: %1
+Время: %2 мс</translation>
+    </message>
+    <message>
+        <source>Pointers found: %1
+Time elapsed %2ms</source>
+        <translation>Найдено указателей: %1
+Время: %2 мс</translation>
+    </message>
+    <message>
+        <source>Add pointer</source>
+        <translation>Добавить указатель</translation>
+    </message>
+    <message>
+        <source>Pointer offset (hex/dec, e.g. 0x1234):</source>
+        <translation>Смещение указателя (hex/dec, например 0x1234):</translation>
+    </message>
+    <message>
+        <source>Invalid pointer offset.</source>
+        <translation>Недопустимое смещение указателя.</translation>
+    </message>
+    <message>
+        <source>Pointer value (hex/dec, e.g. 0x5678):</source>
+        <translation>Значение указателя (hex/dec, например 0x5678):</translation>
+    </message>
+    <message>
+        <source>Invalid pointer value.</source>
+        <translation>Недопустимое значение указателя.</translation>
+    </message>
+    <message>
+        <source>Are you sure want to delete pointer from list?</source>
+        <translation>Вы уверены, что хотите удалить указатель из списка?</translation>
+    </message>
+    <message>
+        <source>Are you sure want to clear pointers list?</source>
+        <translation>Вы уверены, что хотите очистить список указателей?</translation>
     </message>
 </context>
 </TS>

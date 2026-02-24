@@ -32,11 +32,6 @@
         <translation>Über QHexEdit</translation>
     </message>
     <message>
-        <location filename="../mainwindow.cpp" line="62"/>
-        <source>The QHexEdit example is a short Demo of the QHexEdit Widget.</source>
-        <translation>Das QHexEdit Beispiel ist eine einfache Demo Anwendung für das QHexEdit Widget.</translation>
-    </message>
-    <message>
         <location filename="../mainwindow.cpp" line="115"/>
         <location filename="../mainwindow.cpp" line="137"/>
         <location filename="../mainwindow.cpp" line="347"/>
@@ -49,7 +44,7 @@
         <location filename="../mainwindow.cpp" line="138"/>
         <source>Cannot write file %1:
 %2.</source>
-        <translation>Kann Detei %1 nicht schreiben:
+        <translation>Kann Datei %1 nicht schreiben:
 %2.</translation>
     </message>
     <message>
@@ -264,6 +259,150 @@
         <source>File loaded</source>
         <translation>Datei geladen</translation>
     </message>
+    <message>
+        <source>&amp;Preferences</source>
+        <translation>&amp;Einstellungen</translation>
+    </message>
+    <message>
+        <source>&amp;View</source>
+        <translation>&amp;Ansicht</translation>
+    </message>
+    <message>
+        <source>&amp;Language</source>
+        <translation>&amp;Sprache</translation>
+    </message>
+    <message>
+        <source>Language</source>
+        <translation>Sprache</translation>
+    </message>
+    <message>
+        <source>Language will be applied after restart.</source>
+        <translation>Die Sprache wird nach einem Neustart angewendet.</translation>
+    </message>
+    <message>
+        <source>Script</source>
+        <translation>Skript</translation>
+    </message>
+    <message>
+        <source>INSERT</source>
+        <translation>EINFÜGEN</translation>
+    </message>
+    <message>
+        <source>REPLACE</source>
+        <translation>ERSETZEN</translation>
+    </message>
+    <message>
+        <source>Little-endian</source>
+        <translation>Little-endian</translation>
+    </message>
+    <message>
+        <source>Big-endian</source>
+        <translation>Big-endian</translation>
+    </message>
+    <message>
+        <source>About RTHextion</source>
+        <translation>Über RTHextion</translation>
+    </message>
+    <message>
+        <source>RTHextion v%1
+
+A tribute to Translhextion hexeditor for ROM hacking based on QHexEdit widget.</source>
+        <translation>RTHextion v%1
+
+Eine Hommage an den Translhextion-Hex-Editor für ROM-Hacking, basierend auf dem QHexEdit-Widget.</translation>
+    </message>
+    <message>
+        <source>Are you sure want to load last saved version and lose all the changes?</source>
+        <translation>Möchten Sie wirklich die zuletzt gespeicherte Version laden und alle Änderungen verlieren?</translation>
+    </message>
+    <message>
+        <source>RTHextion</source>
+        <translation>RTHextion</translation>
+    </message>
+    <message>
+        <source>No selection</source>
+        <translation>Keine Auswahl</translation>
+    </message>
+    <message>
+        <source>&amp;Revert</source>
+        <translation>&amp;Zurücksetzen</translation>
+    </message>
+    <message>
+        <source>Revert file to last saved version</source>
+        <translation>Datei auf zuletzt gespeicherte Version zurücksetzen</translation>
+    </message>
+    <message>
+        <source>Load table</source>
+        <translation>Tabelle laden</translation>
+    </message>
+    <message>
+        <source>Load translation table</source>
+        <translation>Übersetzungstabelle laden</translation>
+    </message>
+    <message>
+        <source>Use &amp;table</source>
+        <translation>&amp;Tabelle verwenden</translation>
+    </message>
+    <message>
+        <source>Use translation table</source>
+        <translation>Übersetzungstabelle verwenden</translation>
+    </message>
+    <message>
+        <source>Edit table</source>
+        <translation>Tabelle bearbeiten</translation>
+    </message>
+    <message>
+        <source>Edit translation table</source>
+        <translation>Übersetzungstabelle bearbeiten</translation>
+    </message>
+    <message>
+        <source>&amp;Dump script</source>
+        <translation>Skript &amp;ausgeben</translation>
+    </message>
+    <message>
+        <source>Dump text script</source>
+        <translation>Textskript ausgeben</translation>
+    </message>
+    <message>
+        <source>Insert script</source>
+        <translation>Skript einfügen</translation>
+    </message>
+    <message>
+        <source>Insert text script</source>
+        <translation>Textskript einfügen</translation>
+    </message>
+    <message>
+        <source>Fi&amp;nd pointers</source>
+        <translation>Pointer &amp;suchen</translation>
+    </message>
+    <message>
+        <source>Find pointers for selected text</source>
+        <translation>Pointer für ausgewählten Text suchen</translation>
+    </message>
+    <message>
+        <source>Show pointers</source>
+        <translation>Pointer anzeigen</translation>
+    </message>
+    <message>
+        <source>&amp;Table</source>
+        <translation>&amp;Tabelle</translation>
+    </message>
+    <message>
+        <source>&amp;Pointers</source>
+        <translation>&amp;Pointer</translation>
+    </message>
+    <message>
+        <source>Jump to offset...</source>
+        <translation>Zu Offset springen...</translation>
+    </message>
+    <message>
+        <source>Go to specified offset</source>
+        <translation>Zum angegebenen Offset springen</translation>
+    </message>
+    <message>
+        <source>Pointers found: %1</source>
+        <translation>Pointer gefunden: %1</translation>
+    </message>
 </context>
 <context>
     <name>OptionsDialog</name>
@@ -351,8 +490,54 @@
         <location filename="../optionsdialog.ui" line="230"/>
         <source>Bytes per Line</source>
         <translation type="unfinished">Bytes pro Zeile</translation>
+    </message>    <message>
+        <source>Highlight changes</source>
+        <translation>Änderungen hervorheben</translation>
     </message>
-</context>
+    <message>
+        <source>Show ASCII</source>
+        <translation>ASCII anzeigen</translation>
+    </message>
+    <message>
+        <source>Pointer Color</source>
+        <translation>Pointer-Farbe</translation>
+    </message>
+    <message>
+        <source>Address Font Color</source>
+        <translation>Adressschriftfarbe</translation>
+    </message>
+    <message>
+        <source>Hex Font Color</source>
+        <translation>Hex-Schriftfarbe</translation>
+    </message>
+    <message>
+        <source>Pointed Color</source>
+        <translation>Verwiesene Farbe</translation>
+    </message>
+    <message>
+        <source>ASCII Area Color</source>
+        <translation>ASCII-Bereichsfarbe</translation>
+    </message>
+    <message>
+        <source>ASCII Font Color</source>
+        <translation>ASCII-Schriftfarbe</translation>
+    </message>
+    <message>
+        <source>Auxiliary</source>
+        <translation>Zusätzlich</translation>
+    </message>
+    <message>
+        <source>Address area bytes</source>
+        <translation>Adressbereichs-Bytes</translation>
+    </message>
+    <message>
+        <source>Autosize</source>
+        <translation>Automatische Größe</translation>
+    </message>
+    <message>
+        <source>Show addresses</source>
+        <translation>Adressen anzeigen</translation>
+    </message></context>
 <context>
     <name>SearchDialog</name>
     <message>
@@ -368,6 +553,10 @@
         <location filename="../searchdialog.ui" line="22"/>
         <source>Find</source>
         <translation>Suchen</translation>
+    </message>
+    <message>
+        <source>Text</source>
+        <translation>Text</translation>
     </message>
     <message>
         <location filename="../searchdialog.ui" line="29"/>
@@ -438,6 +627,143 @@
         <translation>%1 Vorkommnisse ersetzt.</translation>
     </message>
     <message>
+        <source>Relative search</source>
+        <translation>Relative Suche</translation>
+    </message>
+    <message>
+        <source>Use table</source>
+        <translation>Tabelle verwenden</translation>
+    </message>
+    <message>
+        <location filename="../searchdialog.cpp" line="100"/>
+        <source>Replace occurrence?</source>
+        <translation>Vorkommnis ersetzen?</translation>
+    </message>
+</context>
+<context>
+    <name>TableEditDialog</name>
+    <message>
+        <source>Translation Table</source>
+        <translation>Übersetzungstabelle</translation>
+    </message>
+    <message>
+        <source>Add</source>
+        <translation>Hinzufügen</translation>
+    </message>
+    <message>
+        <source>Remove</source>
+        <translation>Entfernen</translation>
+    </message>
+    <message>
+        <source>Clear</source>
+        <translation>Löschen</translation>
+    </message>
+</context>
+<context>
+    <name>DumpScriptDialog</name>
+    <message>
+        <source>Dump Script</source>
+        <translation>Skript ausgeben</translation>
+    </message>
+    <message>
+        <source>Split by pointers</source>
+        <translation>Nach Pointern trennen</translation>
+    </message>
+    <message>
+        <source>Split by character:</source>
+        <translation>Nach Zeichen trennen:</translation>
+    </message>
+</context>
+<context>
+    <name>InsertScriptDialog</name>
+    <message>
+        <source>Insert Script</source>
+        <translation>Skript einfügen</translation>
+    </message>
+    <message>
+        <source>Update pointers</source>
+        <translation>Pointer aktualisieren</translation>
+    </message>
+</context>
+<context>
+    <name>PointersDialog</name>
+    <message>
+        <source>Find pointers</source>
+        <translation>Pointer finden</translation>
+    </message>
+    <message>
+        <source>Delete pointer</source>
+        <translation>Pointer löschen</translation>
+    </message>
+    <message>
+        <source>Clean all</source>
+        <translation>Alle löschen</translation>
+    </message>
+    <message>
+        <source>Range</source>
+        <translation>Bereich</translation>
+    </message>
+    <message>
+        <source>Where</source>
+        <translation>Wo</translation>
+    </message>
+    <message>
+        <source>before selection</source>
+        <translation>vor Auswahl</translation>
+    </message>
+    <message>
+        <source>after selection</source>
+        <translation>nach Auswahl</translation>
+    </message>
+    <message>
+        <source>whole file</source>
+        <translation>gesamte Datei</translation>
+    </message>
+    <message>
+        <source>Exclude selected area</source>
+        <translation>Ausgewählten Bereich ausschließen</translation>
+    </message>
+    <message>
+        <source>Byte order</source>
+        <translation>Byte-Reihenfolge</translation>
+    </message>
+    <message>
+        <source>Pointer size</source>
+        <translation>Pointer-Größe</translation>
+    </message>
+    <message>
+        <source>2-byte</source>
+        <translation>2-Byte</translation>
+    </message>
+    <message>
+        <source>3-byte</source>
+        <translation>3-Byte</translation>
+    </message>
+    <message>
+        <source>4-byte</source>
+        <translation>4-Byte</translation>
+    </message>
+    <message>
+        <source>Text optimization</source>
+        <translation>Text-Optimierung</translation>
+    </message>
+    <message>
+        <source>optimize for text</source>
+        <translation>für Text optimieren</translation>
+    </message>
+    <message>
+        <source>Printable characters range</source>
+        <translation>Bereich druckbarer Zeichen</translation>
+    </message>
+    <message>
+        <source>Stop character</source>
+        <translation>Stoppzeichen</translation>
+    </message>
+    <message>
+        <source>Stop</source>
+        <translation>Stopp</translation>
+    </message>
+    <message>
         <location filename="../searchdialog.cpp" line="100"/>
         <source>Replace occurrence?</source>
         <translation>Vorkommnis ersetzen?</translation>
@@ -463,6 +789,91 @@
         <location filename="../../src/commands.cpp" line="159"/>
         <source>Overwrite %1 chars</source>
         <translation type="unfinished">%1 Zeichen überschrieben</translation>
+    </message>
+</context>
+<context>
+    <name>PointersDialog</name>
+    <message>
+        <source>Ptr offset</source>
+        <translation>Ptr-Offset</translation>
+    </message>
+    <message>
+        <source>Points to</source>
+        <translation>Zeigt auf</translation>
+    </message>
+    <message>
+        <source>Data</source>
+        <translation>Daten</translation>
+    </message>
+    <message>
+        <source>Invalid range. Use hex values within file size and ensure begin &lt;= end.</source>
+        <translation>Ungültiger Bereich. Verwenden Sie Hex-Werte innerhalb der Dateigröße und stellen Sie sicher, dass Anfang &lt;= Ende.</translation>
+    </message>
+    <message>
+        <source>Ready</source>
+        <translation>Bereit</translation>
+    </message>
+    <message>
+        <source>Invalid range values.</source>
+        <translation>Ungültige Bereichswerte.</translation>
+    </message>
+    <message>
+        <source>Warning: 2-byte pointer search in large range (&gt; 0x1000) can take a very long time.
+
+Continue anyway?</source>
+        <translation>Warnung: Die Suche nach 2-Byte-Pointern in einem großen Bereich (&gt; 0x1000) kann sehr lange dauern.
+
+Trotzdem fortfahren?</translation>
+    </message>
+    <message>
+        <source>0% | Found: 0</source>
+        <translation>0% | Gefunden: 0</translation>
+    </message>
+    <message>
+        <source>%1% | Found: %2</source>
+        <translation>%1% | Gefunden: %2</translation>
+    </message>
+    <message>
+        <source>Search stopped.
+Pointers found: %1
+Time elapsed %2ms</source>
+        <translation>Suche gestoppt.
+Pointer gefunden: %1
+Zeit: %2ms</translation>
+    </message>
+    <message>
+        <source>Pointers found: %1
+Time elapsed %2ms</source>
+        <translation>Pointer gefunden: %1
+Zeit: %2ms</translation>
+    </message>
+    <message>
+        <source>Add pointer</source>
+        <translation>Pointer hinzufügen</translation>
+    </message>
+    <message>
+        <source>Pointer offset (hex/dec, e.g. 0x1234):</source>
+        <translation>Pointer-Offset (hex/dez, z.B. 0x1234):</translation>
+    </message>
+    <message>
+        <source>Invalid pointer offset.</source>
+        <translation>Ungültiger Pointer-Offset.</translation>
+    </message>
+    <message>
+        <source>Pointer value (hex/dec, e.g. 0x5678):</source>
+        <translation>Pointer-Wert (hex/dez, z.B. 0x5678):</translation>
+    </message>
+    <message>
+        <source>Invalid pointer value.</source>
+        <translation>Ungültiger Pointer-Wert.</translation>
+    </message>
+    <message>
+        <source>Are you sure want to delete pointer from list?</source>
+        <translation>Möchten Sie wirklich den Pointer von der Liste entfernen?</translation>
+    </message>
+    <message>
+        <source>Are you sure want to clear pointers list?</source>
+        <translation>Möchten Sie wirklich die Pointer-Liste leeren?</translation>
     </message>
 </context>
 </TS>

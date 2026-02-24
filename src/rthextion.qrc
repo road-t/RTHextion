@@ -1,11 +1,14 @@
+<!DOCTYPE RCC>
 <RCC>
-    <qresource prefix="/">
-        <file>images/open.png</file>
-        <file>images/save.png</file>
-        <file>images/undo.png</file>
-        <file>images/redo.png</file>
-        <file>images/find.png</file>
-        <file>images/qhexedit.ico</file>
-        <file>images/pointer.png</file>
-    </qresource>
+  <qresource prefix="/">
+    <file>translations/qhexedit_de.qm</file>
+    <file>translations/qhexedit_ru.qm</file>
+    <file>images/open.png</file>
+    <file>images/save.png</file>
+    <file>images/undo.png</file>
+    <file>images/redo.png</file>
+    <file>images/find.png</file>
+    <file>images/qhexedit.ico</file>
+    <file>images/pointer.png</file>
+  </qresource>
 </RCC>

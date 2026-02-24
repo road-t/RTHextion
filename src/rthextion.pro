@@ -55,7 +55,7 @@ OTHER_FILES += \
     qhexedit/qhexedit.sip
 
 TRANSLATIONS += \
-    translations/qhexedit_cs.ts \
+    translations/qhexedit_ru.ts \
     translations/qhexedit_de.ts
 
 DEFINES += QHEXEDIT_EXPORTS

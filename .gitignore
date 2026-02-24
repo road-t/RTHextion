@@ -1,2 +1,5 @@
+# Ignore compiled Qt translation files
+*.qm
+
 /build*
 .*

@@ -1,5 +1,9 @@
 #include <QApplication>
+#include <QCommandLineParser>
 #include <QIcon>
+#include <QLocale>
+#include <QSettings>
+#include <QTranslator>
 
 #include "mainwindow.h"
 
@@ -12,9 +16,11 @@ int main(int argc, char *argv[])
     app.setWindowIcon(QIcon(":images/rthextion.ico"));
 
     // Identify locale and load translation if available
-    QString locale = QLocale::system().name();
+    QSettings settings;
+    QString locale = settings.value("Language", QLocale::system().name().left(2)).toString();
     QTranslator translator;
-    translator.load(QString("qhexedit_") + locale);
+    if (!translator.load(QString(":/translations/qhexedit_") + locale))
+        translator.load(QString("qhexedit_") + locale); // fallback: look on disk
     app.installTranslator(&translator);
 
     QCommandLineParser parser;
