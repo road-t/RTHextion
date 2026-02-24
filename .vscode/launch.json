@@ -1,0 +1,18 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "RTHextion Debug",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/build_debug/rthextion.app/Contents/MacOS/rthextion",
+            "args": [],
+            "stopOnEntry": false,
+            "cwd": "${workspaceFolder}",
+            "env": {},
+            "sourceLanguages": ["cpp"],
+            "preLaunchTask": "Build RTHextion Debug",
+            "sourceMap": {}
+        }
+    ]
+}

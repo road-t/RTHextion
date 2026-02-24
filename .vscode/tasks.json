@@ -1,0 +1,57 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build RTHextion Debug",
+            "type": "shell",
+            "command": "make",
+            "args": ["-j4"],
+            "options": {
+                "cwd": "${workspaceFolder}/build_debug"
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared"
+            },
+            "problemMatcher": [
+                "$gcc"
+            ]
+        },
+        {
+            "label": "Clean Debug Build",
+            "type": "shell",
+            "command": "make clean && make -j4",
+            "args": [],
+            "options": {
+                "cwd": "${workspaceFolder}/build_debug"
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Generate Debug Makefiles",
+            "type": "shell",
+            "command": "/opt/homebrew/opt/qt@5/bin/qmake",
+            "args": ["-config", "debug", "../src/rthextion.pro"],
+            "options": {
+                "cwd": "${workspaceFolder}/build_debug"
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared"
+            }
+        }
+    ]
+}
