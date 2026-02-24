@@ -1,15 +1,17 @@
 #include "PointerListModel.h"
+#include "qhexedit/qhexedit.h"
 
 PointerListModel::PointerListModel(QObject *parent) : QAbstractTableModel(parent)
-{}
+{
+}
 
-int PointerListModel::rowCount(const QModelIndex& parent) const
+int PointerListModel::rowCount(const QModelIndex &parent) const
 {
     Q_UNUSED(parent)
     return _pointers.count();
 }
 
-int PointerListModel::columnCount(const QModelIndex & parent) const
+int PointerListModel::columnCount(const QModelIndex &parent) const
 {
     Q_UNUSED(parent)
     return 3;
@@ -33,7 +35,7 @@ bool PointerListModel::setSectionNames(QStringList names)
     return true;
 }
 
-QVariant PointerListModel::data(const QModelIndex& index, int role) const
+QVariant PointerListModel::data(const QModelIndex &index, int role) const
 {
     if (_pointers.empty() || !index.isValid() || index.row() >= _pointers.count() || role != Qt::DisplayRole)
         return QVariant();
@@ -69,26 +71,25 @@ void PointerListModel::clear()
 
 quint32 PointerListModel::addPointer(const qint64 ptrOffset, qint64 offset)
 {
-    QString txt;
-
+    beginResetModel();
     _pointers.insert(ptrOffset, offset);
+    ++_offsets[offset];
+    endResetModel();
 
-    emit dataChanged();
-
-    return ++_offsets[offset];
+    return _offsets[offset];
 }
 
 bool PointerListModel::dropPointer(const qint64 offset)
 {
     if (_pointers.contains(offset))
     {
+        beginResetModel();
         // drop if it was the last pointer to offset
         if (!--_offsets[offset])
             _offsets.remove(_pointers.value(offset));
 
         _pointers.remove(offset);
-
-        emit dataChanged();
+        endResetModel();
 
         return true;
     }
@@ -100,14 +101,15 @@ quint32 PointerListModel::dropOffset(const qint64 offset)
 {
     if (_offsets.contains(offset))
     {
+        beginResetModel();
+
         auto ptrs = _pointers.keys(offset);
 
         for (auto it = ptrs.begin(); it != ptrs.end(); it++)
             _pointers.remove(*it);
 
         _offsets.remove(offset);
-
-        emit dataChanged();
+        endResetModel();
 
         return true;
     }
@@ -142,31 +144,37 @@ bool PointerListModel::hasOffset(qint64 offset)
 
 QString PointerListModel::getOffsetText(qint64 offset) const
 {
-    /*
-        if (_tb)
-        {
-            auto pointedString = _chunks->data(val, 0x40);
-            pointedString.truncate(pointedString.indexOf(stopChar));
+    if (!_hexEdit)
+        return "<unavailable>";
 
-            txt = _tb->encode(pointedString, true);
-        }
-        else
-        {
-            txt = QString(_chunks->data(val, 0x40)).toStdString().c_str();
-        }
+    QString txt;
+    auto _tb = _hexEdit->getTranslationTable();
 
-        if (txt.size() > 0)
-        {
-            if (txt.size() > 0x40)
-            {
-                txt += "...";
-            }
-        }
-        else
-        {
-            txt = "<binary>";
-        }
-    */
+    auto data = _hexEdit->dataAt(offset, 0x40);
 
-    return "Not implemented(";
+    if (_tb)
+    {
+        txt = _tb->encode(data, true);
+    }
+    else
+    {
+        txt = QString(data);
+    }
+
+    if (txt.size() > 0x40)
+    {
+        txt = txt.left(0x40);
+        txt += "...";
+    }
+    else if (txt.isEmpty())
+    {
+        txt = "<binary>";
+    }
+
+    return txt;
+}
+
+void PointerListModel::setHexEdit(QHexEdit *hexEdit)
+{
+    _hexEdit = hexEdit;
 }

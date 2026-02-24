@@ -4,11 +4,13 @@
 #include <QAbstractTableModel>
 #include <QMap>
 
+// TODO: get rid of this dependency
+class QHexEdit;
+
 class PointerListModel : public QAbstractTableModel
 {
     Q_OBJECT
 public:
-
     enum MapRoles
     {
         KeyRole = Qt::UserRole + 1,
@@ -16,9 +18,9 @@ public:
     };
 
     explicit PointerListModel(QObject *parent = 0);
-    int rowCount(const QModelIndex& parent = QModelIndex()) const;
-    int columnCount(const QModelIndex& parent = QModelIndex()) const;
-    QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const;
+    int rowCount(const QModelIndex &parent = QModelIndex()) const;
+    int columnCount(const QModelIndex &parent = QModelIndex()) const;
+    QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const;
     QVariant headerData(int section, Qt::Orientation orientation, int role = Qt::DisplayRole) const;
     bool setSectionNames(QStringList names);
 
@@ -34,14 +36,14 @@ public:
     bool hasOffset(qint64 offset);
     bool empty();
 
+    void setHexEdit(QHexEdit *hexEdit);
+
 private:
     QMap<qint64, qint64> _pointers;
     QMap<qint64, quint32> _offsets;
 
     QStringList sectionName;
-
-signals:
-    void dataChanged();
+    QHexEdit *_hexEdit = nullptr;
 };
 
 #endif // POINTERLISTMODEL_H

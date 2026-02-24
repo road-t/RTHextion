@@ -17,8 +17,6 @@ PointersDialog::PointersDialog(QHexEdit *hexEdit, QWidget *parent) :
 
     plModel = _hexEdit->pointers();
 
-    connect(plModel, SIGNAL(dataChanged()), SLOT(update()));
-
     plModel->setSectionNames(QStringList() << tr("Offset") << tr("Value") << tr("Data"));
 
     ui->tvPointers->setModel(plModel);
@@ -131,7 +129,7 @@ void PointersDialog::on_bbControls_accepted()
         ui->bbControls->button(QDialogButtonBox::Reset)->setEnabled(true);
     }
 
-    auto msg = QMessageBox(QMessageBox::Information, nullptr, tr("Pointers found: %1\nTime elapsed %2ms").arg(found).arg(timer.elapsed()), QMessageBox::Ok, this);
+    QMessageBox msg(QMessageBox::Information, nullptr, tr("Pointers found: %1\nTime elapsed %2ms").arg(found).arg(timer.elapsed()), QMessageBox::Ok, this);
     msg.exec();
 
     ui->tvPointers->resizeColumnsToContents();
@@ -150,7 +148,7 @@ void PointersDialog::on_bbControls_clicked(QAbstractButton *button)
 {
     if (ui->bbControls->buttonRole(button) == QDialogButtonBox::ButtonRole::ResetRole)
     {
-        auto msg = QMessageBox(QMessageBox::Warning, nullptr, tr("Are you sure want to clear pointers list?"), QMessageBox::Yes | QMessageBox::No, this);
+        QMessageBox msg(QMessageBox::Warning, nullptr, tr("Are you sure want to clear pointers list?"), QMessageBox::Yes | QMessageBox::No, this);
         auto result = msg.exec();
 
         if (result == QMessageBox::Yes)
@@ -209,7 +207,7 @@ void PointersDialog::keyPressEvent(QKeyEvent *event)
     {
         if (event->key() == Qt::Key_Backspace || event->key() == Qt::Key_Delete)
         {
-            auto msg = QMessageBox(QMessageBox::Warning, nullptr, tr("Are you sure want to delete pointer from list?"), QMessageBox::Yes | QMessageBox::No, this);
+            QMessageBox msg(QMessageBox::Warning, nullptr, tr("Are you sure want to delete pointer from list?"), QMessageBox::Yes | QMessageBox::No, this);
             auto result = msg.exec();
 
             if (result == QMessageBox::Yes)

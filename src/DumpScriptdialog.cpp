@@ -87,7 +87,7 @@ void DumpScriptDialog::updateText()
             dump += QString("{|%1|}:\n").arg(ptrsString);
         }
 
-        QChar ch = data[i];
+        QChar ch = QChar::fromLatin1(data[i]);
 
         if (useTable)
             dump += tb->encodeSymbol(ch.toLatin1(), true);
