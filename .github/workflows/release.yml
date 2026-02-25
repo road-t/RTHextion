@@ -17,22 +17,18 @@ jobs:
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.8.*'
-          arch: 'clang_arm64'
+          arch: 'clang_64'
           cache: true
-
-      - name: Generate .qm translation files
-        run: lrelease src/rthextion.pro
 
       - name: Build
         run: |
-          mkdir build_ci
-          cd build_ci
-          qmake ../src/rthextion.pro CONFIG+=release
+          mkdir build_ci && cd build_ci
+          ${{ env.QT_ROOT_DIR }}/bin/qmake ../src/rthextion.pro CONFIG+=release
           make -j$(sysctl -n hw.logicalcpu)
 
       - name: Package DMG
         run: |
-          macdeployqt build_ci/rthextion.app -dmg
+          ${{ env.QT_ROOT_DIR }}/bin/macdeployqt build_ci/rthextion.app -dmg
           mv build_ci/rthextion.dmg RTHextion-macOS-arm64.dmg
 
       - name: Upload artifact
@@ -54,19 +50,15 @@ jobs:
           arch: 'clang_64'
           cache: true
 
-      - name: Generate .qm translation files
-        run: lrelease src/rthextion.pro
-
       - name: Build
         run: |
-          mkdir build_ci
-          cd build_ci
-          qmake ../src/rthextion.pro CONFIG+=release
+          mkdir build_ci && cd build_ci
+          ${{ env.QT_ROOT_DIR }}/bin/qmake ../src/rthextion.pro CONFIG+=release
           make -j$(sysctl -n hw.logicalcpu)
 
       - name: Package DMG
         run: |
-          macdeployqt build_ci/rthextion.app -dmg
+          ${{ env.QT_ROOT_DIR }}/bin/macdeployqt build_ci/rthextion.app -dmg
           mv build_ci/rthextion.dmg RTHextion-macOS-x86_64.dmg
 
       - name: Upload artifact
@@ -75,7 +67,7 @@ jobs:
           name: RTHextion-macOS-x86_64
           path: RTHextion-macOS-x86_64.dmg
 
-  # ─── Windows x64 (MinGW) ─────────────────────────────────────────
+  # ─── Windows x64 (MSVC) ──────────────────────────────────────────
   build-windows:
     runs-on: windows-latest
     steps:
@@ -85,28 +77,28 @@ jobs:
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.8.*'
-          arch: 'win64_mingw'
-          tools: 'tools_mingw1310'
+          arch: 'win64_msvc2022_64'
           cache: true
 
-      - name: Generate .qm translation files
-        shell: bash
-        run: lrelease src/rthextion.pro
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
 
       - name: Build
-        shell: bash
+        shell: cmd
         run: |
           mkdir build_ci
           cd build_ci
-          qmake ../src/rthextion.pro CONFIG+=release
-          mingw32-make -j4
+          "%QT_ROOT_DIR%\bin\qmake" ..\src\rthextion.pro CONFIG+=release
+          nmake
 
       - name: Deploy Qt dependencies
-        shell: bash
+        shell: cmd
         run: |
-          mkdir -p RTHextion-Windows
-          cp build_ci/release/rthextion.exe RTHextion-Windows/
-          windeployqt --release --no-translations RTHextion-Windows/rthextion.exe
+          mkdir RTHextion-Windows
+          copy build_ci\release\rthextion.exe RTHextion-Windows\
+          "%QT_ROOT_DIR%\bin\windeployqt" --release --no-translations RTHextion-Windows\rthextion.exe
 
       - name: Create ZIP
         shell: pwsh
@@ -140,14 +132,10 @@ jobs:
           arch: 'gcc_64'
           cache: true
 
-      - name: Generate .qm translation files
-        run: lrelease src/rthextion.pro
-
       - name: Build
         run: |
-          mkdir build_ci
-          cd build_ci
-          qmake ../src/rthextion.pro CONFIG+=release
+          mkdir build_ci && cd build_ci
+          ${{ env.QT_ROOT_DIR }}/bin/qmake ../src/rthextion.pro CONFIG+=release
           make -j$(nproc)
 
       - name: Prepare AppDir
@@ -173,6 +161,7 @@ jobs:
       - name: Create AppImage
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
+          QMAKE: ${{ env.QT_ROOT_DIR }}/bin/qmake
           OUTPUT: RTHextion-Linux-x86_64.AppImage
         run: |
           ./linuxdeploy-x86_64.AppImage \
