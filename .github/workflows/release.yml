@@ -146,8 +146,11 @@ jobs:
             lrelease src/rthextion.pro
           elif command -v lrelease-qt6 >/dev/null 2>&1; then
             lrelease-qt6 src/rthextion.pro
+          elif [ -x "/usr/lib/qt6/bin/lrelease" ]; then
+            /usr/lib/qt6/bin/lrelease src/rthextion.pro
           else
             echo "lrelease not found"
+            ls -la /usr/lib/qt6/bin || true
             exit 1
           fi
 
