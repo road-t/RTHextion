@@ -56,8 +56,13 @@ TRANSLATIONS += \
     translations/qhexedit_ru.ts \
     translations/qhexedit_de.ts
 
-# Auto-generate .qm files at qmake time so they are ready before make starts
-system($$[QT_INSTALL_BINS]/lrelease $$_PRO_FILE_)
+# Auto-generate .qm files at qmake time when lrelease is available
+isEmpty(QMAKE_LRELEASE) {
+    QMAKE_LRELEASE = $$[QT_INSTALL_BINS]/lrelease
+}
+exists($$QMAKE_LRELEASE) {
+    system($$QMAKE_LRELEASE $$_PRO_FILE_)
+}
 
 DEFINES += QHEXEDIT_EXPORTS
 
