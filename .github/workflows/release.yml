@@ -1,0 +1,213 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  # ─── macOS arm64 (Apple Silicon) ────────────────────────────────
+  build-macos-arm64:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt 6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          arch: 'clang_arm64'
+          cache: true
+
+      - name: Generate .qm translation files
+        run: lrelease src/rthextion.pro
+
+      - name: Build
+        run: |
+          mkdir build_ci
+          cd build_ci
+          qmake ../src/rthextion.pro CONFIG+=release
+          make -j$(sysctl -n hw.logicalcpu)
+
+      - name: Package DMG
+        run: |
+          macdeployqt build_ci/rthextion.app -dmg
+          mv build_ci/rthextion.dmg RTHextion-macOS-arm64.dmg
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTHextion-macOS-arm64
+          path: RTHextion-macOS-arm64.dmg
+
+  # ─── macOS x86_64 (Intel) ────────────────────────────────────────
+  build-macos-x86_64:
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt 6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          arch: 'clang_64'
+          cache: true
+
+      - name: Generate .qm translation files
+        run: lrelease src/rthextion.pro
+
+      - name: Build
+        run: |
+          mkdir build_ci
+          cd build_ci
+          qmake ../src/rthextion.pro CONFIG+=release
+          make -j$(sysctl -n hw.logicalcpu)
+
+      - name: Package DMG
+        run: |
+          macdeployqt build_ci/rthextion.app -dmg
+          mv build_ci/rthextion.dmg RTHextion-macOS-x86_64.dmg
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTHextion-macOS-x86_64
+          path: RTHextion-macOS-x86_64.dmg
+
+  # ─── Windows x64 (MinGW) ─────────────────────────────────────────
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt 6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          arch: 'win64_mingw'
+          tools: 'tools_mingw1310'
+          cache: true
+
+      - name: Generate .qm translation files
+        shell: bash
+        run: lrelease src/rthextion.pro
+
+      - name: Build
+        shell: bash
+        run: |
+          mkdir build_ci
+          cd build_ci
+          qmake ../src/rthextion.pro CONFIG+=release
+          mingw32-make -j4
+
+      - name: Deploy Qt dependencies
+        shell: bash
+        run: |
+          mkdir -p RTHextion-Windows
+          cp build_ci/release/rthextion.exe RTHextion-Windows/
+          windeployqt --release --no-translations RTHextion-Windows/rthextion.exe
+
+      - name: Create ZIP
+        shell: pwsh
+        run: Compress-Archive -Path RTHextion-Windows\* -DestinationPath RTHextion-Windows-x64.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTHextion-Windows-x64
+          path: RTHextion-Windows-x64.zip
+
+  # ─── Linux x64 (AppImage) ────────────────────────────────────────
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 \
+            libfontconfig1-dev libfreetype6-dev libxrender-dev \
+            libxext-dev libx11-dev libxcb1-dev \
+            libfuse2 imagemagick
+
+      - name: Install Qt 6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          arch: 'gcc_64'
+          cache: true
+
+      - name: Generate .qm translation files
+        run: lrelease src/rthextion.pro
+
+      - name: Build
+        run: |
+          mkdir build_ci
+          cd build_ci
+          qmake ../src/rthextion.pro CONFIG+=release
+          make -j$(nproc)
+
+      - name: Prepare AppDir
+        run: |
+          mkdir -p AppDir/usr/bin AppDir/usr/share/icons/hicolor/256x256/apps
+          cp build_ci/rthextion AppDir/usr/bin/
+          convert 'src/images/qhexedit.ico[0]' AppDir/usr/share/icons/hicolor/256x256/apps/rthextion.png
+          cat > AppDir/rthextion.desktop << 'EOF'
+          [Desktop Entry]
+          Name=RTHextion
+          Exec=rthextion
+          Icon=rthextion
+          Type=Application
+          Categories=Utility;
+          EOF
+
+      - name: Download linuxdeploy
+        run: |
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-qt-x86_64.AppImage
+
+      - name: Create AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          OUTPUT: RTHextion-Linux-x86_64.AppImage
+        run: |
+          ./linuxdeploy-x86_64.AppImage \
+            --appdir AppDir \
+            --plugin qt \
+            --output appimage
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTHextion-Linux-x86_64
+          path: RTHextion-Linux-x86_64.AppImage
+
+  # ─── Create GitHub Release ───────────────────────────────────────
+  release:
+    needs: [build-macos-arm64, build-macos-x86_64, build-windows, build-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: false
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          generate_release_notes: true
+          files: |
+            artifacts/RTHextion-macOS-arm64/RTHextion-macOS-arm64.dmg
+            artifacts/RTHextion-macOS-x86_64/RTHextion-macOS-x86_64.dmg
+            artifacts/RTHextion-Windows-x64/RTHextion-Windows-x64.zip
+            artifacts/RTHextion-Linux-x86_64/RTHextion-Linux-x86_64.AppImage

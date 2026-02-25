@@ -1,5 +1,15 @@
-# Ignore compiled Qt translation files
+# Compiled Qt translation files
 *.qm
 
+# Build directories
 /build*
+/AppDir/
+
+# Packaged artifacts
+*.AppImage
+*.dmg
+
+# Hidden system files (except .github)
 .*
+!.github/
+!.github/**

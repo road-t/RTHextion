@@ -1,10 +1,8 @@
 QT += core gui widgets
-CONFIG += c++11
+CONFIG += c++17
 
 TEMPLATE = app
 TARGET = rthextion
-
-greaterThan(QT_MAJOR_VERSION, 5): QT += widgets
 
 HEADERS = \
     Datas.h \
