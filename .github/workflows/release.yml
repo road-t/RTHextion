@@ -80,9 +80,7 @@ jobs:
       - name: Install Qt 6
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.5.3'
-          host: 'windows'
-          target: 'desktop'
+          version: '6.8.*'
           arch: 'win64_msvc2022_64'
           cache: true
 
@@ -139,6 +137,17 @@ jobs:
           target: 'desktop'
           arch: 'gcc_64'
           cache: true
+
+      - name: Generate .qm translation files
+        run: |
+          if [ -x "${{ env.QT_ROOT_DIR }}/bin/lrelease" ]; then
+            ${{ env.QT_ROOT_DIR }}/bin/lrelease src/rthextion.pro
+          elif [ -x "${{ env.QT_ROOT_DIR }}/libexec/lrelease" ]; then
+            ${{ env.QT_ROOT_DIR }}/libexec/lrelease src/rthextion.pro
+          else
+            echo "lrelease not found in Qt tools"
+            exit 1
+          fi
 
       - name: Build
         run: |
