@@ -275,3 +275,4 @@ jobs:
             artifacts/RTHextion-macOS-x86_64/RTHextion-macOS-x86_64.dmg
             artifacts/RTHextion-Windows-x64/RTHextion-Windows-x64.zip
             artifacts/RTHextion-Linux-x86_64/RTHextion-Linux-x86_64.tar.gz
+            install-linux.sh
