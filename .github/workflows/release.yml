@@ -238,8 +238,7 @@ jobs:
         run: |
           ./linuxdeploy-x86_64.AppImage \
             --appdir AppDir \
-            --plugin qt \
-            --output appdir
+            --plugin qt
 
       - name: Create Linux tarball
         run: |
