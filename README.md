@@ -1,4 +1,4 @@
-# RTHextion v0.7
+# RTHextion v0.8
 
 Hex editor for ROMHacking, a tribute to 00's Translhextion from Januschan based on Dax89's [QHexView](https://github.com/Dax89/QHexView).
 
