@@ -89,6 +89,16 @@ jobs:
         with:
           arch: x64
 
+      - name: Generate .qm translation files
+        shell: cmd
+        run: |
+          if exist "%QT_ROOT_DIR%\bin\lrelease.exe" (
+            "%QT_ROOT_DIR%\bin\lrelease.exe" src\rthextion.pro
+          ) else (
+            echo lrelease.exe not found in %QT_ROOT_DIR%\bin
+            exit /b 1
+          )
+
       - name: Build
         shell: cmd
         run: |
@@ -124,35 +134,27 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            qt6-base-dev qt6-base-dev-tools qt6-tools-dev-tools qt6-l10n-tools \
             libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 \
             libfontconfig1-dev libfreetype6-dev libxrender-dev \
             libxext-dev libx11-dev libxcb1-dev \
             libfuse2 imagemagick
 
-      - name: Install Qt 6
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: '6.5.3'
-          host: 'linux'
-          target: 'desktop'
-          arch: 'gcc_64'
-          cache: true
-
       - name: Generate .qm translation files
         run: |
-          if [ -x "${{ env.QT_ROOT_DIR }}/bin/lrelease" ]; then
-            ${{ env.QT_ROOT_DIR }}/bin/lrelease src/rthextion.pro
-          elif [ -x "${{ env.QT_ROOT_DIR }}/libexec/lrelease" ]; then
-            ${{ env.QT_ROOT_DIR }}/libexec/lrelease src/rthextion.pro
+          if command -v lrelease >/dev/null 2>&1; then
+            lrelease src/rthextion.pro
+          elif command -v lrelease-qt6 >/dev/null 2>&1; then
+            lrelease-qt6 src/rthextion.pro
           else
-            echo "lrelease not found in Qt tools"
+            echo "lrelease not found"
             exit 1
           fi
 
       - name: Build
         run: |
           mkdir build_ci && cd build_ci
-          ${{ env.QT_ROOT_DIR }}/bin/qmake ../src/rthextion.pro CONFIG+=release
+          qmake6 ../src/rthextion.pro CONFIG+=release
           make -j$(nproc)
 
       - name: Prepare AppDir
@@ -178,7 +180,7 @@ jobs:
       - name: Create AppImage
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
-          QMAKE: ${{ env.QT_ROOT_DIR }}/bin/qmake
+          QMAKE: qmake6
           OUTPUT: RTHextion-Linux-x86_64.AppImage
         run: |
           ./linuxdeploy-x86_64.AppImage \
