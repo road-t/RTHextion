@@ -28,10 +28,24 @@ jobs:
           ${{ env.QT_ROOT_DIR }}/bin/qmake ../src/rthextion.pro CONFIG+=release QMAKE_APPLE_DEVICE_ARCHS=arm64
           make -j$(sysctl -n hw.logicalcpu)
 
+      - name: Install DMG packager
+        run: brew install create-dmg
+
       - name: Package DMG
         run: |
-          ${{ env.QT_ROOT_DIR }}/bin/macdeployqt build_ci/rthextion.app -dmg
-          mv build_ci/rthextion.dmg RTHextion-macOS-arm64.dmg
+          ${{ env.QT_ROOT_DIR }}/bin/macdeployqt build_ci/rthextion.app
+          mkdir -p dmg_root
+          cp -R build_ci/rthextion.app dmg_root/
+          create-dmg \
+            --volname "RTHextion" \
+            --window-pos 200 120 \
+            --window-size 800 400 \
+            --icon-size 110 \
+            --icon "rthextion.app" 220 190 \
+            --hide-extension "rthextion.app" \
+            --app-drop-link 580 190 \
+            "RTHextion-macOS-arm64.dmg" \
+            "dmg_root/"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -60,10 +74,24 @@ jobs:
           ${{ env.QT_ROOT_DIR }}/bin/qmake ../src/rthextion.pro CONFIG+=release QMAKE_APPLE_DEVICE_ARCHS=x86_64
           make -j$(sysctl -n hw.logicalcpu)
 
+      - name: Install DMG packager
+        run: brew install create-dmg
+
       - name: Package DMG
         run: |
-          ${{ env.QT_ROOT_DIR }}/bin/macdeployqt build_ci/rthextion.app -dmg
-          mv build_ci/rthextion.dmg RTHextion-macOS-x86_64.dmg
+          ${{ env.QT_ROOT_DIR }}/bin/macdeployqt build_ci/rthextion.app
+          mkdir -p dmg_root
+          cp -R build_ci/rthextion.app dmg_root/
+          create-dmg \
+            --volname "RTHextion" \
+            --window-pos 200 120 \
+            --window-size 800 400 \
+            --icon-size 110 \
+            --icon "rthextion.app" 220 190 \
+            --hide-extension "rthextion.app" \
+            --app-drop-link 580 190 \
+            "RTHextion-macOS-x86_64.dmg" \
+            "dmg_root/"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -142,15 +170,14 @@ jobs:
 
       - name: Generate .qm translation files
         run: |
-          if command -v lrelease >/dev/null 2>&1; then
-            lrelease src/rthextion.pro
+          # Generate from TS files directly to avoid qmake/qtchooser differences
+          if [ -x "/usr/lib/qt6/bin/lrelease" ]; then
+            /usr/lib/qt6/bin/lrelease src/translations/qhexedit_ru.ts src/translations/qhexedit_de.ts
           elif command -v lrelease-qt6 >/dev/null 2>&1; then
-            lrelease-qt6 src/rthextion.pro
-          elif [ -x "/usr/lib/qt6/bin/lrelease" ]; then
-            /usr/lib/qt6/bin/lrelease src/rthextion.pro
+            lrelease-qt6 src/translations/qhexedit_ru.ts src/translations/qhexedit_de.ts
           else
-            echo "lrelease not found"
-            ls -la /usr/lib/qt6/bin || true
+            echo "lrelease not found, searching..."
+            find /usr -name 'lrelease' 2>/dev/null
             exit 1
           fi
 
