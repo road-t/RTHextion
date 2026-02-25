@@ -163,6 +163,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             qt6-base-dev qt6-base-dev-tools qt6-tools-dev-tools qt6-l10n-tools \
+            clang \
             libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 \
             libfontconfig1-dev libfreetype6-dev libxrender-dev \
             libxext-dev libx11-dev libxcb1-dev \
@@ -198,8 +199,17 @@ jobs:
           echo "Using qmake: $QMAKE_BIN"
           "$QMAKE_BIN" -v
           mkdir build_ci && cd build_ci
-          "$QMAKE_BIN" ../src/rthextion.pro CONFIG+=release
-          make -j$(nproc)
+          "$QMAKE_BIN" ../src/rthextion.pro CONFIG+=release QMAKE_CC=clang QMAKE_CXX=clang++
+          set -o pipefail
+          make -j$(nproc) 2>&1 | tee build.log
+
+      - name: Upload Linux build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTHextion-Linux-build-log
+          path: build_ci/build.log
+          if-no-files-found: ignore
 
       - name: Prepare AppDir
         run: |
