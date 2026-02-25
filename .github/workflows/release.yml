@@ -183,8 +183,22 @@ jobs:
 
       - name: Build
         run: |
+          if command -v qmake6 >/dev/null 2>&1; then
+            QMAKE_BIN="$(command -v qmake6)"
+          elif [ -x "/usr/lib/qt6/bin/qmake" ]; then
+            QMAKE_BIN="/usr/lib/qt6/bin/qmake"
+          elif [ -x "/usr/lib/qt6/bin/qmake6" ]; then
+            QMAKE_BIN="/usr/lib/qt6/bin/qmake6"
+          else
+            echo "qmake (Qt6) not found"
+            find /usr -name 'qmake*' 2>/dev/null || true
+            exit 1
+          fi
+
+          echo "Using qmake: $QMAKE_BIN"
+          "$QMAKE_BIN" -v
           mkdir build_ci && cd build_ci
-          qmake6 ../src/rthextion.pro CONFIG+=release
+          "$QMAKE_BIN" ../src/rthextion.pro CONFIG+=release
           make -j$(nproc)
 
       - name: Prepare AppDir
