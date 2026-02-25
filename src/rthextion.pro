@@ -4,6 +4,10 @@ CONFIG += c++17
 TEMPLATE = app
 TARGET = RTHextion
 
+macx {
+    ICON = images/tj.icns
+}
+
 HEADERS = \
     appinfo.h \
     Datas.h \
