@@ -27,13 +27,18 @@ Download `RTHextion-Windows-x64.zip` from [Releases](https://github.com/road-t/R
 
 ### Linux
 
-1. Download `RTHextion-Linux-x86_64.tar.gz` from [Releases](https://github.com/road-t/RTHextion/releases)
-2. Extract: `tar -xzf RTHextion-Linux-x86_64.tar.gz -C ~/.local/opt/` (or any preferred location)
-3. Run: `~/.local/opt/usr/bin/rthextion`
+Download AppImage from [Releases](https://github.com/road-t/RTHextion/releases):
 
-**Or use the install script** (from release asset `install-linux.sh`):
+- `RTHextion-Linux-x86_64.AppImage` for x86_64/amd64
+- `RTHextion-Linux-arm64.AppImage` for aarch64/arm64
+
+Run:
 ```bash
-bash install-linux.sh
+chmod +x RTHextion-Linux-*.AppImage
+./RTHextion-Linux-x86_64.AppImage
 ```
 
-Note: GitHub Actions "Artifacts" are always downloaded as `.zip` containers. The actual Linux package inside release assets is `RTHextion-Linux-x86_64.tar.gz`.
+For arm64:
+```bash
+./RTHextion-Linux-arm64.AppImage
+```
