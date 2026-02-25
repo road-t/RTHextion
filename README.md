@@ -31,7 +31,9 @@ Download `RTHextion-Windows-x64.zip` from [Releases](https://github.com/road-t/R
 2. Extract: `tar -xzf RTHextion-Linux-x86_64.tar.gz -C ~/.local/opt/` (or any preferred location)
 3. Run: `~/.local/opt/usr/bin/rthextion`
 
-**Or use the install script** (if available in release):
+**Or use the install script** (from release asset `install-linux.sh`):
 ```bash
 bash install-linux.sh
 ```
+
+Note: GitHub Actions "Artifacts" are always downloaded as `.zip` containers. The actual Linux package inside release assets is `RTHextion-Linux-x86_64.tar.gz`.

@@ -160,7 +160,7 @@ jobs:
           name: RTHextion-Windows-x64
           path: RTHextion-Windows-x64.zip
 
-  # ─── Linux x64 (AppImage) ────────────────────────────────────────
+  # ─── Linux x86_64 ────────────────────────────────────────────────
   build-linux:
     runs-on: ubuntu-22.04
     steps:
@@ -250,6 +250,12 @@ jobs:
           name: RTHextion-Linux-x86_64
           path: RTHextion-Linux-x86_64.tar.gz
 
+      - name: Upload Linux installer script
+        uses: actions/upload-artifact@v4
+        with:
+          name: RTHextion-Linux-installer
+          path: install-linux.sh
+
   # ─── Create GitHub Release ───────────────────────────────────────
   release:
     needs: [build-macos-arm64, build-macos-x86_64, build-windows, build-linux]
@@ -275,4 +281,4 @@ jobs:
             artifacts/RTHextion-macOS-x86_64/RTHextion-macOS-x86_64.dmg
             artifacts/RTHextion-Windows-x64/RTHextion-Windows-x64.zip
             artifacts/RTHextion-Linux-x86_64/RTHextion-Linux-x86_64.tar.gz
-            install-linux.sh
+            artifacts/RTHextion-Linux-installer/install-linux.sh

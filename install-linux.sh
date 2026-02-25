@@ -13,6 +13,24 @@ NC='\033[0m' # No Color
 echo -e "${BLUE}RTHextion Linux Installer${NC}"
 echo
 
+ARCH_RAW="$(uname -m)"
+case "$ARCH_RAW" in
+  x86_64|amd64)
+    ARCH="x86_64"
+    ;;
+  aarch64|arm64)
+    ARCH="arm64"
+    ;;
+  *)
+    echo -e "${RED}Unsupported architecture: ${ARCH_RAW}${NC}"
+    echo "Supported: x86_64, arm64"
+    exit 1
+    ;;
+esac
+
+echo "Detected architecture: ${ARCH}"
+echo
+
 # Determine install location
 INSTALL_DIR="${HOME}/.local/opt/rthextion"
 BIN_LINK="${HOME}/.local/bin/rthextion"
@@ -26,11 +44,12 @@ echo
 # Get latest release
 echo -e "${BLUE}Fetching latest release...${NC}"
 RELEASE_URL=$(curl -s https://api.github.com/repos/road-t/RTHextion/releases/latest | \
-  grep "browser_download_url.*Linux-x86_64.tar.gz" | \
+  grep "browser_download_url.*Linux-${ARCH}.tar.gz" | \
   cut -d'"' -f4)
 
 if [ -z "$RELEASE_URL" ]; then
-  echo -e "${RED}Error: Could not find latest Linux release${NC}"
+  echo -e "${RED}Error: Could not find latest Linux ${ARCH} release${NC}"
+  echo "Use x86_64 build on x86_64 systems, or build from source for other targets."
   exit 1
 fi
 
