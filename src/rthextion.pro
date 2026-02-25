@@ -2,7 +2,7 @@ QT += core gui widgets
 CONFIG += c++17
 
 TEMPLATE = app
-TARGET = rthextion
+TARGET = RTHextion
 
 HEADERS = \
     Datas.h \

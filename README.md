@@ -23,7 +23,7 @@ Then drag **RTHextion.app** to the Applications folder as usual.
 
 ### Windows
 
-Download `RTHextion-Windows-x64.zip` from [Releases](https://github.com/road-t/RTHextion/releases), extract and run `rthextion.exe`.
+Download `RTHextion-Windows-x64.zip` from [Releases](https://github.com/road-t/RTHextion/releases), extract and run `RTHextion.exe`.
 
 ### Linux
 

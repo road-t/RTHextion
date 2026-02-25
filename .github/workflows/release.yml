@@ -38,26 +38,27 @@ jobs:
           MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
           MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
         run: |
-          ${{ env.QT_ROOT_DIR }}/bin/macdeployqt build_ci/rthextion.app
-          xattr -cr build_ci/rthextion.app
+          ${{ env.QT_ROOT_DIR }}/bin/macdeployqt build_ci/RTHextion.app
+          xattr -cr build_ci/RTHextion.app
 
           if [ -n "${MACOS_SIGN_IDENTITY}" ]; then
-            echo "Signing app with identity: ${MACOS_SIGN_IDENTITY}"
-            codesign --force --deep --options runtime --sign "${MACOS_SIGN_IDENTITY}" build_ci/rthextion.app
-            codesign --verify --deep --strict --verbose=2 build_ci/rthextion.app
+            echo "Signing app with Developer ID: ${MACOS_SIGN_IDENTITY}"
+            codesign --force --deep --options runtime --sign "${MACOS_SIGN_IDENTITY}" build_ci/RTHextion.app
+            codesign --verify --deep --strict --verbose=2 build_ci/RTHextion.app
           else
-            echo "MACOS_SIGN_IDENTITY is not set; building unsigned DMG"
+            echo "No Developer ID — ad-hoc signing"
+            codesign --force --deep --sign - build_ci/RTHextion.app
           fi
 
           mkdir -p dmg_root
-          cp -R build_ci/rthextion.app dmg_root/
+          cp -R build_ci/RTHextion.app dmg_root/
           create-dmg \
             --volname "RTHextion" \
             --window-pos 200 120 \
             --window-size 800 400 \
             --icon-size 110 \
-            --icon "rthextion.app" 220 190 \
-            --hide-extension "rthextion.app" \
+            --icon "RTHextion.app" 220 190 \
+            --hide-extension "RTHextion.app" \
             --app-drop-link 580 190 \
             "RTHextion-macOS-arm64.dmg" \
             "dmg_root/"
@@ -111,26 +112,27 @@ jobs:
           MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
           MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
         run: |
-          ${{ env.QT_ROOT_DIR }}/bin/macdeployqt build_ci/rthextion.app
-          xattr -cr build_ci/rthextion.app
+          ${{ env.QT_ROOT_DIR }}/bin/macdeployqt build_ci/RTHextion.app
+          xattr -cr build_ci/RTHextion.app
 
           if [ -n "${MACOS_SIGN_IDENTITY}" ]; then
-            echo "Signing app with identity: ${MACOS_SIGN_IDENTITY}"
-            codesign --force --deep --options runtime --sign "${MACOS_SIGN_IDENTITY}" build_ci/rthextion.app
-            codesign --verify --deep --strict --verbose=2 build_ci/rthextion.app
+            echo "Signing app with Developer ID: ${MACOS_SIGN_IDENTITY}"
+            codesign --force --deep --options runtime --sign "${MACOS_SIGN_IDENTITY}" build_ci/RTHextion.app
+            codesign --verify --deep --strict --verbose=2 build_ci/RTHextion.app
           else
-            echo "MACOS_SIGN_IDENTITY is not set; building unsigned DMG"
+            echo "No Developer ID — ad-hoc signing"
+            codesign --force --deep --sign - build_ci/RTHextion.app
           fi
 
           mkdir -p dmg_root
-          cp -R build_ci/rthextion.app dmg_root/
+          cp -R build_ci/RTHextion.app dmg_root/
           create-dmg \
             --volname "RTHextion" \
             --window-pos 200 120 \
             --window-size 800 400 \
             --icon-size 110 \
-            --icon "rthextion.app" 220 190 \
-            --hide-extension "rthextion.app" \
+            --icon "RTHextion.app" 220 190 \
+            --hide-extension "RTHextion.app" \
             --app-drop-link 580 190 \
             "RTHextion-macOS-x86_64.dmg" \
             "dmg_root/"
@@ -193,8 +195,8 @@ jobs:
         shell: cmd
         run: |
           mkdir RTHextion-Windows
-          copy build_ci\release\rthextion.exe RTHextion-Windows\
-          "%QT_ROOT_DIR%\bin\windeployqt" --release --no-translations RTHextion-Windows\rthextion.exe
+          copy build_ci\release\RTHextion.exe RTHextion-Windows\
+          "%QT_ROOT_DIR%\bin\windeployqt" --release --no-translations RTHextion-Windows\RTHextion.exe
 
       - name: Create ZIP
         shell: pwsh
@@ -257,19 +259,19 @@ jobs:
           set -o pipefail
           make -j$(nproc) 2>&1 | tee build.log
 
-      - name: Prepare AppDir
+      - name: Prepare AppImage resources
         run: |
-          mkdir -p AppDir/usr/bin AppDir/usr/share/icons/hicolor/256x256/apps
-          cp build_ci/rthextion AppDir/usr/bin/
-          convert 'src/images/qhexedit.ico[0]' AppDir/usr/share/icons/hicolor/256x256/apps/rthextion.png
-          cat > AppDir/rthextion.desktop << 'EOF'
-          [Desktop Entry]
-          Name=RTHextion
-          Exec=rthextion
-          Icon=rthextion
-          Type=Application
-          Categories=Utility;
-          EOF
+          # Desktop entry (no leading whitespace!)
+          cat > RTHextion.desktop << 'EOF'
+[Desktop Entry]
+Name=RTHextion
+Exec=RTHextion
+Icon=RTHextion
+Type=Application
+Categories=Utility;
+EOF
+          # Extract icon from ICO
+          convert 'src/images/qhexedit.ico[0]' RTHextion.png
 
       - name: Download linuxdeploy
         run: |
@@ -277,19 +279,30 @@ jobs:
           wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
           chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-qt-x86_64.AppImage
 
-      - name: Bundle Qt into AppDir
+      - name: Create AppImage
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
-          QMAKE: qmake6
         run: |
+          # Find qmake for the Qt plugin
+          if command -v qmake6 >/dev/null 2>&1; then
+            export QMAKE="$(command -v qmake6)"
+          elif [ -x "/usr/lib/qt6/bin/qmake" ]; then
+            export QMAKE="/usr/lib/qt6/bin/qmake"
+          fi
+          echo "QMAKE=$QMAKE"
+
           ./linuxdeploy-x86_64.AppImage \
             --appdir AppDir \
+            --executable build_ci/RTHextion \
+            --desktop-file RTHextion.desktop \
+            --icon-file RTHextion.png \
             --plugin qt \
             --output appimage
 
       - name: Prepare AppImage artifact
         run: |
-          mv RTHextion-*.AppImage RTHextion-Linux-x86_64.AppImage
+          mv RTHextion-*.AppImage RTHextion-Linux-x86_64.AppImage 2>/dev/null \
+            || mv RTHextion*.AppImage RTHextion-Linux-x86_64.AppImage
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -342,19 +355,17 @@ jobs:
           "$QMAKE_BIN" ../src/rthextion.pro CONFIG+=release QMAKE_CC=clang QMAKE_CXX=clang++
           make -j$(nproc)
 
-      - name: Prepare AppDir
+      - name: Prepare AppImage resources
         run: |
-          mkdir -p AppDir/usr/bin AppDir/usr/share/icons/hicolor/256x256/apps
-          cp build_ci/rthextion AppDir/usr/bin/
-          convert 'src/images/qhexedit.ico[0]' AppDir/usr/share/icons/hicolor/256x256/apps/rthextion.png
-          cat > AppDir/rthextion.desktop << 'EOF'
-          [Desktop Entry]
-          Name=RTHextion
-          Exec=rthextion
-          Icon=rthextion
-          Type=Application
-          Categories=Utility;
-          EOF
+          cat > RTHextion.desktop << 'EOF'
+[Desktop Entry]
+Name=RTHextion
+Exec=RTHextion
+Icon=RTHextion
+Type=Application
+Categories=Utility;
+EOF
+          convert 'src/images/qhexedit.ico[0]' RTHextion.png
 
       - name: Download linuxdeploy
         run: |
@@ -362,19 +373,29 @@ jobs:
           wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-aarch64.AppImage
           chmod +x linuxdeploy-aarch64.AppImage linuxdeploy-plugin-qt-aarch64.AppImage
 
-      - name: Bundle Qt into AppDir
+      - name: Create AppImage
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
-          QMAKE: qmake6
         run: |
+          if command -v qmake6 >/dev/null 2>&1; then
+            export QMAKE="$(command -v qmake6)"
+          elif [ -x "/usr/lib/qt6/bin/qmake" ]; then
+            export QMAKE="/usr/lib/qt6/bin/qmake"
+          fi
+          echo "QMAKE=$QMAKE"
+
           ./linuxdeploy-aarch64.AppImage \
             --appdir AppDir \
+            --executable build_ci/RTHextion \
+            --desktop-file RTHextion.desktop \
+            --icon-file RTHextion.png \
             --plugin qt \
             --output appimage
 
       - name: Prepare AppImage artifact
         run: |
-          mv RTHextion-*.AppImage RTHextion-Linux-arm64.AppImage
+          mv RTHextion-*.AppImage RTHextion-Linux-arm64.AppImage 2>/dev/null \
+            || mv RTHextion*.AppImage RTHextion-Linux-arm64.AppImage
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
