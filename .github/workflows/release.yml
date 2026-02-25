@@ -231,22 +231,25 @@ jobs:
           wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
           chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-qt-x86_64.AppImage
 
-      - name: Create AppImage
+      - name: Bundle Qt into AppDir
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
           QMAKE: qmake6
-          OUTPUT: RTHextion-Linux-x86_64.AppImage
         run: |
           ./linuxdeploy-x86_64.AppImage \
             --appdir AppDir \
             --plugin qt \
-            --output appimage
+            --output appdir
+
+      - name: Create Linux tarball
+        run: |
+          tar -C AppDir -czf RTHextion-Linux-x86_64.tar.gz .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: RTHextion-Linux-x86_64
-          path: RTHextion-Linux-x86_64.AppImage
+          path: RTHextion-Linux-x86_64.tar.gz
 
   # ─── Create GitHub Release ───────────────────────────────────────
   release:
@@ -272,4 +275,4 @@ jobs:
             artifacts/RTHextion-macOS-arm64/RTHextion-macOS-arm64.dmg
             artifacts/RTHextion-macOS-x86_64/RTHextion-macOS-x86_64.dmg
             artifacts/RTHextion-Windows-x64/RTHextion-Windows-x64.zip
-            artifacts/RTHextion-Linux-x86_64/RTHextion-Linux-x86_64.AppImage
+            artifacts/RTHextion-Linux-x86_64/RTHextion-Linux-x86_64.tar.gz
