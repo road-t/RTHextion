@@ -261,16 +261,14 @@ jobs:
 
       - name: Prepare AppImage resources
         run: |
-          # Desktop entry (no leading whitespace!)
-          cat > RTHextion.desktop << 'EOF'
-[Desktop Entry]
-Name=RTHextion
-Exec=RTHextion
-Icon=RTHextion
-Type=Application
-Categories=Utility;
-EOF
-          # Extract icon from ICO
+          printf '%s\n' \
+            '[Desktop Entry]' \
+            'Name=RTHextion' \
+            'Exec=RTHextion' \
+            'Icon=RTHextion' \
+            'Type=Application' \
+            'Categories=Utility;' \
+            > RTHextion.desktop
           convert 'src/images/qhexedit.ico[0]' RTHextion.png
 
       - name: Download linuxdeploy
@@ -357,14 +355,14 @@ EOF
 
       - name: Prepare AppImage resources
         run: |
-          cat > RTHextion.desktop << 'EOF'
-[Desktop Entry]
-Name=RTHextion
-Exec=RTHextion
-Icon=RTHextion
-Type=Application
-Categories=Utility;
-EOF
+          printf '%s\n' \
+            '[Desktop Entry]' \
+            'Name=RTHextion' \
+            'Exec=RTHextion' \
+            'Icon=RTHextion' \
+            'Type=Application' \
+            'Categories=Utility;' \
+            > RTHextion.desktop
           convert 'src/images/qhexedit.ico[0]' RTHextion.png
 
       - name: Download linuxdeploy
