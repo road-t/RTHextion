@@ -5,6 +5,7 @@ TEMPLATE = app
 TARGET = RTHextion
 
 HEADERS = \
+    appinfo.h \
     Datas.h \
     DumpScriptdialog.h \
     InsertScriptDialog.h \

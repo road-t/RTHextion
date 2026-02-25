@@ -5,15 +5,17 @@
 #include <QSettings>
 #include <QTranslator>
 
+#include "appinfo.h"
 #include "mainwindow.h"
 
 int main(int argc, char *argv[])
 {
     Q_INIT_RESOURCE(rthextion);
     QApplication app(argc, argv);
-    app.setApplicationName("RTHextion");
-    app.setOrganizationName("RTHextion");
-    app.setWindowIcon(QIcon(":images/rthextion.ico"));
+    app.setApplicationName(AppInfo::Name);
+    app.setApplicationVersion(AppInfo::Version);
+    app.setOrganizationName(AppInfo::Name);
+    app.setWindowIcon(QIcon(":/images/tj.png"));
 
     // Identify locale and load translation if available
     QSettings settings;

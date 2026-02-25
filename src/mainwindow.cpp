@@ -3,8 +3,7 @@
 #include <QApplication>
 #include <QStatusBar>
 #include <QLabel>
-
-#define RTHEXTION_VERSION "0.7"
+#include <QPixmap>
 #include <QAction>
 #include <QActionGroup>
 #include <QMenuBar>
@@ -17,6 +16,7 @@
 #include <QSettings>
 
 #include "QtWidgets/qpushbutton.h"
+#include "appinfo.h"
 #include "mainwindow.h"
 
 /*****************************************************************************/
@@ -60,8 +60,13 @@ void MainWindow::dropEvent(QDropEvent *event)
 /*****************************************************************************/
 void MainWindow::about()
 {
-    QMessageBox::about(this, tr("About RTHextion"),
-                       tr("RTHextion v%1\n\nA tribute to Translhextion hexeditor for ROM hacking based on QHexEdit widget.").arg(RTHEXTION_VERSION));
+    QMessageBox aboutBox(this);
+    aboutBox.setWindowTitle(tr("About %1").arg(AppInfo::Name));
+    aboutBox.setIconPixmap(QPixmap(":/images/tj.png").scaled(96, 96, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    aboutBox.setText(tr("%1 v%2\n\nA tribute to Translhextion hexeditor for ROM hacking based on QHexEdit widget.")
+                     .arg(AppInfo::Name)
+                     .arg(AppInfo::Version));
+    aboutBox.exec();
 }
 
 void MainWindow::dataChanged()

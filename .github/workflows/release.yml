@@ -269,7 +269,7 @@ jobs:
             'Type=Application' \
             'Categories=Utility;' \
             > RTHextion.desktop
-          convert 'src/images/qhexedit.ico[0]' RTHextion.png
+          cp src/images/tj.png RTHextion.png
 
       - name: Download linuxdeploy
         run: |
@@ -310,7 +310,7 @@ jobs:
 
   # ─── Linux arm64 (AppImage) ──────────────────────────────────────
   build-linux-arm64:
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-22.04-arm
     steps:
       - uses: actions/checkout@v4
 
@@ -363,7 +363,7 @@ jobs:
             'Type=Application' \
             'Categories=Utility;' \
             > RTHextion.desktop
-          convert 'src/images/qhexedit.ico[0]' RTHextion.png
+          cp src/images/tj.png RTHextion.png
 
       - name: Download linuxdeploy
         run: |
