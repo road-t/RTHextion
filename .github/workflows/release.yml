@@ -25,7 +25,7 @@ jobs:
       - name: Build
         run: |
           mkdir build_ci && cd build_ci
-          ${{ env.QT_ROOT_DIR }}/bin/qmake ../src/rthextion.pro CONFIG+=release QMAKE_APPLE_DEVICE_ARCHS=arm64
+          ${{ env.QT_ROOT_DIR }}/bin/qmake ../src/RTHextion.pro CONFIG+=release QMAKE_APPLE_DEVICE_ARCHS=arm64
           make -j$(sysctl -n hw.logicalcpu)
 
       - name: Install DMG packager
@@ -99,7 +99,7 @@ jobs:
       - name: Build
         run: |
           mkdir build_ci && cd build_ci
-          ${{ env.QT_ROOT_DIR }}/bin/qmake ../src/rthextion.pro CONFIG+=release QMAKE_APPLE_DEVICE_ARCHS=x86_64
+          ${{ env.QT_ROOT_DIR }}/bin/qmake ../src/RTHextion.pro CONFIG+=release QMAKE_APPLE_DEVICE_ARCHS=x86_64
           make -j$(sysctl -n hw.logicalcpu)
 
       - name: Install DMG packager
@@ -177,7 +177,7 @@ jobs:
         shell: cmd
         run: |
           if exist "%QT_ROOT_DIR%\bin\lrelease.exe" (
-            "%QT_ROOT_DIR%\bin\lrelease.exe" src\rthextion.pro
+            "%QT_ROOT_DIR%\bin\lrelease.exe" src\RTHextion.pro
           ) else (
             echo lrelease.exe not found in %QT_ROOT_DIR%\bin
             exit /b 1
@@ -188,7 +188,7 @@ jobs:
         run: |
           mkdir build_ci
           cd build_ci
-          "%QT_ROOT_DIR%\bin\qmake" ..\src\rthextion.pro CONFIG+=release
+          "%QT_ROOT_DIR%\bin\qmake" ..\src\RTHextion.pro CONFIG+=release
           nmake
 
       - name: Deploy Qt dependencies
@@ -229,9 +229,9 @@ jobs:
         run: |
           # Generate from TS files directly to avoid qmake/qtchooser differences
           if [ -x "/usr/lib/qt6/bin/lrelease" ]; then
-            /usr/lib/qt6/bin/lrelease src/translations/qhexedit_ru.ts src/translations/qhexedit_de.ts
+            /usr/lib/qt6/bin/lrelease src/translations/ru.ts src/translations/de.ts
           elif command -v lrelease-qt6 >/dev/null 2>&1; then
-            lrelease-qt6 src/translations/qhexedit_ru.ts src/translations/qhexedit_de.ts
+            lrelease-qt6 src/translations/ru.ts src/translations/de.ts
           else
             echo "lrelease not found, searching..."
             find /usr -name 'lrelease' 2>/dev/null
@@ -255,7 +255,7 @@ jobs:
           echo "Using qmake: $QMAKE_BIN"
           "$QMAKE_BIN" -v
           mkdir build_ci && cd build_ci
-          "$QMAKE_BIN" ../src/rthextion.pro CONFIG+=release QMAKE_CC=clang QMAKE_CXX=clang++
+          "$QMAKE_BIN" ../src/RTHextion.pro CONFIG+=release QMAKE_CC=clang QMAKE_CXX=clang++
           set -o pipefail
           make -j$(nproc) 2>&1 | tee build.log
 
@@ -340,9 +340,9 @@ jobs:
       - name: Generate .qm translation files
         run: |
           if [ -x "/usr/lib/qt6/bin/lrelease" ]; then
-            /usr/lib/qt6/bin/lrelease src/translations/qhexedit_ru.ts src/translations/qhexedit_de.ts
+            /usr/lib/qt6/bin/lrelease src/translations/ru.ts src/translations/de.ts src/translations/en.ts src/translations/es.ts src/translations/pt.ts src/translations/ja.ts src/translations/zh_CN.ts
           elif command -v lrelease-qt6 >/dev/null 2>&1; then
-            lrelease-qt6 src/translations/qhexedit_ru.ts src/translations/qhexedit_de.ts
+            lrelease-qt6 src/translations/ru.ts src/translations/de.ts src/translations/en.ts src/translations/es.ts src/translations/pt.ts src/translations/ja.ts src/translations/zh_CN.ts
           else
             echo "lrelease not found"
             exit 1
@@ -362,7 +362,7 @@ jobs:
           fi
 
           mkdir build_ci && cd build_ci
-          "$QMAKE_BIN" ../src/rthextion.pro CONFIG+=release QMAKE_CC=clang QMAKE_CXX=clang++
+          "$QMAKE_BIN" ../src/RTHextion.pro CONFIG+=release QMAKE_CC=clang QMAKE_CXX=clang++
           make -j$(nproc)
 
       - name: Prepare AppImage resources

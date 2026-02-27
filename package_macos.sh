@@ -29,16 +29,16 @@ rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
 
-"$QT_BIN/qmake" ../src/rthextion.pro CONFIG+=release
+"$QT_BIN/qmake" ../src/RTHextion.pro CONFIG+=release
 make -j"$(sysctl -n hw.logicalcpu)"
 
-APP="$BUILD_DIR/rthextion.app"
+APP="$BUILD_DIR/RTHextion.app"
 echo "Built: $APP"
 
 # ── Deploy Qt libraries ─────────────────────────────────────────────
 "$QT_BIN/macdeployqt" "$APP" -dmg
 
-DMG="$BUILD_DIR/rthextion.dmg"
+DMG="$BUILD_DIR/RTHextion.dmg"
 FINAL="$SCRIPT_DIR/RTHextion-macOS-$(uname -m).dmg"
 mv "$DMG" "$FINAL"
 
