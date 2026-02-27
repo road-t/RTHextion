@@ -54,13 +54,13 @@ QVariant PointerListModel::data(const QModelIndex &index, int role) const
         return QVariant();
 
     if (index.column() == 0)
-        return QString::number(key, 16).toUpper();
-
-    if (index.column() == 1)
         return QString::number(value, 16).toUpper();
 
+    if (index.column() == 1)
+        return QString::number(key, 16).toUpper();
+
     if (index.column() == 2)
-        return getOffsetText(value);
+        return getOffsetText(key);
 
     return QVariant();
 }
@@ -249,7 +249,7 @@ QString PointerListModel::getOffsetText(qint64 offset) const
     QString txt;
     auto _tb = _hexEdit->getTranslationTable();
 
-    auto data = _hexEdit->dataAt(offset, 0x40);
+    auto data = _hexEdit->dataAt(_pointers[offset], 0x40);
 
     if (_tb)
     {
@@ -284,7 +284,7 @@ void PointerListModel::rebuildRowOrder()
 
     auto comparator = [this](qint64 lhs, qint64 rhs)
     {
-        if (_sortColumn == 1)
+        if (_sortColumn == 0)
         {
             const qint64 lv = _pointers.value(lhs);
             const qint64 rv = _pointers.value(rhs);
