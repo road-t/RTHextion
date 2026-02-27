@@ -258,6 +258,9 @@ public:
      */
     bool isModified();
 
+    bool canUndo();
+    bool canRedo();
+
     /*! Find last occurrence of ba in QHexEdit data
      * \param ba Data to find
      * \param from Point where the search starts
@@ -319,7 +322,13 @@ signals:
     /*! The signal is emitted when selection is chenged. */
     void selectionChanged(qint64 start, qint64 end);
 
-/*! \cond docNever */
+    /*! The signal is emitted when undo availability changes. */
+    void undoAvailable(bool available);
+
+    /*! The signal is emitted when redo availability changes. */
+    void redoAvailable(bool available);
+
+    /*! \cond docNever */
 public:
     ~QHexEdit();
 
@@ -369,7 +378,7 @@ public:
 
     qint64 getPointerOfsset(qint64 dataOffset);
 
-    qint64 findPointers(bool bigEndian = false, bool searchBefore = true, bool searchAfter = false, const char *firstPrintable = nullptr, const char *lastPrintable = nullptr, char stopChar = 0, bool excludeSelection = false);
+    qint64 findPointers(int pointerSize = 4, bool bigEndian = false, bool searchBefore = true, bool searchAfter = false, const char *firstPrintable = nullptr, const char *lastPrintable = nullptr, char stopChar = 0, bool excludeSelection = false);
 
     void setHexCaps(const bool isCaps);
     bool hexCaps();

@@ -277,26 +277,49 @@ qint64 QHexEdit::cursorPosition(QPoint pos)
     {
         _editAreaIsAscii = true;
 
-        auto x = (posX - _pxPosAsciiX) / _pxCharWidth;
-        auto y = (posY / _pxCharHeight) * 2 * _bytesPerLine;
+        const int row = posY / _pxCharHeight;
+        if (row < 0)
+            return -1;
+
+        const int xPx = posX - _pxPosAsciiX;
+        auto y = row * 2 * _bytesPerLine;
+        const qint64 rowStart = static_cast<qint64>(row) * _bytesPerLine;
+        const qint64 rowEnd = qMin(rowStart + _bytesPerLine, static_cast<qint64>(_dataShown.size()));
+
+        if (rowStart >= rowEnd)
+            return -1;
 
         if (_tb)
         {
-            uint16_t lineWidth = 0;
-            auto starting = (posY / _pxCharHeight) * _bytesPerLine;
-            uint8_t symbolsOffset = 0;
+            int consumedWidthPx = 0;
+            qint64 symbolIndex = 0;
 
-            while (lineWidth <= x)
+            while ((rowStart + symbolIndex) < rowEnd)
             {
-                QString sym = _tb->encodeSymbol(_dataShown.at(starting++));
-                lineWidth += sym.size();
-                symbolsOffset++;
+                const QString sym = _tb->encodeSymbol(_dataShown.at(static_cast<int>(rowStart + symbolIndex)));
+                const int symWidthPx = _pxCharWidth * qMax(1, sym.size());
+
+                if (xPx < (consumedWidthPx + symWidthPx))
+                    break;
+
+                consumedWidthPx += symWidthPx;
+                ++symbolIndex;
             }
 
-            x = ((symbolsOffset <= _bytesPerLine) ? symbolsOffset : _bytesPerLine) - 1;
-        }
+            const qint64 rowByteCount = rowEnd - rowStart;
+            if (rowByteCount <= 0 || symbolIndex >= rowByteCount)
+                return -1;
 
-        result = _bPosFirst * 2 + x * 2 + y;
+            result = _bPosFirst * 2 + static_cast<int>(symbolIndex) * 2 + y;
+        }
+        else
+        {
+            const int x = xPx / _pxCharWidth;
+            if (x < 0 || x >= (rowEnd - rowStart))
+                return -1;
+
+            result = _bPosFirst * 2 + x * 2 + y;
+        }
     }
 
     return result;
@@ -604,6 +627,16 @@ void QHexEdit::jumpTo(qint64 offset, bool relative)
 bool QHexEdit::isModified()
 {
     return _modified;
+}
+
+bool QHexEdit::canUndo()
+{
+    return _undoStack->canUndo();
+}
+
+bool QHexEdit::canRedo()
+{
+    return _undoStack->canRedo();
 }
 
 qint64 QHexEdit::lastIndexOf(const QByteArray &ba, qint64 from)
@@ -1230,8 +1263,9 @@ void QHexEdit::paintEvent(QPaintEvent *event)
         {
             QByteArray hex;
 
-            uint32_t pxPosX = _pxPosHexX - pxOfsX;
-            uint32_t pxPosAsciiX2 = _pxPosAsciiX - pxOfsX;
+            int pxPosX = _pxPosHexX - pxOfsX;
+            int pxPosAsciiX2 = _pxPosAsciiX - pxOfsX;
+            const int asciiRowStartX = pxPosAsciiX2;
             qint64 bPosLine = row * _bytesPerLine;
 
             // WARNING: probably slow here
@@ -1327,7 +1361,7 @@ void QHexEdit::paintEvent(QPaintEvent *event)
             }
 
             if (_tb)
-                _asciiAreaMaxWidth = qMax(_asciiAreaMaxWidth, pxPosAsciiX2);
+                _asciiAreaMaxWidth = qMax(_asciiAreaMaxWidth, static_cast<uint32_t>(qMax(0, pxPosAsciiX2 - asciiRowStartX)));
         }
 
         painter.setBackgroundMode(Qt::TransparentMode);
@@ -1551,6 +1585,8 @@ void QHexEdit::dataChangedPrivate(int)
     _modified = _undoStack->index() != 0;
     adjust();
     emit dataChanged();
+    emit undoAvailable(_undoStack->canUndo());
+    emit redoAvailable(_undoStack->canRedo());
 }
 
 void QHexEdit::refresh()
@@ -1626,8 +1662,12 @@ void QHexEdit::clearPointers()
  * @param excludeSelection - whether to exclude the current selection from search (only applicable if both searchBefore and searchAfter are true)
  * @return number of pointers found
  */
-qint64 QHexEdit::findPointers(bool bigEndian, bool searchBefore, bool searchAfter, const char *firstPrintable, const char *lastPrintable, char stopChar, bool excludeSelection)
+qint64 QHexEdit::findPointers(int pointerSize, bool bigEndian, bool searchBefore, bool searchAfter, const char *firstPrintable, const char *lastPrintable, char stopChar, bool excludeSelection)
 {
+    // Validate pointer size
+    if (pointerSize < 2 || pointerSize > 4)
+        pointerSize = 4;
+
     const QByteArray fileData = data();
     const char *buf = fileData.constData();
     const qint64 fileSize = fileData.size();
@@ -1642,18 +1682,20 @@ qint64 QHexEdit::findPointers(bool bigEndian, bool searchBefore, bool searchAfte
 
     struct SearchRange
     {
-        qint64 start;
-        qint64 end;
+        qint64 startOffset;
+        qint64 endOffsetExclusive;
     };
 
+    const qint64 maxDecodedStartExclusive = fileSize - pointerSize + 1;
+
     QVector<SearchRange> ranges;
-    auto addRange = [&ranges](qint64 start, qint64 end)
+    auto addRange = [&ranges](qint64 startOffset, qint64 endOffsetExclusive)
     {
-        if (end - start >= 4)
+        if (startOffset < endOffsetExclusive)
         {
             SearchRange range;
-            range.start = start;
-            range.end = end;
+            range.startOffset = startOffset;
+            range.endOffsetExclusive = endOffsetExclusive;
             ranges.push_back(range);
         }
     };
@@ -1668,18 +1710,20 @@ qint64 QHexEdit::findPointers(bool bigEndian, bool searchBefore, bool searchAfte
         addRange(0, fileSize);
     }
 
-    auto isCandidateOffset = [&](quint32 value) -> bool
+    auto isCandidateOffset = [&](quint64 value) -> bool
     {
-        if (value < static_cast<quint32>(selBegin) || value >= static_cast<quint32>(selEnd))
+        const qint64 targetOffset = static_cast<qint64>(value);
+
+        if (targetOffset < selBegin || targetOffset >= selEnd)
             return false;
 
         if (!firstPrintable || !lastPrintable)
             return true;
 
-        if (value == 0)
+        if (targetOffset == 0)
             return true;
 
-        const char prevChar = buf[value - 1];
+        const char prevChar = buf[targetOffset - 1];
         return !(prevChar >= *firstPrintable && prevChar <= *lastPrintable);
     };
 
@@ -1690,7 +1734,11 @@ qint64 QHexEdit::findPointers(bool bigEndian, bool searchBefore, bool searchAfte
 
     for (const auto &range : ranges)
     {
-        for (qint64 j = range.start; j <= range.end - 4; ++j)
+        const qint64 startOffset = qBound(static_cast<qint64>(0), range.startOffset, fileSize);
+        const qint64 endOffsetExclusive = qBound(static_cast<qint64>(0), range.endOffsetExclusive, fileSize);
+        const qint64 decodeEndExclusive = qMin(endOffsetExclusive, maxDecodedStartExclusive);
+
+        for (qint64 j = startOffset; j < decodeEndExclusive; ++j)
         {
             if (stopChar && buf[j] == stopChar)
             {
@@ -1698,22 +1746,39 @@ qint64 QHexEdit::findPointers(bool bigEndian, bool searchBefore, bool searchAfte
                 continue;
             }
 
-            quint32 value;
+            quint64 value = 0;
             const uchar *ptr = reinterpret_cast<const uchar *>(buf + j);
-            if (bigEndian)
-                value = qFromBigEndian<quint32>(ptr);
-            else
-                value = qFromLittleEndian<quint32>(ptr);
+
+            if (pointerSize == 2)
+            {
+                const quint16 val16 = bigEndian ? qFromBigEndian<quint16>(ptr) : qFromLittleEndian<quint16>(ptr);
+                value = static_cast<quint64>(val16);
+            }
+            else if (pointerSize == 3)
+            {
+                if (bigEndian)
+                {
+                    value = (static_cast<quint64>(ptr[0]) << 16) | (static_cast<quint64>(ptr[1]) << 8) | static_cast<quint64>(ptr[2]);
+                }
+                else
+                {
+                    value = static_cast<quint64>(ptr[0]) | (static_cast<quint64>(ptr[1]) << 8) | (static_cast<quint64>(ptr[2]) << 16);
+                }
+            }
+            else // 4 bytes
+            {
+                const quint32 val32 = bigEndian ? qFromBigEndian<quint32>(ptr) : qFromLittleEndian<quint32>(ptr);
+                value = static_cast<quint64>(val32);
+            }
 
             if (isCandidateOffset(value))
             {
-                _pointers.addPointer(j, value);
+                _pointers.addPointer(j, static_cast<qint64>(value));
                 ++found;
             }
             ++its;
         }
     }
 
-    qDebug() << found << " pointers found in " << its << " iterations, " << timer.elapsed() << "ms elapsed";
     return found;
 }
