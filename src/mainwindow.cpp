@@ -14,10 +14,20 @@
 #include <QDropEvent>
 #include <QGridLayout>
 #include <QSettings>
+#include <QDir>
 
 #include "QtWidgets/qpushbutton.h"
 #include "appinfo.h"
+#include "langtranslator.h"
 #include "mainwindow.h"
+
+namespace
+{
+    const char *kLastFileDirKey = "Paths/LastFileDir";
+    const char *kLastTableDirKey = "Paths/LastTableDir";
+    const char *kLastDumpDirKey = "Paths/LastDumpDir";
+    const char *kMainWindowStateKey = "MainWindow/State";
+}
 
 /*****************************************************************************/
 /* Public methods */
@@ -31,9 +41,16 @@ MainWindow::MainWindow()
 /*****************************************************************************/
 /* Protected methods */
 /*****************************************************************************/
-void MainWindow::closeEvent(QCloseEvent *)
+void MainWindow::closeEvent(QCloseEvent *event)
 {
+    if (!maybeSave())
+    {
+        event->ignore();
+        return;
+    }
+
     writeSettings();
+    event->accept();
 }
 
 
@@ -61,22 +78,81 @@ void MainWindow::dropEvent(QDropEvent *event)
 void MainWindow::about()
 {
     QMessageBox aboutBox(this);
-    aboutBox.setWindowTitle(tr("About %1").arg(AppInfo::Name));
+    aboutBox.setWindowTitle(tr("About"));
     aboutBox.setIconPixmap(QPixmap(":/images/tj.png").scaled(96, 96, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-    aboutBox.setText(tr("%1 v%2\n\nA tribute to Translhextion hexeditor for ROM hacking based on QHexEdit widget.")
-                     .arg(AppInfo::Name)
-                     .arg(AppInfo::Version));
+
+    // Build translated body parts separately to avoid huge translation strings
+    QString versionLine = QStringLiteral("%1 v%2").arg(AppInfo::Name).arg(AppInfo::Version);
+    QString descriptionLine = tr("This is a hex editor for retro game translation/ROM hacking.\nA tribute to Translhextion editor made by Januschan in early 00's.");
+    QString copyrightLine = tr("Ilya 'Road Tripper' Annikov © 2021-2026. All rights reserved.");
+    QString githubLine = QStringLiteral("GitHub: https://github.com/road-t/RTHextion");
+
+    QString rawText = versionLine + "\n\n" + descriptionLine + "\n\n" + copyrightLine + "\n\n" + githubLine;
+
+    static const QString urlPlain = QStringLiteral("https://github.com/road-t/RTHextion");
+    static const QString urlLink = QStringLiteral("<a href='https://github.com/road-t/RTHextion'>https://github.com/road-t/RTHextion</a>");
+    QString htmlText = rawText.toHtmlEscaped()
+                           .replace(QLatin1Char('\n'), QLatin1String("<br>"))
+                           .replace(urlPlain, urlLink);
+
+    aboutBox.setTextFormat(Qt::RichText);
+    aboutBox.setText(htmlText);
+    aboutBox.setTextInteractionFlags(Qt::TextBrowserInteraction);
+
+    const auto labels = aboutBox.findChildren<QLabel *>();
+    for (QLabel *label : labels)
+    {
+        if (label->text().contains(QStringLiteral("https://github.com/road-t/RTHextion")))
+        {
+            label->setTextInteractionFlags(Qt::TextBrowserInteraction);
+            label->setOpenExternalLinks(true);
+            break;
+        }
+    }
+
+    // Widen dialog ~30% via a horizontal spacer in the internal grid layout
+    if (auto *layout = qobject_cast<QGridLayout *>(aboutBox.layout()))
+    {
+        auto *spacer = new QSpacerItem(560, 0, QSizePolicy::Minimum, QSizePolicy::Expanding);
+        layout->addItem(spacer, layout->rowCount(), 0, 1, layout->columnCount());
+    }
+
     aboutBox.exec();
 }
 
 void MainWindow::dataChanged()
 {
     setWindowModified(hexEdit->isModified());
+    updateActionStates();
+}
+
+void MainWindow::closeFile()
+{
+    if (!maybeSave())
+        return;
+
+    hexEdit->setData(QByteArray());
+    hexEdit->clearPointers();
+    showPointersAct->setEnabled(false);
+    setCurrentFile("");
+    statusBar()->showMessage(tr("File closed"), 2000);
+}
+
+void MainWindow::newFile()
+{
+    if (!maybeSave())
+        return;
+
+    hexEdit->setData(QByteArray());
+    hexEdit->clearPointers();
+    showPointersAct->setEnabled(false);
+    setCurrentFile("");
+    statusBar()->showMessage(tr("New file created"), 2000);
 }
 
 void MainWindow::open()
 {
-    QString fileName = QFileDialog::getOpenFileName(this);
+    const QString fileName = QFileDialog::getOpenFileName(this, tr("Open file"), lastDirectory(kLastFileDirKey));
 
     if (!fileName.isEmpty()) {
         loadFile(fileName);
@@ -85,14 +161,31 @@ void MainWindow::open()
 
 void MainWindow::revert()
 {
-    QMessageBox msg(QMessageBox::Warning, nullptr, tr("Are you sure want to load last saved version and lose all the changes?"), QMessageBox::Yes | QMessageBox::Cancel, this);
-    auto result = msg.exec();
-
-    if (result == QMessageBox::Yes)
+    if (isUntitled)
     {
-        QSettings settings;
+        // For new files, just clear the data
+        QMessageBox msg(QMessageBox::Warning, nullptr, tr("Clear all changes?"), QMessageBox::Yes | QMessageBox::Cancel, this);
+        auto result = msg.exec();
 
-        loadFile(settings.value("RecentFile0").toString());
+        if (result == QMessageBox::Yes)
+        {
+            hexEdit->setData(QByteArray());
+            hexEdit->clearPointers();
+            showPointersAct->setEnabled(false);
+            statusBar()->showMessage(tr("Data cleared"), 2000);
+        }
+    }
+    else
+    {
+        // For existing files, reload from disk
+        QMessageBox msg(QMessageBox::Warning, nullptr, tr("Are you sure want to load last saved version and lose all the changes?"), QMessageBox::Yes | QMessageBox::Cancel, this);
+        auto result = msg.exec();
+
+        if (result == QMessageBox::Yes)
+        {
+            loadFile(curFile);
+            statusBar()->showMessage(tr("File reverted"), 2000);
+        }
     }
 }
 
@@ -130,7 +223,11 @@ bool MainWindow::save()
 
 bool MainWindow::saveAs()
 {
-    QString fileName = QFileDialog::getSaveFileName(this, tr("Save As"), curFile);
+    QString initialPath = curFile;
+    if (initialPath.isEmpty())
+        initialPath = lastDirectory(kLastFileDirKey);
+
+    QString fileName = QFileDialog::getSaveFileName(this, tr("Save As"), initialPath);
 
     if (fileName.isEmpty())
         return false;
@@ -140,7 +237,7 @@ bool MainWindow::saveAs()
 
 void MainWindow::saveSelectionToReadableFile()
 {
-    QString fileName = QFileDialog::getSaveFileName(this, tr("Save To Readable File"));
+    QString fileName = QFileDialog::getSaveFileName(this, tr("Save dump to file"), lastDirectory(kLastDumpDirKey));
 
     if (!fileName.isEmpty())
     {
@@ -165,12 +262,13 @@ void MainWindow::saveSelectionToReadableFile()
         QApplication::restoreOverrideCursor();
 
         statusBar()->showMessage(tr("File saved"), 2000);
+        rememberDirectory(kLastDumpDirKey, fileName);
     }
 }
 
 void MainWindow::saveToReadableFile()
 {
-    QString fileName = QFileDialog::getSaveFileName(this, tr("Save To Readable File"));
+    QString fileName = QFileDialog::getSaveFileName(this, tr("Save dump to file"), lastDirectory(kLastDumpDirKey));
     if (!fileName.isEmpty())
     {
         QFile file(fileName);
@@ -187,6 +285,7 @@ void MainWindow::saveToReadableFile()
         QApplication::restoreOverrideCursor();
 
         statusBar()->showMessage(tr("File saved"), 2000);
+        rememberDirectory(kLastDumpDirKey, fileName);
     }
 }
 
@@ -242,7 +341,7 @@ void MainWindow::showPointersDialog()
 
 bool MainWindow::loadTable()
 {
-    auto fileName = QFileDialog::getOpenFileName(this, tr("Load translation table"), nullptr, "Tables (*.tbl *.tab *.table);;Text files (*.txt)");
+    auto fileName = QFileDialog::getOpenFileName(this, tr("Load translation table"), lastDirectory(kLastTableDirKey), "Tables (*.tbl *.tab *.table);;Text files (*.txt)");
 
     if (!fileName.isEmpty())
     {
@@ -255,6 +354,7 @@ bool MainWindow::loadTable()
         useTableAct->setDisabled(false);
         editTableAct->setDisabled(false);
         updateScriptMenuState();
+        rememberDirectory(kLastTableDirKey, fileName);
     }
 
     return true;
@@ -284,22 +384,130 @@ void MainWindow::setLanguage()
         return;
 
     const QString language = action->data().toString();
+    const QString languageShort = language.left(2);
 
-    // Load and install new translator immediately
-    QTranslator *translator = new QTranslator(this);
-    if (translator->load(QString(":/translations/qhexedit_") + language))
+    // Remove previous custom translator (if any)
+    const auto translators = qApp->findChildren<LangTranslator *>();
+    for (auto *t : translators)
+    {
+        qApp->removeTranslator(t);
+        t->deleteLater();
+    }
+
+    // Load and install new translator
+    LangTranslator *translator = new LangTranslator(qApp);
+    if (translator->load(QStringLiteral(":/translations/") + language + QStringLiteral(".lang")) ||
+        translator->load(QStringLiteral(":/translations/") + languageShort + QStringLiteral(".lang")))
     {
         qApp->installTranslator(translator);
     }
+    else
+    {
+        delete translator;
+    }
+
+    LangTranslator::setCurrentLanguage(language);
 
     // Save language preference
     QSettings settings;
     settings.setValue("Language", language);
 
-    // Now show message in the newly selected language
-    QMessageBox::information(this,
-                             tr("Language"),
-                             tr("Language will be applied after restart."));
+    // Retranslate everything immediately
+    retranslateUi();
+}
+
+void MainWindow::changeEvent(QEvent *event)
+{
+    if (event->type() == QEvent::LanguageChange)
+        retranslateUi();
+    QMainWindow::changeEvent(event);
+}
+
+void MainWindow::retranslateUi()
+{
+    // Actions - File
+    newAct->setText(tr("New"));
+    newAct->setStatusTip(tr("Create a new file"));
+    openAct->setText(tr("Open..."));
+    openAct->setStatusTip(tr("Open an existing file"));
+    saveAct->setText(tr("Save"));
+    saveAct->setStatusTip(tr("Save the document to disk"));
+    closeAct->setText(tr("Close"));
+    closeAct->setStatusTip(tr("Close the current file"));
+    saveAsAct->setText(tr("Save As..."));
+    saveAsAct->setStatusTip(tr("Save the document under a new name"));
+    saveReadable->setText(tr("Save Dump..."));
+    saveReadable->setStatusTip(tr("Save document as dump"));
+    revertAct->setText(tr("Revert"));
+    revertAct->setStatusTip(tr("Revert file to last saved version"));
+    exitAct->setText(tr("Exit"));
+    exitAct->setStatusTip(tr("Exit the application"));
+
+    // Actions - Edit
+    undoAct->setText(tr("Undo"));
+    redoAct->setText(tr("Redo"));
+    saveSelectionReadable->setText(tr("Save selection as dump"));
+    saveSelectionReadable->setStatusTip(tr("Save selection as dump"));
+
+    // Actions - Table
+    loadTableAct->setText(tr("Load table"));
+    loadTableAct->setStatusTip(tr("Load translation table"));
+    useTableAct->setText(tr("Use table"));
+    useTableAct->setStatusTip(tr("Use translation table"));
+    editTableAct->setText(tr("Edit table"));
+    editTableAct->setStatusTip(tr("Edit translation table"));
+
+    // Actions - Script
+    dumpScriptAct->setText(tr("Dump script"));
+    dumpScriptAct->setStatusTip(tr("Dump text script"));
+    insertScriptAct->setText(tr("Insert script"));
+    insertScriptAct->setStatusTip(tr("Insert text script"));
+
+    // Actions - Pointers
+    findPointersAct->setText(tr("Find pointers"));
+    findPointersAct->setStatusTip(tr("Find pointers for selected text"));
+    showPointersAct->setText(tr("Show pointers"));
+
+    // Actions - Search
+    findAct->setText(tr("Find/Replace"));
+    findAct->setStatusTip(tr("Show the Dialog for finding and replacing"));
+    findNextAct->setText(tr("Find next"));
+    findNextAct->setStatusTip(tr("Find next occurrence of the searched pattern"));
+    gotoAct->setText(tr("Jump to offset..."));
+    gotoAct->setStatusTip(tr("Go to specified offset"));
+
+    // Actions - Help/Options
+    aboutAct->setText(tr("About %1").arg(AppInfo::Name));
+    aboutAct->setStatusTip(tr("Show the application's About box"));
+    optionsAct->setText(tr("Preferences"));
+    optionsAct->setStatusTip(tr("Show the Dialog to select applications options"));
+
+    // Menu titles
+    fileMenu->setTitle(tr("File"));
+    editMenu->setTitle(tr("Edit"));
+    tableMenu->setTitle(tr("Table"));
+    scriptMenu->setTitle(tr("Script"));
+    pointersMenu->setTitle(tr("Pointers"));
+    viewMenu->setTitle(tr("View"));
+    toolbarMenu->setTitle(tr("Toolbar"));
+    languageMenu->setTitle(tr("Language"));
+    helpMenu->setTitle(tr("Help"));
+
+    // Toolbar names and their View menu entries
+    fileToolBar->setWindowTitle(tr("File"));
+    editToolBar->setWindowTitle(tr("Edit"));
+    searchToolBar->setWindowTitle(tr("Search"));
+    fileToolBar->toggleViewAction()->setText(tr("File"));
+    editToolBar->toggleViewAction()->setText(tr("Actions"));
+    searchToolBar->toggleViewAction()->setText(tr("Search"));
+    resetToolbarsAct->setText(tr("Reset"));
+
+    // Status bar labels
+    lbAddressName->setText(tr("Address:"));
+    lbSizeName->setText(tr("Size:"));
+    lbOverwriteModeName->setText(tr("Mode:"));
+    lbEndiannes->setText(hexEdit->bigEndian ? tr("Big-endian") : tr("Little-endian"));
+    setOverwriteMode(hexEdit->overwriteMode());
 }
 
 void MainWindow::editTable()
@@ -329,17 +537,6 @@ void MainWindow::insertScript()
     insertScriptDialog->show();
 }
 
-void MainWindow::findPointers()
-{
-    auto found = hexEdit->findPointers(false, true, true, nullptr, nullptr, 0, false);
-
-    if (found)
-        showPointersAct->setEnabled(true);
-
-    QMessageBox msg(QMessageBox::Information, nullptr, tr("Pointers found: %1").arg(found), QMessageBox::Ok, this);
-    msg.exec();
-}
-
 /*****************************************************************************/
 /* Private Methods */
 /*****************************************************************************/
@@ -357,6 +554,8 @@ void MainWindow::init()
 
     connect(hexEdit, SIGNAL(overwriteModeChanged(bool)), this, SLOT(setOverwriteMode(bool)));
     connect(hexEdit, SIGNAL(dataChanged()), this, SLOT(dataChanged()));
+    connect(hexEdit, SIGNAL(undoAvailable(bool)), undoAct, SLOT(setEnabled(bool)));
+    connect(hexEdit, SIGNAL(redoAvailable(bool)), redoAct, SLOT(setEnabled(bool)));
     searchDialog = new SearchDialog(hexEdit, this);
 
     jumpToDialog = new JumpToDialog(hexEdit, this);
@@ -371,56 +570,76 @@ void MainWindow::init()
     insertScriptDialog = new InsertScriptDialog(hexEdit, this);
 
     createActions();
-    createMenus();
     createToolBars();
+    createMenus();
     createStatusBar();
+    defaultWindowState = saveState();
 
     setCurrentFile("");
     readSettings();
+    updateActionStates();
+
+    // Set grayscale filter for disabled toolbar buttons
+    QString styleSheet =
+        "QToolButton:disabled { "
+        "    filter: grayscale(100%); "
+        "    opacity: 0.6; "
+        "}";
+    this->setStyleSheet(styleSheet);
 
     setUnifiedTitleAndToolBarOnMac(true);
 }
 
 void MainWindow::createActions()
 {
-    openAct = new QAction(QIcon(":/images/open.png"), tr("&Open..."), this);
+    newAct = new QAction(tr("New"), this);
+    newAct->setShortcuts(QKeySequence::New);
+    newAct->setStatusTip(tr("Create a new file"));
+    connect(newAct, SIGNAL(triggered()), this, SLOT(newFile()));
+
+    openAct = new QAction(QIcon(":/images/open.png"), tr("Open..."), this);
     openAct->setShortcuts(QKeySequence::Open);
     openAct->setStatusTip(tr("Open an existing file"));
     connect(openAct, SIGNAL(triggered()), this, SLOT(open()));
 
-    saveAct = new QAction(QIcon(":/images/save.png"), tr("&Save"), this);
+    saveAct = new QAction(QIcon(":/images/save.png"), tr("Save"), this);
     saveAct->setShortcuts(QKeySequence::Save);
     saveAct->setStatusTip(tr("Save the document to disk"));
     connect(saveAct, SIGNAL(triggered()), this, SLOT(save()));
 
-    saveAsAct = new QAction(tr("Save &As..."), this);
+    closeAct = new QAction(tr("Close"), this);
+    closeAct->setShortcuts(QKeySequence::Close);
+    closeAct->setStatusTip(tr("Close the current file"));
+    connect(closeAct, SIGNAL(triggered()), this, SLOT(closeFile()));
+
+    saveAsAct = new QAction(tr("Save As..."), this);
     saveAsAct->setShortcuts(QKeySequence::SaveAs);
     saveAsAct->setStatusTip(tr("Save the document under a new name"));
     connect(saveAsAct, SIGNAL(triggered()), this, SLOT(saveAs()));
 
-    saveReadable = new QAction(tr("Save &Readable..."), this);
-    saveReadable->setStatusTip(tr("Save document in readable form"));
+    saveReadable = new QAction(tr("Save Dump..."), this);
+    saveReadable->setStatusTip(tr("Save document as dump"));
     connect(saveReadable, SIGNAL(triggered()), this, SLOT(saveToReadableFile()));
 
-    revertAct = new QAction(tr("&Revert"), this);
+    revertAct = new QAction(tr("Revert"), this);
     revertAct->setStatusTip(tr("Revert file to last saved version"));
     connect(revertAct, SIGNAL(triggered()), this, SLOT(revert()));
 
-    exitAct = new QAction(tr("E&xit"), this);
+    exitAct = new QAction(tr("Exit"), this);
     exitAct->setShortcuts(QKeySequence::Quit);
     exitAct->setStatusTip(tr("Exit the application"));
     connect(exitAct, SIGNAL(triggered()), qApp, SLOT(closeAllWindows()));
 
-    undoAct = new QAction(QIcon(":/images/undo.png"), tr("&Undo"), this);
+    undoAct = new QAction(QIcon(":/images/undo.png"), tr("Undo"), this);
     undoAct->setShortcuts(QKeySequence::Undo);
     connect(undoAct, SIGNAL(triggered()), hexEdit, SLOT(undo()));
 
-    redoAct = new QAction(QIcon(":/images/redo.png"), tr("&Redo"), this);
+    redoAct = new QAction(QIcon(":/images/redo.png"), tr("Redo"), this);
     redoAct->setShortcuts(QKeySequence::Redo);
     connect(redoAct, SIGNAL(triggered()), hexEdit, SLOT(redo()));
 
-    saveSelectionReadable = new QAction(tr("&Save Selection Readable..."), this);
-    saveSelectionReadable->setStatusTip(tr("Save selection in readable form"));
+    saveSelectionReadable = new QAction(tr("Save selection as dump"), this);
+    saveSelectionReadable->setStatusTip(tr("Save selection as dump"));
     saveSelectionReadable->setEnabled(false);
     connect(saveSelectionReadable, SIGNAL(triggered()), this, SLOT(saveSelectionToReadableFile()));
 
@@ -428,7 +647,7 @@ void MainWindow::createActions()
     loadTableAct->setStatusTip(tr("Load translation table"));
     connect(loadTableAct, SIGNAL(triggered()), this, SLOT(loadTable()));
 
-    useTableAct = new QAction(tr("Use &table"), this);
+    useTableAct = new QAction(tr("Use table"), this);
     useTableAct->setShortcuts(QKeySequence::AddTab);
     useTableAct->setCheckable(true);
     useTableAct->setChecked(true);
@@ -441,7 +660,7 @@ void MainWindow::createActions()
     editTableAct->setStatusTip(tr("Edit translation table"));
     connect(editTableAct, SIGNAL(triggered()), this, SLOT(editTable()));
 
-    dumpScriptAct = new QAction(tr("&Dump script"), this);
+    dumpScriptAct = new QAction(tr("Dump script"), this);
     dumpScriptAct->setStatusTip(tr("Dump text script"));
     connect(dumpScriptAct, SIGNAL(triggered()), this, SLOT(dumpScript()));
 
@@ -449,12 +668,10 @@ void MainWindow::createActions()
     insertScriptAct->setStatusTip(tr("Insert text script"));
     connect(insertScriptAct, SIGNAL(triggered()), this, SLOT(insertScript()));
 
-    findPointersAct = new QAction(tr("Fi&nd pointers"), this);
+    findPointersAct = new QAction(QIcon(":/images/find_ptr.png"), tr("Find pointers"), this);
     findPointersAct->setShortcuts(QKeySequence::New);
     findPointersAct->setStatusTip(tr("Find pointers for selected text"));
     connect(findPointersAct, SIGNAL(triggered()), this, SLOT(showPointersDialog()));
-
-    //listPointersAct = new QAction(tr("&List pointers"), this);
 
     showPointersAct = new QAction(tr("Show pointers"), this);
     showPointersAct->setEnabled(false);
@@ -462,16 +679,17 @@ void MainWindow::createActions()
     showPointersAct->setChecked(true);
     connect(showPointersAct, SIGNAL(triggered()), this, SLOT(switchShowPointers()));
 
-    aboutAct = new QAction(tr("&About"), this);
+    aboutAct = new QAction(tr("About %1").arg(AppInfo::Name), this);
     aboutAct->setStatusTip(tr("Show the application's About box"));
+    aboutAct->setMenuRole(QAction::NoRole); // prevent macOS from auto-moving to Apple menu
     connect(aboutAct, SIGNAL(triggered()), this, SLOT(about()));
 
-    findAct = new QAction(QIcon(":/images/find.png"), tr("&Find/Replace"), this);
+    findAct = new QAction(QIcon(":/images/find.png"), tr("Find/Replace"), this);
     findAct->setShortcuts(QKeySequence::Find);
     findAct->setStatusTip(tr("Show the Dialog for finding and replacing"));
     connect(findAct, SIGNAL(triggered()), this, SLOT(showSearchDialog()));
 
-    findNextAct = new QAction(tr("Find &next"), this);
+    findNextAct = new QAction(tr("Find next"), this);
     findNextAct->setStatusTip(tr("Find next occurrence of the searched pattern"));
     connect(findNextAct, SIGNAL(triggered()), this, SLOT(findNext()));
 
@@ -480,55 +698,101 @@ void MainWindow::createActions()
     gotoAct->setStatusTip(tr("Go to specified offset"));
     connect(gotoAct, SIGNAL(triggered()), this, SLOT(showJumpToDialog()));
 
-    optionsAct = new QAction(tr("&Preferences"), this);
+    optionsAct = new QAction(tr("Preferences"), this);
     optionsAct->setStatusTip(tr("Show the Dialog to select applications options"));
+    optionsAct->setMenuRole(QAction::NoRole); // prevent macOS from auto-moving to Apple menu
     connect(optionsAct, SIGNAL(triggered()), this, SLOT(showOptionsDialog()));
 
     languageGroup = new QActionGroup(this);
     languageGroup->setExclusive(true);
 
-    langRussianAct = new QAction(tr("Русский"), this);
+    langRussianAct = new QAction(QStringLiteral("Русский"), this);
     langRussianAct->setCheckable(true);
     langRussianAct->setData("ru");
     connect(langRussianAct, SIGNAL(triggered()), this, SLOT(setLanguage()));
 
-    langEnglishAct = new QAction(tr("English"), this);
+    langEnglishAct = new QAction(QStringLiteral("English"), this);
     langEnglishAct->setCheckable(true);
     langEnglishAct->setData("en");
     connect(langEnglishAct, SIGNAL(triggered()), this, SLOT(setLanguage()));
 
-    langGermanAct = new QAction(tr("Deutsch"), this);
+    langFrenchAct = new QAction(QStringLiteral("Français"), this);
+    langFrenchAct->setCheckable(true);
+    langFrenchAct->setData("fr");
+    connect(langFrenchAct, SIGNAL(triggered()), this, SLOT(setLanguage()));
+
+    langGermanAct = new QAction(QStringLiteral("Deutsch"), this);
     langGermanAct->setCheckable(true);
     langGermanAct->setData("de");
     connect(langGermanAct, SIGNAL(triggered()), this, SLOT(setLanguage()));
 
-    languageGroup->addAction(langEnglishAct);
-    languageGroup->addAction(langGermanAct);
+    langSpanishAct = new QAction(QStringLiteral("Español"), this);
+    langSpanishAct->setCheckable(true);
+    langSpanishAct->setData("es");
+    connect(langSpanishAct, SIGNAL(triggered()), this, SLOT(setLanguage()));
+
+    langPortugueseAct = new QAction(QStringLiteral("Português"), this);
+    langPortugueseAct->setCheckable(true);
+    langPortugueseAct->setData("pt");
+    connect(langPortugueseAct, SIGNAL(triggered()), this, SLOT(setLanguage()));
+
+    langJapaneseAct = new QAction(QStringLiteral("日本語"), this);
+    langJapaneseAct->setCheckable(true);
+    langJapaneseAct->setData("ja");
+    connect(langJapaneseAct, SIGNAL(triggered()), this, SLOT(setLanguage()));
+
+    langChineseSimplifiedAct = new QAction(QStringLiteral("简体中文"), this);
+    langChineseSimplifiedAct->setCheckable(true);
+    langChineseSimplifiedAct->setData("zh_CN");
+    connect(langChineseSimplifiedAct, SIGNAL(triggered()), this, SLOT(setLanguage()));
+
     languageGroup->addAction(langRussianAct);
+    languageGroup->addAction(langEnglishAct);
+    languageGroup->addAction(langFrenchAct);
+    languageGroup->addAction(langGermanAct);
+    languageGroup->addAction(langSpanishAct);
+    languageGroup->addAction(langPortugueseAct);
+    languageGroup->addAction(langJapaneseAct);
+    languageGroup->addAction(langChineseSimplifiedAct);
 
     QSettings settings;
-    const QString language = settings.value("Language", QLocale::system().name().left(2)).toString();
-    if (language == "de")
+    const QString language = settings.value("Language", QLocale::system().name()).toString();
+    const QString languageShort = language.left(2);
+
+    if (language == "de" || languageShort == "de")
         langGermanAct->setChecked(true);
-    else if (language == "ru")
+    else if (language == "ru" || languageShort == "ru")
         langRussianAct->setChecked(true);
+    else if (language == "fr" || languageShort == "fr")
+        langFrenchAct->setChecked(true);
+    else if (language == "es" || languageShort == "es")
+        langSpanishAct->setChecked(true);
+    else if (language == "pt" || languageShort == "pt")
+        langPortugueseAct->setChecked(true);
+    else if (language == "ja" || languageShort == "ja")
+        langJapaneseAct->setChecked(true);
+    else if (language == "zh_CN" || language.startsWith("zh_") || languageShort == "zh")
+        langChineseSimplifiedAct->setChecked(true);
     else
         langEnglishAct->setChecked(true);
 }
 
 void MainWindow::createMenus()
 {
-    fileMenu = menuBar()->addMenu(tr("&File"));
+    fileMenu = menuBar()->addMenu(tr("File"));
+    fileMenu->addAction(newAct);
     fileMenu->addAction(openAct);
+    fileMenu->addSeparator();
     fileMenu->addAction(saveAct);
     fileMenu->addAction(saveAsAct);
     fileMenu->addAction(saveReadable);
     fileMenu->addSeparator();
     fileMenu->addAction(revertAct);
+    fileMenu->addAction(closeAct);
     fileMenu->addSeparator();
     fileMenu->addAction(exitAct);
 
-    editMenu = menuBar()->addMenu(tr("&Edit"));
+    editMenu = menuBar()->addMenu(tr("Edit"));
     editMenu->addAction(undoAct);
     editMenu->addAction(redoAct);
     editMenu->addAction(saveSelectionReadable);
@@ -538,7 +802,7 @@ void MainWindow::createMenus()
     editMenu->addSeparator();
     editMenu->addAction(gotoAct);
 
-    tableMenu = menuBar()->addMenu(tr("&Table"));
+    tableMenu = menuBar()->addMenu(tr("Table"));
     tableMenu->addAction(loadTableAct);
     tableMenu->addAction(useTableAct);
     tableMenu->addAction(editTableAct);
@@ -548,19 +812,44 @@ void MainWindow::createMenus()
     scriptMenu->addAction(dumpScriptAct);
     scriptMenu->addAction(insertScriptAct);
 
-    pointersMenu = menuBar()->addMenu(tr("&Pointers"));
+    pointersMenu = menuBar()->addMenu(tr("Pointers"));
     pointersMenu->addAction(findPointersAct);
     pointersMenu->addAction(showPointersAct);
 
-    viewMenu = menuBar()->addMenu(tr("&View"));
-    languageMenu = viewMenu->addMenu(tr("&Language"));
-    languageMenu->addAction(langEnglishAct);
-    languageMenu->addAction(langGermanAct);
+    viewMenu = menuBar()->addMenu(tr("View"));
+    toolbarMenu = viewMenu->addMenu(tr("Toolbar"));
+    QAction *fileToolbarAct = fileToolBar->toggleViewAction();
+    QAction *actionsToolbarAct = editToolBar->toggleViewAction();
+    QAction *searchToolbarAct = searchToolBar->toggleViewAction();
+    fileToolbarAct->setText(tr("File"));
+    actionsToolbarAct->setText(tr("Actions"));
+    searchToolbarAct->setText(tr("Search"));
+    toolbarMenu->addAction(fileToolbarAct);
+    toolbarMenu->addAction(actionsToolbarAct);
+    toolbarMenu->addAction(searchToolbarAct);
+    toolbarMenu->addSeparator();
+    resetToolbarsAct = toolbarMenu->addAction(tr("Reset"));
+    connect(resetToolbarsAct, &QAction::triggered, this, [this]()
+            {
+        if (!defaultWindowState.isEmpty())
+            restoreState(defaultWindowState);
+        fileToolBar->show();
+        editToolBar->show();
+        searchToolBar->show(); });
+
+    languageMenu = viewMenu->addMenu(tr("Language"));
     languageMenu->addAction(langRussianAct);
+    languageMenu->addAction(langEnglishAct);
+    languageMenu->addAction(langFrenchAct);
+    languageMenu->addAction(langGermanAct);
+    languageMenu->addAction(langSpanishAct);
+    languageMenu->addAction(langPortugueseAct);
+    languageMenu->addAction(langJapaneseAct);
+    languageMenu->addAction(langChineseSimplifiedAct);
     viewMenu->addSeparator();
     viewMenu->addAction(optionsAct);
 
-    helpMenu = menuBar()->addMenu(tr("&Help"));
+    helpMenu = menuBar()->addMenu(tr("Help"));
     helpMenu->addAction(aboutAct);
 
     connect(useTableAct, SIGNAL(triggered()), this, SLOT(updateScriptMenuState()));
@@ -635,16 +924,26 @@ void MainWindow::createStatusBar()
 void MainWindow::createToolBars()
 {
     fileToolBar = addToolBar(tr("File"));
+    fileToolBar->setObjectName("fileToolBar");
     fileToolBar->addAction(openAct);
     fileToolBar->addAction(saveAct);
+
     editToolBar = addToolBar(tr("Edit"));
+    editToolBar->setObjectName("editToolBar");
     editToolBar->addAction(undoAct);
     editToolBar->addAction(redoAct);
-    editToolBar->addAction(findAct);
+
+    searchToolBar = addToolBar(tr("Search"));
+    searchToolBar->setObjectName("searchToolBar");
+    searchToolBar->addAction(findAct);
+    searchToolBar->addAction(findPointersAct);
 }
 
 void MainWindow::loadFile(const QString &fileName)
 {
+    if (!maybeSave())
+        return;
+
     file.setFileName(fileName);
 
     if (!hexEdit->setData(file))
@@ -658,6 +957,7 @@ void MainWindow::loadFile(const QString &fileName)
 
     setCurrentFile(fileName);
     statusBar()->showMessage(tr("File loaded"), 2000);
+    rememberDirectory(kLastFileDirKey, fileName);
 
     QSettings settings;
 
@@ -698,6 +998,10 @@ void MainWindow::readSettings()
     hexEdit->setDynamicBytesPerLine(settings.value("Autosize").toBool());
     hexEdit->setBytesPerLine(settings.value("BytesPerLine").toInt());
     hexEdit->setHexCaps(settings.value("HexCaps", true).toBool());
+
+    const QByteArray windowState = settings.value(kMainWindowStateKey).toByteArray();
+    if (!windowState.isEmpty())
+        restoreState(windowState);
 
     auto fileName = settings.value("RecentFile0").toString();
 
@@ -741,6 +1045,7 @@ bool MainWindow::saveFile(const QString &fileName)
     }
 
     setCurrentFile(fileName);
+    rememberDirectory(kLastFileDirKey, fileName);
     statusBar()->showMessage(tr("File saved"), 2000);
     return true;
 }
@@ -757,6 +1062,34 @@ void MainWindow::setCurrentFile(const QString &fileName)
         setWindowTitle(QString("RTHextion"));
     else
         setWindowTitle(QString("%1[*] - RTHextion").arg(strippedName(curFile)));
+
+    updateActionStates();
+}
+
+bool MainWindow::maybeSave()
+{
+    if (!hexEdit->isModified())
+        return true;
+
+    QMessageBox::StandardButton result = QMessageBox::warning(
+        this,
+        tr("RTHextion"),
+        tr("The document has been modified.\nDo you want to save your changes?"),
+        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+
+    if (result == QMessageBox::Save)
+        return save();
+
+    return result != QMessageBox::Cancel;
+}
+
+void MainWindow::updateActionStates()
+{
+    // Save is always enabled (for new files it will trigger Save As)
+    saveAct->setEnabled(true);
+    closeAct->setEnabled(!isUntitled);
+    undoAct->setEnabled(hexEdit->canUndo());
+    redoAct->setEnabled(hexEdit->canRedo());
 }
 
 QString MainWindow::strippedName(const QString &fullFileName)
@@ -770,8 +1103,29 @@ void MainWindow::writeSettings()
 
     settings.setValue("pos", pos());
     settings.setValue("size", size());
+    settings.setValue(kMainWindowStateKey, saveState());
 
     //settings.setValue("offset", curOffset);
+}
+
+QString MainWindow::lastDirectory(const QString &settingsKey) const
+{
+    QSettings settings;
+    const QString dir = settings.value(settingsKey).toString();
+    return dir.isEmpty() ? QDir::homePath() : dir;
+}
+
+void MainWindow::rememberDirectory(const QString &settingsKey, const QString &filePath)
+{
+    if (filePath.isEmpty())
+        return;
+
+    const QString dirPath = QFileInfo(filePath).absolutePath();
+    if (dirPath.isEmpty())
+        return;
+
+    QSettings settings;
+    settings.setValue(settingsKey, dirPath);
 }
 
 void MainWindow::updateEndiannes()

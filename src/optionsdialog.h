@@ -18,6 +18,9 @@ public:
     Ui::OptionsDialog *ui;
     void show();
 
+protected:
+    void changeEvent(QEvent *event) override;
+
 public slots:
     virtual void accept();
 

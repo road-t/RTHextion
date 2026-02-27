@@ -5,6 +5,7 @@
 #include <QSet>
 #include <QInputDialog>
 #include <QLineEdit>
+#include <QEvent>
 
 TableEditDialog::TableEditDialog(TranslationTable** tb, QWidget *parent) :
     QDialog(parent),
@@ -176,4 +177,11 @@ void TableEditDialog::accept()
     emit tableChanged();
 
     QDialog::accept();
+}
+
+void TableEditDialog::changeEvent(QEvent *event)
+{
+    if (event->type() == QEvent::LanguageChange)
+        ui->retranslateUi(this);
+    QDialog::changeEvent(event);
 }

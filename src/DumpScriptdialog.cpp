@@ -1,8 +1,17 @@
 #include <QMessageBox>
 #include <QFileDialog>
+#include <QSettings>
+#include <QDir>
+#include <QFileInfo>
+#include <QEvent>
 
 #include "DumpScriptdialog.h"
 #include "ui_DumpScriptdialog.h"
+
+namespace
+{
+    const char *kLastDumpDirKey = "Paths/LastDumpDir";
+}
 
 DumpScriptDialog::DumpScriptDialog(QHexEdit *hexEdit, QWidget *parent) :
     QDialog(parent),
@@ -158,7 +167,9 @@ void DumpScriptDialog::on_cbSplitByPointers_stateChanged(int arg1)
 
 void DumpScriptDialog::on_buttonBox_accepted()
 {
-    QString fileName = QFileDialog::getSaveFileName(this, tr("Save To Readable File"));
+    QSettings settings;
+    const QString defaultDir = settings.value(kLastDumpDirKey, QDir::homePath()).toString();
+    QString fileName = QFileDialog::getSaveFileName(this, tr("Save to readable file"), defaultDir);
 
     if (!fileName.isEmpty())
     {
@@ -176,9 +187,20 @@ void DumpScriptDialog::on_buttonBox_accepted()
 
         file.write(ui->pteScript->toPlainText().toUtf8());
 
+        const QString dirPath = QFileInfo(fileName).absolutePath();
+        if (!dirPath.isEmpty())
+            settings.setValue(kLastDumpDirKey, dirPath);
+
         QApplication::restoreOverrideCursor();
     }
 
     close();
+}
+
+void DumpScriptDialog::changeEvent(QEvent *event)
+{
+    if (event->type() == QEvent::LanguageChange)
+        ui->retranslateUi(this);
+    QDialog::changeEvent(event);
 }
 

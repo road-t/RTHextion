@@ -1,4 +1,5 @@
 #include <QPushButton>
+#include <QEvent>
 
 #include "JumpToDialog.h"
 #include "ui_JumpToDialog.h"
@@ -9,7 +10,7 @@ JumpToDialog::JumpToDialog(QHexEdit *hexEdit, QWidget *parent) :
     _hexEdit(hexEdit)
 {
     ui->setupUi(this);
-    ui->bbControls->button(QDialogButtonBox::Ok)->setText("Go");
+    ui->bbControls->button(QDialogButtonBox::Ok)->setText(tr("Go"));
 
     setWindowFlags(Qt::CustomizeWindowHint | Qt::WindowTitleHint | Qt::WindowStaysOnTopHint | Qt::WindowCloseButtonHint | Qt::Window);
 }
@@ -25,5 +26,15 @@ void JumpToDialog::on_bbControls_accepted()
     auto offset = ui->leOffset->text().toLong(nullptr, 16);
 
     _hexEdit->jumpTo(offset, relative);
+}
+
+void JumpToDialog::changeEvent(QEvent *event)
+{
+    if (event->type() == QEvent::LanguageChange)
+    {
+        ui->retranslateUi(this);
+        ui->bbControls->button(QDialogButtonBox::Ok)->setText(tr("Go"));
+    }
+    QDialog::changeEvent(event);
 }
 

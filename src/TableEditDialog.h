@@ -28,6 +28,7 @@ private slots:
 
 private:
     void showEvent(QShowEvent *ev) override;
+    void changeEvent(QEvent *event) override;
     void addRow(uint8_t hex, const QString &value);
 
     Ui::TableEditDialog *ui;

@@ -2,7 +2,9 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
+#include <QByteArray>
 
+#include "langtranslator.h"
 #include "translationtable.h"
 #include "qhexedit/qhexedit.h"
 #include "optionsdialog.h"
@@ -33,12 +35,15 @@ public:
 
 protected:
     void closeEvent(QCloseEvent *event);
+    void changeEvent(QEvent *event) override;
     void dragEnterEvent(QDragEnterEvent *event);
     void dropEvent(QDropEvent *event);
 
 private slots:
     void about();
     void dataChanged();
+    void newFile();
+    void closeFile();
     void open();
     void optionsAccepted();
     void findNext();
@@ -57,7 +62,6 @@ private slots:
     void showPointersDialog();
     void pointersUpdated();
     bool loadTable();
-    void findPointers();
     void switchShowPointers();
     void switchUseTable();
     void updateScriptMenuState();
@@ -78,11 +82,16 @@ private:
     void createMenus();
     void createStatusBar();
     void createToolBars();
+    void retranslateUi();
+    bool maybeSave();
+    void updateActionStates();
     void readSettings();
     bool saveFile(const QString &fileName);
     void setCurrentFile(const QString &fileName);
     QString strippedName(const QString &fullFileName);
     void writeSettings();
+    QString lastDirectory(const QString &settingsKey) const;
+    void rememberDirectory(const QString &settingsKey, const QString &filePath);
 
     QString curFile;
     QFile file;
@@ -98,15 +107,19 @@ private:
     QMenu *viewMenu;
     QMenu *languageMenu;
     QMenu *helpMenu;
+    QMenu *toolbarMenu;
 
     QToolBar *fileToolBar;
     QToolBar *editToolBar;
+    QToolBar *searchToolBar;
+    QByteArray defaultWindowState;
 
     QAction *openAct;
     QAction *saveAct;
     QAction *saveAsAct;
     QAction *saveReadable;
     QAction *revertAct;
+    QAction *newAct;
     QAction *closeAct;
     QAction *exitAct;
 
@@ -131,13 +144,19 @@ private:
     QAction *aboutAct;
     QAction *optionsAct;
     QAction *langEnglishAct;
+    QAction *langFrenchAct;
     QAction *langGermanAct;
+    QAction *langSpanishAct;
+    QAction *langPortugueseAct;
+    QAction *langJapaneseAct;
+    QAction *langChineseSimplifiedAct;
     QAction *langRussianAct;
     QActionGroup *languageGroup;
 
     QAction *findAct;
     QAction *findNextAct;
     QAction *gotoAct;
+    QAction *resetToolbarsAct;
 
     QHexEdit *hexEdit;
     OptionsDialog *optionsDialog;

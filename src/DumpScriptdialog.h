@@ -20,6 +20,7 @@ public:
 
 protected:
     void showEvent(QShowEvent *ev);
+    void changeEvent(QEvent *event) override;
     void populateStopCharCmb();
 
 private slots:

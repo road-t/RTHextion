@@ -1,5 +1,6 @@
 #include <QColorDialog>
 #include <QFontDialog>
+#include <QEvent>
 
 #include "optionsdialog.h"
 #include "ui_optionsdialog.h"
@@ -215,5 +216,12 @@ void OptionsDialog::on_pbPointedColor_clicked()
 void OptionsDialog::on_cbDynamicSize_stateChanged(int arg1)
 {
     ui->sbBytesPerLine->setDisabled(arg1);
+}
+
+void OptionsDialog::changeEvent(QEvent *event)
+{
+    if (event->type() == QEvent::LanguageChange)
+        ui->retranslateUi(this);
+    QDialog::changeEvent(event);
 }
 

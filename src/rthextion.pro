@@ -6,6 +6,7 @@ TARGET = RTHextion
 
 macx {
     ICON = images/tj.icns
+    QMAKE_BUNDLE = RTHextion
 }
 
 HEADERS = \
@@ -16,6 +17,7 @@ HEADERS = \
     JumpToDialog.h \
     PointerListModel.h \
     TableEditDialog.h \
+    langtranslator.h \
     mainwindow.h \
     optionsdialog.h \
     qhexedit/qhexedit.h \
@@ -32,6 +34,7 @@ SOURCES = \
     JumpToDialog.cpp \
     PointerListModel.cpp \
     TableEditDialog.cpp \
+    langtranslator.cpp \
     main.cpp \
     mainwindow.cpp \
     optionsdialog.cpp \
@@ -43,7 +46,7 @@ SOURCES = \
     translationtable.cpp
 
 RESOURCES = \
-    rthextion.qrc
+    RTHextion.qrc
 
 FORMS += \
     DumpScriptdialog.ui \
@@ -56,18 +59,6 @@ FORMS += \
 
 OTHER_FILES += \
     qhexedit/qhexedit.sip
-
-TRANSLATIONS += \
-    translations/qhexedit_ru.ts \
-    translations/qhexedit_de.ts
-
-# Auto-generate .qm files at qmake time when lrelease is available
-isEmpty(QMAKE_LRELEASE) {
-    QMAKE_LRELEASE = $$[QT_INSTALL_BINS]/lrelease
-}
-exists($$QMAKE_LRELEASE) {
-    system($$QMAKE_LRELEASE $$_PRO_FILE_)
-}
 
 DEFINES += QHEXEDIT_EXPORTS
 

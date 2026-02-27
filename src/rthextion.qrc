@@ -1,13 +1,18 @@
 <!DOCTYPE RCC>
 <RCC>
   <qresource prefix="/">
-    <file>translations/qhexedit_de.qm</file>
-    <file>translations/qhexedit_ru.qm</file>
+    <file>translations/de.lang</file>
+    <file>translations/es.lang</file>
+    <file>translations/pt.lang</file>
+    <file>translations/ja.lang</file>
+    <file>translations/ru.lang</file>
+    <file>translations/zh_CN.lang</file>
     <file>images/open.png</file>
     <file>images/save.png</file>
     <file>images/undo.png</file>
     <file>images/redo.png</file>
     <file>images/find.png</file>
+    <file>images/find_ptr.png</file>
     <file>images/tj.png</file>
     <file>images/pointer.png</file>
   </qresource>

@@ -1,6 +1,7 @@
 #include "searchdialog.h"
 #include "ui_searchdialog.h"
 
+#include <QEvent>
 #include <QMessageBox>
 #include <QLineEdit>
 
@@ -90,7 +91,7 @@ void SearchDialog::on_pbReplaceAll_clicked()
     }
 
     if (replaceCounter > 0)
-        QMessageBox::information(this, tr("QHexEdit"), QString(tr("%1 occurrences replaced.")).arg(replaceCounter));
+        QMessageBox::information(this, tr("QHexEdit"), QString(tr("%1 occurrences replaced")).arg(replaceCounter));
 }
 
 
@@ -147,3 +148,9 @@ void SearchDialog::on_cbReplaceFormat_currentIndexChanged(int index)
     ui->cbReplace->lineEdit()->setInputMask(index ? ">hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh" : "");
 }
 
+void SearchDialog::changeEvent(QEvent *event)
+{
+    if (event->type() == QEvent::LanguageChange)
+        ui->retranslateUi(this);
+    QDialog::changeEvent(event);
+}

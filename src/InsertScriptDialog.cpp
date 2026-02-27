@@ -1,6 +1,7 @@
 #include "InsertScriptDialog.h"
 #include "ui_InsertScriptDialog.h"
 #include "Datas.h"
+#include <QEvent>
 
 InsertScriptDialog::InsertScriptDialog(QHexEdit *hexEdit, QWidget *parent) :
     QDialog(parent),
@@ -130,5 +131,12 @@ void InsertScriptDialog::on_rbLittleEndian_toggled(bool checked)
 void InsertScriptDialog::on_rbBigEndian_toggled(bool checked)
 {
     bigEndian = checked;
+}
+
+void InsertScriptDialog::changeEvent(QEvent *event)
+{
+    if (event->type() == QEvent::LanguageChange)
+        ui->retranslateUi(this);
+    QDialog::changeEvent(event);
 }
 

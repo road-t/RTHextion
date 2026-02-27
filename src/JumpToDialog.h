@@ -16,6 +16,9 @@ public:
     explicit JumpToDialog(QHexEdit *hexEdit, QWidget *parent = nullptr);
     ~JumpToDialog();
 
+protected:
+    void changeEvent(QEvent *event) override;
+
 private slots:
     void on_bbControls_accepted();
 

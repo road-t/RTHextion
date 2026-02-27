@@ -41,13 +41,14 @@ private slots:
 
 protected:
     void showEvent(QShowEvent *ev);
+    void changeEvent(QEvent *event) override;
     PointerListModel* plModel = nullptr;
     QFuture<void> searchFuture;
     std::atomic<bool> cancelRequested{false};
     bool searchActive = false;
 
     qint64 parseHexField(const QString &text, bool *ok) const;
-    bool validateRangeInputs(bool showMessage = false);
+    bool validateRangeInputs();
 
 private:
     Ui::PointersDialog *ui;

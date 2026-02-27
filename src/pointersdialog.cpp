@@ -25,7 +25,7 @@ PointersDialog::PointersDialog(QHexEdit *hexEdit, QWidget *parent) :
 
     plModel = _hexEdit->pointers();
 
-    plModel->setSectionNames(QStringList() << tr("Ptr offset") << tr("Points to") << tr("Data"));
+    plModel->setSectionNames(QStringList() << tr("offset") << tr("Pointer") << tr("Data"));
 
     ui->tvPointers->setModel(plModel);
     ui->tvPointers->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -35,14 +35,18 @@ PointersDialog::PointersDialog(QHexEdit *hexEdit, QWidget *parent) :
     ui->tvPointers->setColumnWidth(0, 78);
     ui->tvPointers->setColumnWidth(1, 78);
 
-    ui->leRangeBegin->setMaxLength(5);
-    ui->leRangeEnd->setMaxLength(5);
+    ui->leRangeBegin->setInputMask(QString());
+    ui->leRangeEnd->setInputMask(QString());
+    ui->leRangeBegin->setMaxLength(16);
+    ui->leRangeEnd->setMaxLength(16);
 
-    const int fieldWidth = fontMetrics().horizontalAdvance(QLatin1Char('0')) * 5 + 16;
+    const int fieldWidth = fontMetrics().horizontalAdvance(QLatin1Char('0')) * 10 + 16;
     ui->leRangeBegin->setFixedWidth(fieldWidth);
     ui->leRangeEnd->setFixedWidth(fieldWidth);
+    ui->rb4Byte->setChecked(true);
+    ui->gbPointerSize->setEnabled(false);
 
-    ui->bbControls->button(QDialogButtonBox::Ok)->setText("Find");
+    ui->bbControls->button(QDialogButtonBox::Ok)->setText(tr("Find"));
 
     ui->btnDeletePointer->setEnabled(false);
     connect(ui->tvPointers->selectionModel(), &QItemSelectionModel::selectionChanged,
@@ -81,7 +85,7 @@ qint64 PointersDialog::parseHexField(const QString &text, bool *ok) const
     return clean.toLongLong(ok, 16);
 }
 
-bool PointersDialog::validateRangeInputs(bool showMessage)
+bool PointersDialog::validateRangeInputs()
 {
     bool beginOk = false;
     bool endOk = false;
@@ -100,9 +104,6 @@ bool PointersDialog::validateRangeInputs(bool showMessage)
     ui->leRangeBegin->setStyleSheet((beginFieldValid && relationValid) ? QString() : badStyle);
     ui->leRangeEnd->setStyleSheet((endFieldValid && relationValid) ? QString() : badStyle);
     ui->bbControls->button(QDialogButtonBox::Ok)->setEnabled(valid && !searchActive);
-
-    if (!valid && showMessage)
-        QMessageBox::warning(this, QString(), tr("Invalid range. Use hex values within file size and ensure begin <= end."));
 
     return valid;
 }
@@ -179,10 +180,11 @@ void PointersDialog::showEvent(QShowEvent *ev)
 
     ui->leRangeBegin->setText(QString::number(selBegin, 16).toUpper());
     ui->leRangeEnd->setText(QString::number(selEnd, 16).toUpper());
-    validateRangeInputs(false);
+    validateRangeInputs();
 
     ui->rbLE->setChecked(!_hexEdit->bigEndian);
     ui->rbBE->setChecked(_hexEdit->bigEndian);
+    ui->rb4Byte->setChecked(true);
 
     ui->progressBar->setValue(0);
     ui->progressBar->setFormat(tr("Ready"));
@@ -196,9 +198,6 @@ void PointersDialog::on_bbControls_accepted()
         return;
     }
 
-    // Get pointer size early for validation
-    const int pointerSize = ui->rb2Byte->isChecked() ? 2 : (ui->rb3Byte->isChecked() ? 3 : 4);
-
     // Parse range
     bool rangeOkBegin = false;
     bool rangeOkEnd = false;
@@ -211,20 +210,10 @@ void PointersDialog::on_bbControls_accepted()
         return;
     }
 
-    const qint64 rangeSize = selEnd - selBegin;
-
-    // Warn if 2-byte pointers and range > 0x1000
-    if (pointerSize == 2 && rangeSize > 0x1000)
-    {
-        QMessageBox msgBox(QMessageBox::Warning, QString(),
-                           tr("Warning: 2-byte pointer search in large range (> 0x1000) can take a very long time.\n\nContinue anyway?"),
-                           QMessageBox::Yes | QMessageBox::No, this);
-        if (msgBox.exec() != QMessageBox::Yes)
-            return;
-    }
-
-    if (!validateRangeInputs(true))
+    if (!validateRangeInputs())
         return;
+
+    const int pointerSize = 4;
 
     bool before = ui->rbBefore->isChecked();
     bool after = ui->rbAfter->isChecked();
@@ -239,10 +228,9 @@ void PointersDialog::on_bbControls_accepted()
     cancelRequested.store(false);
     searchActive = true;
     ui->progressBar->setValue(0);
-    ui->progressBar->setFormat(tr("0% | Found: 0"));
     ui->progressBar->setVisible(true);
     ui->btnStop->setEnabled(true);
-    ui->bbControls->button(QDialogButtonBox::Ok)->setText("Stop");
+    ui->bbControls->button(QDialogButtonBox::Ok)->setText(tr("Stop"));
     ui->bbControls->button(QDialogButtonBox::Close)->setEnabled(false);
     ui->tvPointers->setSortingEnabled(false);
 
@@ -269,24 +257,31 @@ void PointersDialog::on_bbControls_accepted()
                                      {
         struct SearchRange
         {
-            qint64 start = 0;
-            qint64 end = 0;
+            qint64 startOffset = 0;
+            qint64 endOffsetExclusive = 0;
         };
 
-        auto toIterations = [pointerSize](const SearchRange &r) -> qint64
+        const qint64 maxDecodedStartExclusive = fileSize - pointerSize + 1;
+
+        auto toIterations = [fileSize, maxDecodedStartExclusive](const SearchRange &r) -> qint64
         {
-            const qint64 len = r.end - r.start;
-            return len >= pointerSize ? (len - (pointerSize - 1)) : 0;
+            if (maxDecodedStartExclusive <= 0)
+                return 0;
+
+            const qint64 start = qBound(static_cast<qint64>(0), r.startOffset, fileSize);
+            const qint64 end = qBound(static_cast<qint64>(0), r.endOffsetExclusive, fileSize);
+            const qint64 decodeEnd = qMin(end, maxDecodedStartExclusive);
+            return qMax(static_cast<qint64>(0), decodeEnd - start);
         };
 
         QVector<SearchRange> ranges;
-        auto addRange = [&ranges, pointerSize](qint64 start, qint64 end)
+        auto addRange = [&ranges](qint64 startOffset, qint64 endOffsetExclusive)
         {
-            if (end - start >= pointerSize)
+            if (startOffset < endOffsetExclusive)
             {
                 SearchRange range;
-                range.start = start;
-                range.end = end;
+                range.startOffset = startOffset;
+                range.endOffsetExclusive = endOffsetExclusive;
                 ranges.push_back(range);
             }
         };
@@ -309,18 +304,20 @@ void PointersDialog::on_bbControls_accepted()
         }
 
         const char *buf = fileData.constData();
-        auto isCandidateOffset = [&](quint32 value) -> bool
+        auto isCandidateOffset = [&](quint64 value) -> bool
         {
-            if (value < static_cast<quint32>(selBegin) || value >= static_cast<quint32>(selEnd))
+            const qint64 targetOffset = static_cast<qint64>(value);
+
+            if (targetOffset < selBegin || targetOffset >= selEnd)
                 return false;
 
             if (!optimizeForText)
                 return true;
 
-            if (value == 0)
+            if (targetOffset == 0)
                 return true;
 
-            const char prevChar = buf[value - 1];
+            const char prevChar = buf[targetOffset - 1];
             return !(prevChar >= firstPrintable && prevChar <= lastPrintable);
         };
 
@@ -357,7 +354,11 @@ void PointersDialog::on_bbControls_accepted()
 
         for (const auto &range : ranges)
         {
-            for (qint64 j = range.start; j <= range.end - pointerSize; ++j)
+            const qint64 startOffset = qBound(static_cast<qint64>(0), range.startOffset, fileSize);
+            const qint64 endOffsetExclusive = qBound(static_cast<qint64>(0), range.endOffsetExclusive, fileSize);
+            const qint64 decodeEndExclusive = qMin(endOffsetExclusive, maxDecodedStartExclusive);
+
+            for (qint64 j = startOffset; j < decodeEndExclusive; ++j)
             {
                 if (cancelRequested.load())
                     break;
@@ -393,7 +394,7 @@ void PointersDialog::on_bbControls_accepted()
                     value = static_cast<quint64>(val32);
                 }
 
-                if (isCandidateOffset(static_cast<quint32>(value)))
+                if (isCandidateOffset(value))
                 {
                     batch.append(qMakePair(j, static_cast<qint64>(value)));
                     ++found;
@@ -443,7 +444,7 @@ void PointersDialog::finishSearchUi(bool cancelled, int found, qint64 elapsedMs)
     updateProgress(100, found);
     ui->progressBar->setVisible(false);
     ui->btnStop->setEnabled(false);
-    ui->bbControls->button(QDialogButtonBox::Ok)->setText("Find");
+    ui->bbControls->button(QDialogButtonBox::Ok)->setText(tr("Find"));
     ui->bbControls->button(QDialogButtonBox::Ok)->setEnabled(true);
     ui->bbControls->button(QDialogButtonBox::Close)->setEnabled(true);
     ui->tvPointers->resizeColumnsToContents();
@@ -509,9 +510,7 @@ void PointersDialog::on_cbRangeEnd_currentIndexChanged(int index)
 
 void PointersDialog::on_tvPointers_doubleClicked(const QModelIndex &index)
 {
-    auto newindex = index.sibling(index.row(), qMin(index.column(), 1)); // click at found string = click at it's offset
-
-    auto selectedOffset = ui->tvPointers->model()->itemData(newindex).value(0).toString().toUInt(nullptr, 16);
+    const qint64 selectedOffset = index.data(PointerListModel::ValueRole).toLongLong();
 
     _hexEdit->setCursorPosition(selectedOffset * 2);
     _hexEdit->ensureVisible();
@@ -559,7 +558,7 @@ void PointersDialog::on_btnAddPointer_clicked()
 
 void PointersDialog::on_btnDeletePointer_clicked()
 {
-    const auto selectedRows = ui->tvPointers->selectionModel()->selectedRows(0);
+    const auto selectedRows = ui->tvPointers->selectionModel()->selectedRows();
     if (selectedRows.isEmpty())
         return;
 
@@ -568,9 +567,10 @@ void PointersDialog::on_btnDeletePointer_clicked()
         return;
 
     QVector<qint64> pointersToDelete;
-    for (const QModelIndex &offsetIndex : selectedRows)
+    pointersToDelete.reserve(selectedRows.size());
+    for (const QModelIndex &rowIndex : selectedRows)
     {
-        const qint64 pointer = ui->tvPointers->model()->itemData(offsetIndex).value(0).toString().toLongLong(nullptr, 16);
+        const qint64 pointer = rowIndex.data(PointerListModel::KeyRole).toLongLong();
         pointersToDelete.append(pointer);
     }
 
@@ -592,13 +592,13 @@ void PointersDialog::on_btnCleanAll_clicked()
 void PointersDialog::on_leRangeBegin_textChanged(const QString &text)
 {
     Q_UNUSED(text)
-    validateRangeInputs(false);
+    validateRangeInputs();
 }
 
 void PointersDialog::on_leRangeEnd_textChanged(const QString &text)
 {
     Q_UNUSED(text)
-    validateRangeInputs(false);
+    validateRangeInputs();
 }
 
 void PointersDialog::keyPressEvent(QKeyEvent *event)
@@ -610,4 +610,16 @@ void PointersDialog::keyPressEvent(QKeyEvent *event)
             on_btnDeletePointer_clicked();
         }
     }
+}
+
+void PointersDialog::changeEvent(QEvent *event)
+{
+    if (event->type() == QEvent::LanguageChange)
+    {
+        ui->retranslateUi(this);
+        plModel->setSectionNames(QStringList() << tr("offset") << tr("Pointer") << tr("Data"));
+        if (!searchActive)
+            ui->bbControls->button(QDialogButtonBox::Ok)->setText(tr("Find"));
+    }
+    QDialog::changeEvent(event);
 }

@@ -23,6 +23,7 @@ public:
 
 protected:
     void showEvent(QShowEvent *ev);
+    void changeEvent(QEvent *event) override;
 
 private slots:
     void on_bbControls_accepted();

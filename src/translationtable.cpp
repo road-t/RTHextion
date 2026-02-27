@@ -21,20 +21,21 @@ TranslationTable::TranslationTable(QString fileName) : TranslationTable()
 
         while (!in.atEnd())
         {
-            auto line = in.readLine().split('=');
+            auto rawLine = in.readLine();
+            auto eqPos = rawLine.indexOf('=');
 
-            // skip weird lines
-            if (line.size() == 2)
+            // skip lines without '=' or with nothing before it
+            if (eqPos <= 0)
+                continue;
+
+            bool success;
+            auto val = rawLine.left(eqPos).toUInt(&success, 16);
+
+            if (success)
             {
-                bool success;
-
-                auto val = line[0].toUInt(&success, 16);
-
-                if (success)
-                {
-                    encodeTable.insert(val, line[1]);
-                    decodeTable[line[1]] = val;
-                }
+                auto value = rawLine.mid(eqPos + 1);
+                encodeTable.insert(val, value);
+                decodeTable[value] = val;
             }
         }
 

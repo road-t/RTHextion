@@ -14,7 +14,7 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>QHexEdit - Options</string>
+   <string>Preferences</string>
   </property>
   <property name="modal">
    <bool>true</bool>
