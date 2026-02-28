@@ -3,6 +3,7 @@
   <qresource prefix="/">
     <file>translations/de.lang</file>
     <file>translations/es.lang</file>
+    <file>translations/fr.lang</file>
     <file>translations/pt.lang</file>
     <file>translations/ja.lang</file>
     <file>translations/ru.lang</file>
