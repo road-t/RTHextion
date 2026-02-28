@@ -49,7 +49,7 @@ SOURCES = \
     translationtable.cpp
 
 RESOURCES = \
-    RTHextion.qrc
+    rthextion.qrc
 
 FORMS += \
     DumpScriptdialog.ui \
