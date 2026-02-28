@@ -173,16 +173,6 @@ jobs:
         with:
           arch: x64
 
-      - name: Generate .qm translation files
-        shell: cmd
-        run: |
-          if exist "%QT_ROOT_DIR%\bin\lrelease.exe" (
-            "%QT_ROOT_DIR%\bin\lrelease.exe" src\RTHextion.pro
-          ) else (
-            echo lrelease.exe not found in %QT_ROOT_DIR%\bin
-            exit /b 1
-          )
-
       - name: Build
         shell: cmd
         run: |
@@ -224,19 +214,6 @@ jobs:
             libfontconfig1-dev libfreetype6-dev libxrender-dev \
             libxext-dev libx11-dev libxcb1-dev \
             libfuse2 imagemagick
-
-      - name: Generate .qm translation files
-        run: |
-          # Generate from TS files directly to avoid qmake/qtchooser differences
-          if [ -x "/usr/lib/qt6/bin/lrelease" ]; then
-            /usr/lib/qt6/bin/lrelease src/translations/ru.ts src/translations/de.ts
-          elif command -v lrelease-qt6 >/dev/null 2>&1; then
-            lrelease-qt6 src/translations/ru.ts src/translations/de.ts
-          else
-            echo "lrelease not found, searching..."
-            find /usr -name 'lrelease' 2>/dev/null
-            exit 1
-          fi
 
       - name: Build
         run: |
@@ -336,17 +313,6 @@ jobs:
             libfontconfig1-dev libfreetype6-dev libxrender-dev \
             libxext-dev libx11-dev libxcb1-dev \
             libfuse2 imagemagick
-
-      - name: Generate .qm translation files
-        run: |
-          if [ -x "/usr/lib/qt6/bin/lrelease" ]; then
-            /usr/lib/qt6/bin/lrelease src/translations/ru.ts src/translations/de.ts src/translations/en.ts src/translations/es.ts src/translations/pt.ts src/translations/ja.ts src/translations/zh_CN.ts
-          elif command -v lrelease-qt6 >/dev/null 2>&1; then
-            lrelease-qt6 src/translations/ru.ts src/translations/de.ts src/translations/en.ts src/translations/es.ts src/translations/pt.ts src/translations/ja.ts src/translations/zh_CN.ts
-          else
-            echo "lrelease not found"
-            exit 1
-          fi
 
       - name: Build
         run: |
