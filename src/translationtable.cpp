@@ -255,10 +255,5 @@ uint32_t TranslationTable::generateTable(QString input, QString value)
         }
     }
 
-    for (auto it = encodeTable.begin(); it != encodeTable.end(); it++)
-    {
-        qDebug() << QString::number(it.key(), 16) << ": " << encodeTable.value(it.key());
-    }
-
     return encodeTable.size();
 }
