@@ -6,7 +6,9 @@ A hex editor for retrogames translation and ROMHacking, a tribute to 00's Transl
 
 ## Features
 - Dual view (hex + text) with synchronized scrolling and selection
-- Translation tables support, with built-in editor
+- Translation tables support
+- Built-in editor
+- Semi-automatic translation tables generation
 - Most advanced data pointers search and navigation
 - Script dump and import with insertion to offset and automatic pointers update
 - Byte order switch (big-endian/little-endian)
@@ -58,4 +60,4 @@ This project uses:
 - [QHexView](https://github.com/Dax89/QHexView) (MIT License)
 - [Qt framework](https://www.qt.io/) (GPL/LGPL)
 
-Copyright (c) road-t, 2021–2026
+Ilya 'Road Tripper' Annikov © 2021–2026
