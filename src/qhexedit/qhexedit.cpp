@@ -1338,7 +1338,7 @@ void QHexEdit::paintEvent(QPaintEvent *event)
                         c = _asciiAreaColor;
 
                     char rawByte = _dataShown.at(bPosLine + colIdx);
-                    QChar ch((uchar)rawByte);
+                    QChar ch = QChar::fromLatin1(rawByte);
 
                     r.setRect(pxPosAsciiX2, pxPosY - _pxCharHeight + _pxSelectionSub, _pxCharWidth, _pxCharHeight);
                     painter.fillRect(r, c);
@@ -1622,7 +1622,7 @@ QString QHexEdit::toReadable(const QByteArray &ba)
                 char ch = ba[i + j];
                 if ((ch < 0x20) || (ch > 0x7e))
                     ch = '.';
-                ascStr.append(QChar(ch));
+                ascStr.append(QChar::fromLatin1(ch));
             }
         }
 

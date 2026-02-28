@@ -25,7 +25,7 @@ jobs:
       - name: Build
         run: |
           mkdir build_ci && cd build_ci
-          ${{ env.QT_ROOT_DIR }}/bin/qmake ../src/RTHextion.pro CONFIG+=release QMAKE_APPLE_DEVICE_ARCHS=arm64
+          ${{ env.QT_ROOT_DIR }}/bin/qmake ../src/rthextion.pro CONFIG+=release QMAKE_APPLE_DEVICE_ARCHS=arm64
           make -j$(sysctl -n hw.logicalcpu)
 
       - name: Install DMG packager
@@ -99,7 +99,7 @@ jobs:
       - name: Build
         run: |
           mkdir build_ci && cd build_ci
-          ${{ env.QT_ROOT_DIR }}/bin/qmake ../src/RTHextion.pro CONFIG+=release QMAKE_APPLE_DEVICE_ARCHS=x86_64
+          ${{ env.QT_ROOT_DIR }}/bin/qmake ../src/rthextion.pro CONFIG+=release QMAKE_APPLE_DEVICE_ARCHS=x86_64
           make -j$(sysctl -n hw.logicalcpu)
 
       - name: Install DMG packager
@@ -178,7 +178,7 @@ jobs:
         run: |
           mkdir build_ci
           cd build_ci
-          "%QT_ROOT_DIR%\bin\qmake" ..\src\RTHextion.pro CONFIG+=release
+          "%QT_ROOT_DIR%\bin\qmake" ..\src\rthextion.pro CONFIG+=release
           nmake
 
       - name: Deploy Qt dependencies
@@ -232,7 +232,7 @@ jobs:
           echo "Using qmake: $QMAKE_BIN"
           "$QMAKE_BIN" -v
           mkdir build_ci && cd build_ci
-          "$QMAKE_BIN" ../src/RTHextion.pro CONFIG+=release QMAKE_CC=clang QMAKE_CXX=clang++
+          "$QMAKE_BIN" ../src/rthextion.pro CONFIG+=release QMAKE_CC=clang QMAKE_CXX=clang++
           set -o pipefail
           make -j$(nproc) 2>&1 | tee build.log
 
@@ -328,7 +328,7 @@ jobs:
           fi
 
           mkdir build_ci && cd build_ci
-          "$QMAKE_BIN" ../src/RTHextion.pro CONFIG+=release QMAKE_CC=clang QMAKE_CXX=clang++
+          "$QMAKE_BIN" ../src/rthextion.pro CONFIG+=release QMAKE_CC=clang QMAKE_CXX=clang++
           make -j$(nproc)
 
       - name: Prepare AppImage resources
