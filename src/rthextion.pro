@@ -7,6 +7,7 @@ TARGET = RTHextion
 macx {
     ICON = images/tj.icns
     QMAKE_BUNDLE = RTHextion
+    QMAKE_INFO_PLIST = Info.plist
 }
 
 HEADERS = \

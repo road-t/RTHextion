@@ -638,8 +638,6 @@ void MainWindow::init()
 
     connect(hexEdit, SIGNAL(overwriteModeChanged(bool)), this, SLOT(setOverwriteMode(bool)));
     connect(hexEdit, SIGNAL(dataChanged()), this, SLOT(dataChanged()));
-    connect(hexEdit, SIGNAL(undoAvailable(bool)), undoAct, SLOT(setEnabled(bool)));
-    connect(hexEdit, SIGNAL(redoAvailable(bool)), redoAct, SLOT(setEnabled(bool)));
     searchDialog = new SearchDialog(hexEdit, this);
 
     jumpToDialog = new JumpToDialog(hexEdit, this);
@@ -657,6 +655,8 @@ void MainWindow::init()
     insertScriptDialog = new InsertScriptDialog(hexEdit, this);
 
     createActions();
+    connect(hexEdit, SIGNAL(undoAvailable(bool)), undoAct, SLOT(setEnabled(bool)));
+    connect(hexEdit, SIGNAL(redoAvailable(bool)), redoAct, SLOT(setEnabled(bool)));
     createToolBars();
     createMenus();
     createStatusBar();
@@ -665,14 +665,6 @@ void MainWindow::init()
     setCurrentFile("");
     readSettings();
     updateActionStates();
-
-    // Set grayscale filter for disabled toolbar buttons
-    QString styleSheet =
-        "QToolButton:disabled { "
-        "    filter: grayscale(100%); "
-        "    opacity: 0.6; "
-        "}";
-    this->setStyleSheet(styleSheet);
 
     setUnifiedTitleAndToolBarOnMac(true);
 }
