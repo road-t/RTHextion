@@ -1337,12 +1337,13 @@ void QHexEdit::paintEvent(QPaintEvent *event)
                     if (c == viewport()->palette().color(QPalette::Base) || c == _brushPointers.color()) // don't highlight pointers in ASCII area
                         c = _asciiAreaColor;
 
-                    QChar ch = _dataShown.at(bPosLine + colIdx);
+                    char rawByte = _dataShown.at(bPosLine + colIdx);
+                    QChar ch((uchar)rawByte);
 
                     r.setRect(pxPosAsciiX2, pxPosY - _pxCharHeight + _pxSelectionSub, _pxCharWidth, _pxCharHeight);
                     painter.fillRect(r, c);
 
-                    QString sym = _tb ? _tb->encodeSymbol(ch.toLatin1()) : ch;
+                    QString sym = _tb ? _tb->encodeSymbol(rawByte) : ch;
 
                     if (!_tb && sym.size() == 1 && sym[0].toLatin1() < 0x20)
                         sym = '.';
