@@ -22,6 +22,7 @@ public:
     void removeItem(uint8_t key);
     void clearItems();
     uint32_t generateTable(QString input, QString value);
+    bool save(const QString &fileName) const;
     uint32_t size();
     static QString escapeNonPrintable(QByteArray src);
     static QString charToHex(const char symbol);

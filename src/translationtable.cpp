@@ -194,6 +194,25 @@ void TranslationTable::clearItems()
     decodeTable.clear();
 }
 
+bool TranslationTable::save(const QString &fileName) const
+{
+    QFile file(fileName);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
+        return false;
+
+    QTextStream out(&file);
+
+    for (auto it = encodeTable.cbegin(); it != encodeTable.cend(); ++it)
+    {
+        out << QString("%1=%2").arg(
+            QString::number(static_cast<uint8_t>(it.key()), 16).toUpper().rightJustified(2, '0'),
+            it.value()) << "\n";
+    }
+
+    file.close();
+    return true;
+}
+
 uint32_t TranslationTable::generateTable(QString input, QString value)
 {
     static const auto ucRE = QRegularExpression("([A-Z]+)");

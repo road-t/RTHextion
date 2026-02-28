@@ -16,6 +16,7 @@ HEADERS = \
     InsertScriptDialog.h \
     JumpToDialog.h \
     PointerListModel.h \
+    SemiAutoTableDialog.h \
     TableEditDialog.h \
     langtranslator.h \
     mainwindow.h \
@@ -33,6 +34,7 @@ SOURCES = \
     InsertScriptDialog.cpp \
     JumpToDialog.cpp \
     PointerListModel.cpp \
+    SemiAutoTableDialog.cpp \
     TableEditDialog.cpp \
     langtranslator.cpp \
     main.cpp \

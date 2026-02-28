@@ -353,8 +353,11 @@ bool MainWindow::loadTable()
         hexEdit->setTranslationTable(tb);
         useTableAct->setDisabled(false);
         editTableAct->setDisabled(false);
+        saveTableAct->setDisabled(false);
+        saveTableAsAct->setDisabled(false);
         updateScriptMenuState();
         rememberDirectory(kLastTableDirKey, fileName);
+        tableFilePath = fileName;
     }
 
     return true;
@@ -456,6 +459,15 @@ void MainWindow::retranslateUi()
     useTableAct->setStatusTip(tr("Use translation table"));
     editTableAct->setText(tr("Edit table"));
     editTableAct->setStatusTip(tr("Edit translation table"));
+    createEmptyTableAct->setText(tr("Empty table"));
+    createEmptyTableAct->setStatusTip(tr("Create a new empty translation table"));
+    semiAutoTableAct->setText(tr("Semi-auto generated"));
+    semiAutoTableAct->setStatusTip(tr("Generate table by searching for a known text"));
+    saveTableAct->setText(tr("Save table"));
+    saveTableAct->setStatusTip(tr("Save translation table"));
+    saveTableAsAct->setText(tr("Save table as..."));
+    saveTableAsAct->setStatusTip(tr("Save translation table to a new file"));
+    createTableMenu->setTitle(tr("Create table"));
 
     // Actions - Script
     dumpScriptAct->setText(tr("Dump script"));
@@ -527,6 +539,78 @@ void MainWindow::onTranslationTableChanged()
         pointersDialog->refreshFromTable();
 }
 
+void MainWindow::createEmptyTable()
+{
+    if (tb)
+        delete tb;
+
+    tb = new TranslationTable();
+    hexEdit->setTranslationTable(tb);
+    useTableAct->setDisabled(false);
+    editTableAct->setDisabled(false);
+    saveTableAct->setDisabled(false);
+    saveTableAsAct->setDisabled(false);
+    updateScriptMenuState();
+
+    tableEditDialog->show();
+}
+
+void MainWindow::showSemiAutoTableDialog()
+{
+    semiAutoTableDialog->show();
+}
+
+void MainWindow::onSemiAutoTableGenerated()
+{
+    useTableAct->setDisabled(false);
+    editTableAct->setDisabled(false);
+    saveTableAct->setDisabled(false);
+    saveTableAsAct->setDisabled(false);
+    useTableAct->setChecked(true);
+    hexEdit->setTranslationTable(tb);
+    updateScriptMenuState();
+
+    tableEditDialog->show();
+}
+
+void MainWindow::saveTable()
+{
+    if (!tb || tb->size() == 0)
+        return;
+
+    if (tableFilePath.isEmpty())
+    {
+        saveTableAs();
+        return;
+    }
+
+    if (!tb->save(tableFilePath))
+    {
+        QMessageBox::warning(this, tr("Error"), tr("Could not save the table file."));
+    }
+}
+
+void MainWindow::saveTableAs()
+{
+    if (!tb || tb->size() == 0)
+        return;
+
+    auto fileName = QFileDialog::getSaveFileName(this, tr("Save translation table"),
+        lastDirectory(kLastTableDirKey), "Tables (*.tbl);;Text files (*.txt)");
+
+    if (!fileName.isEmpty())
+    {
+        if (!tb->save(fileName))
+        {
+            QMessageBox::warning(this, tr("Error"), tr("Could not save the table file."));
+            return;
+        }
+
+        rememberDirectory(kLastTableDirKey, fileName);
+        tableFilePath = fileName;
+    }
+}
+
 void MainWindow::dumpScript()
 {
     dumpScriptDialog->show();
@@ -565,6 +649,9 @@ void MainWindow::init()
 
     tableEditDialog = new TableEditDialog(&tb, this);
     connect(tableEditDialog, SIGNAL(tableChanged()), this, SLOT(onTranslationTableChanged()));
+
+    semiAutoTableDialog = new SemiAutoTableDialog(hexEdit, &tb, this);
+    connect(semiAutoTableDialog, &SemiAutoTableDialog::tableGenerated, this, &MainWindow::onSemiAutoTableGenerated);
 
     dumpScriptDialog = new DumpScriptDialog(hexEdit, this);
     insertScriptDialog = new InsertScriptDialog(hexEdit, this);
@@ -659,6 +746,24 @@ void MainWindow::createActions()
     editTableAct->setDisabled(true);
     editTableAct->setStatusTip(tr("Edit translation table"));
     connect(editTableAct, SIGNAL(triggered()), this, SLOT(editTable()));
+
+    createEmptyTableAct = new QAction(tr("Empty table"), this);
+    createEmptyTableAct->setStatusTip(tr("Create a new empty translation table"));
+    connect(createEmptyTableAct, &QAction::triggered, this, &MainWindow::createEmptyTable);
+
+    semiAutoTableAct = new QAction(tr("Semi-auto generated"), this);
+    semiAutoTableAct->setStatusTip(tr("Generate table by searching for a known text"));
+    connect(semiAutoTableAct, &QAction::triggered, this, &MainWindow::showSemiAutoTableDialog);
+
+    saveTableAct = new QAction(tr("Save table"), this);
+    saveTableAct->setDisabled(true);
+    saveTableAct->setStatusTip(tr("Save translation table"));
+    connect(saveTableAct, &QAction::triggered, this, &MainWindow::saveTable);
+
+    saveTableAsAct = new QAction(tr("Save table as..."), this);
+    saveTableAsAct->setDisabled(true);
+    saveTableAsAct->setStatusTip(tr("Save translation table to a new file"));
+    connect(saveTableAsAct, &QAction::triggered, this, &MainWindow::saveTableAs);
 
     dumpScriptAct = new QAction(tr("Dump script"), this);
     dumpScriptAct->setStatusTip(tr("Dump text script"));
@@ -804,8 +909,15 @@ void MainWindow::createMenus()
 
     tableMenu = menuBar()->addMenu(tr("Table"));
     tableMenu->addAction(loadTableAct);
-    tableMenu->addAction(useTableAct);
+    createTableMenu = tableMenu->addMenu(tr("Create table"));
+    createTableMenu->addAction(createEmptyTableAct);
+    createTableMenu->addAction(semiAutoTableAct);
+    tableMenu->addSeparator();
     tableMenu->addAction(editTableAct);
+    tableMenu->addAction(saveTableAct);
+    tableMenu->addAction(saveTableAsAct);
+    tableMenu->addSeparator();
+    tableMenu->addAction(useTableAct);
 
     scriptMenu = menuBar()->addMenu(tr("Script"));
     scriptMenu->setEnabled(false);

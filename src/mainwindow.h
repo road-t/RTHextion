@@ -12,6 +12,7 @@
 #include "pointersdialog.h"
 #include "JumpToDialog.h"
 #include "TableEditDialog.h"
+#include "SemiAutoTableDialog.h"
 #include "DumpScriptdialog.h"
 #include "InsertScriptDialog.h"
 
@@ -67,6 +68,11 @@ private slots:
     void updateScriptMenuState();
     void editTable();
     void onTranslationTableChanged();
+    void createEmptyTable();
+    void showSemiAutoTableDialog();
+    void onSemiAutoTableGenerated();
+    void saveTable();
+    void saveTableAs();
     void dumpScript();
     void insertScript();
     void updateEndiannes();
@@ -94,6 +100,7 @@ private:
     void rememberDirectory(const QString &settingsKey, const QString &filePath);
 
     QString curFile;
+    QString tableFilePath;
     QFile file;
     bool isUntitled;
     qint64 curOffset;
@@ -132,6 +139,10 @@ private:
     QAction *scanForEncodingAct;
     QAction *editTableAct;
     QAction *saveTableAct;
+    QAction *saveTableAsAct;
+    QAction *createEmptyTableAct;
+    QAction *semiAutoTableAct;
+    QMenu *createTableMenu;
 
     QAction *insertScriptAct;
     QAction *dumpScriptAct;
@@ -164,6 +175,7 @@ private:
     JumpToDialog *jumpToDialog;
     PointersDialog *pointersDialog;
     TableEditDialog *tableEditDialog;
+    SemiAutoTableDialog *semiAutoTableDialog;
     DumpScriptDialog *dumpScriptDialog;
     InsertScriptDialog *insertScriptDialog;
 
