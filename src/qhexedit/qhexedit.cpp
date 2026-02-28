@@ -33,10 +33,10 @@ QHexEdit::QHexEdit(QWidget *parent) : QAbstractScrollArea(parent)
 #ifdef Q_OS_WIN32
     setFont(QFont("Courier", 14));
 #else
-    setFont(QFont("monospace", 14));
+    setFont(QFont("Courier New", 14));
 #endif
 
-    auto font = QFont("monospace", 16, 10);
+    auto font = QFont("Courier New", 16, 10);
     QToolTip::setFont(font);
 
     setAddressAreaColor(this->palette().alternateBase().color());

@@ -59,7 +59,7 @@ void OptionsDialog::readSettings()
 #ifdef Q_OS_WIN32
     ui->leWidgetFont->setFont(settings.value("WidgetFont", QFont("Courier", 14)).value<QFont>());
 #else
-    ui->leWidgetFont->setFont(settings.value("WidgetFont", QFont("Monospace", 14)).value<QFont>());
+    ui->leWidgetFont->setFont(settings.value("WidgetFont", QFont("Courier New", 14)).value<QFont>());
 #endif
 
     ui->sbAddressAreaWidth->setValue(settings.value("AddressAreaWidth", 8).toInt() / 2);
