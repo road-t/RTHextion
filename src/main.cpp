@@ -10,7 +10,7 @@
 
 int main(int argc, char *argv[])
 {
-    Q_INIT_RESOURCE(RTHextion);
+    Q_INIT_RESOURCE(rthextion);
     QApplication app(argc, argv);
     app.setApplicationName(AppInfo::Name);
     app.setApplicationDisplayName(QStringLiteral("RTHextion"));
