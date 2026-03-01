@@ -27,7 +27,9 @@ int main(int argc, char *argv[])
     app.setApplicationVersion(AppInfo::Version);
     app.setOrganizationName(AppInfo::Name);
     
-    app.setWindowIcon(QIcon(":/images/tj.png")
+    app.setWindowIcon(QIcon(":/images/tj.png"));
+
+    QSettings settings(AppInfo::Name, AppInfo::Name);
     QString locale = settings.value("Language", QLocale::system().name()).toString();
     const QString languageShort = locale.left(2);
 
@@ -59,13 +61,15 @@ int main(int argc, char *argv[])
     parser.addPositionalArgument("file", "File to open");
     parser.addHelpOption();
 
+    parser.process(app);
 
-    MainWindow *mainWin = new MainWindow
+    MainWindow *mainWin = new MainWindow();
+    if (parser.positionalArguments().size() > 0)
     {
         mainWin->loadFile(parser.positionalArguments().at(0));
-        mainWin->loadFile(parser.positionalArguments().at(0));rofiler::instance().checkpoint("Scheduling mainWin->show()");
+    }
+
     QTimer::singleShot(0, mainWin, &QWidget::show);
 
     return app.exec();
 }
-QTimer::singleShot(0, mainWin, &QWidget::show);

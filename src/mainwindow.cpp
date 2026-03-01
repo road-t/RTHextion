@@ -775,9 +775,9 @@ void MainWindow::init()
     connect(hexEdit, SIGNAL(dataChanged()), this, SLOT(dataChanged()));
 
     createActions();
-    createActions(
+    createActions();
     createToolBars();
-    createToolBars(
+    createToolBars();
     createMenus();
 
     createStatusBar();

@@ -1288,10 +1288,6 @@ void QHexEdit::mouseDoubleClickEvent(QMouseEvent *event)
 
 void QHexEdit::paintEvent(QPaintEvent *event)
 {
-    static int paintCount = 0;
-    paintCount++;
-    if (paintCount <= 3)
-
     QPainter painter(viewport());
     auto pxOfsX = horizontalScrollBar()->value();
 
@@ -1543,7 +1539,6 @@ void QHexEdit::paintEvent(QPaintEvent *event)
         emit currentSizeChanged(_lastEventSize);
     }
 
-    if (paintCount <= 3)
 }
 
 void QHexEdit::resizeEvent(QResizeEvent *)
