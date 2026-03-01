@@ -75,10 +75,8 @@ void SemiAutoTableDialog::onFind()
     if (*_tb)
     {
         auto res = QMessageBox::warning(this, tr("Table already exists"),
-            tr("A translation table is already loaded. Creating a new one will discard it.\n"
-               "If you have unsaved changes, save the table first.\n\n"
-               "Continue?"),
-            QMessageBox::Yes | QMessageBox::No);
+                                        tr("A translation table is already loaded. Creating a new one will discard it.\nIf you have unsaved changes, save the table first.\n\nContinue?"),
+                                        QMessageBox::Yes | QMessageBox::No);
 
         if (res != QMessageBox::Yes)
             return;
@@ -95,17 +93,20 @@ void SemiAutoTableDialog::onFind()
 
     if ((*_tb)->size() == 0)
     {
-        QMessageBox::warning(this, tr("Generation failed"),
-            tr("Could not generate any table entries from the found match.\n"
-               "Try a different string with more variety of letters."));
+        QMessageBox::warning(
+            this,
+            tr("Generation failed"),
+            tr("Could not generate any table entries from the found match.\nTry a different string with more variety of letters."));
+
         delete *_tb;
         *_tb = nullptr;
         return;
     }
 
-    QMessageBox::information(this, tr("Table generated"),
-        tr("Generated %1 table entries.\n"
-           "The table editor will open so you can review and adjust.").arg((*_tb)->size()));
+    QMessageBox::information(
+        this,
+        tr("Table generated"),
+        tr("Generated %1 table entries.\nThe table editor will open so you can review and adjust.").arg((*_tb)->size()));
 
     emit tableGenerated();
     accept();
