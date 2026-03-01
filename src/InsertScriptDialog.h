@@ -22,7 +22,7 @@ public:
     void updateText();
 
 protected:
-    void showEvent(QShowEvent *ev);
+    void showEvent(QShowEvent *ev) override;
     void changeEvent(QEvent *event) override;
 
 private slots:

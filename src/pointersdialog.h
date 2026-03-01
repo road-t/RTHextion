@@ -29,7 +29,6 @@ private slots:
     void on_cbRangeStart_currentIndexChanged(int index);
     void on_cbRangeEnd_currentIndexChanged(int index);
     void on_tvPointers_doubleClicked(const QModelIndex &index);
-    void keyPressEvent(QKeyEvent *event);
     void updateProgress(int percent, int found);
     void on_btnStop_clicked();
     void on_btnAddPointer_clicked();
@@ -40,7 +39,8 @@ private slots:
     void finishSearchUi(bool cancelled, int found, qint64 elapsedMs);
 
 protected:
-    void showEvent(QShowEvent *ev);
+    void keyPressEvent(QKeyEvent *event) override;
+    void showEvent(QShowEvent *ev) override;
     void changeEvent(QEvent *event) override;
     PointerListModel* plModel = nullptr;
     QFuture<void> searchFuture;
