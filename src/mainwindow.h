@@ -35,10 +35,10 @@ public:
     MainWindow();
 
 protected:
-    void closeEvent(QCloseEvent *event);
+    void closeEvent(QCloseEvent *event) override;
     void changeEvent(QEvent *event) override;
-    void dragEnterEvent(QDragEnterEvent *event);
-    void dropEvent(QDropEvent *event);
+    void dragEnterEvent(QDragEnterEvent *event) override;
+    void dropEvent(QDropEvent *event) override;
 
 private slots:
     void about();
@@ -78,9 +78,12 @@ private slots:
     void updateEndiannes();
     void toggleOverwriteMode();
     void setLanguage();
+    void openRecentFile();
+    void openRecentTable();
 
 public:
     void loadFile(const QString &fileName);
+    void updateHexEditorSettings();
 
 private:
     void init();
@@ -98,12 +101,18 @@ private:
     void writeSettings();
     QString lastDirectory(const QString &settingsKey) const;
     void rememberDirectory(const QString &settingsKey, const QString &filePath);
+    void updateRecentFileMenu();
+    void updateRecentTableMenu();
+    void addToRecentFiles(const QString &fileName);
+    void addToRecentTables(const QString &fileName);
+    void updateStatusBarVisibility();
+    void updateValuePanels();
 
     QString curFile;
     QString tableFilePath;
     QFile file;
     bool isUntitled;
-    qint64 curOffset;
+    qint64 curOffset = 0;
     TranslationTable* tb = nullptr;
 
     QMenu *fileMenu;
@@ -115,6 +124,10 @@ private:
     QMenu *languageMenu;
     QMenu *helpMenu;
     QMenu *toolbarMenu;
+    QMenu *statusBarMenu;
+    QMenu *panelsMenu;
+    QMenu *recentFileMenu;
+    QMenu *recentTableMenu;
 
     QToolBar *fileToolBar;
     QToolBar *editToolBar;
@@ -168,6 +181,18 @@ private:
     QAction *findNextAct;
     QAction *gotoAct;
     QAction *resetToolbarsAct;
+    QAction *showStatusEndianAct;
+    QAction *showStatusByteAct;
+    QAction *showStatusWordAct;
+    QAction *showStatusDwordAct;
+    QAction *showStatusSelectionAct;
+    QAction *showStatusAddressAct;
+    QAction *showStatusSizeAct;
+    QAction *showStatusModeAct;
+    QAction *showSignedValuesAct;
+    QAction *showAddressAreaAct;
+    QAction *showAsciiAreaAct;
+    QAction *showAddressGridAct;
 
     QHexEdit *hexEdit;
     OptionsDialog *optionsDialog;
@@ -180,7 +205,9 @@ private:
     InsertScriptDialog *insertScriptDialog;
 
     QPushButton *lbEndiannes;
-    QLabel *lbValue;
+    QLabel *lbValueByte;
+    QLabel *lbValueWord;
+    QLabel *lbValueDword;
     QLabel *lbSelection;
     QLabel *lbAddress, *lbAddressName;
     QPushButton *lbOverwriteMode;

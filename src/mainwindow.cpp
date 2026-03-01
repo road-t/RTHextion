@@ -27,12 +27,23 @@ namespace
     const char *kLastTableDirKey = "Paths/LastTableDir";
     const char *kLastDumpDirKey = "Paths/LastDumpDir";
     const char *kMainWindowStateKey = "MainWindow/State";
+    const char *kRecentFilesKey = "RecentFiles";
+    const char *kRecentTablesKey = "RecentTables";
+    const int kMaxRecentFiles = 10;
+    const int kMaxRecentTables = 10;
+
+    QChar readSingleCharSetting(const QSettings &settings, const char *key, const QChar &fallback)
+    {
+        const QString value = settings.value(key, QString(fallback)).toString();
+        return value.isEmpty() ? fallback : value.at(0);
+    }
 }
 
 /*****************************************************************************/
 /* Public methods */
 /*****************************************************************************/
 MainWindow::MainWindow()
+    : hexEdit(nullptr), optionsDialog(nullptr), searchDialog(nullptr), jumpToDialog(nullptr), pointersDialog(nullptr), tableEditDialog(nullptr), semiAutoTableDialog(nullptr), dumpScriptDialog(nullptr), insertScriptDialog(nullptr)
 {
     setAcceptDrops( true );
     init();
@@ -191,7 +202,7 @@ void MainWindow::revert()
 
 void MainWindow::optionsAccepted()
 {
-    readSettings();
+    updateHexEditorSettings();
 }
 
 void MainWindow::pointersUpdated()
@@ -201,11 +212,15 @@ void MainWindow::pointersUpdated()
 
 void MainWindow::findNext()
 {
+    if (!searchDialog)
+        searchDialog = new SearchDialog(hexEdit, this);
     searchDialog->findNext();
 }
 
 void MainWindow::showJumpToDialog()
 {
+    if (!jumpToDialog)
+        jumpToDialog = new JumpToDialog(hexEdit, this);
     jumpToDialog->show();
 }
 
@@ -227,7 +242,7 @@ bool MainWindow::saveAs()
     if (initialPath.isEmpty())
         initialPath = lastDirectory(kLastFileDirKey);
 
-    QString fileName = QFileDialog::getSaveFileName(this, tr("Save As"), initialPath);
+    QString fileName = QFileDialog::getSaveFileName(this, tr("Save As..."), initialPath);
 
     if (fileName.isEmpty())
         return false;
@@ -244,10 +259,10 @@ void MainWindow::saveSelectionToReadableFile()
         QFile file(fileName);
 
         if (!file.open(QFile::WriteOnly | QFile::Text)) {
-            QMessageBox::warning(this, tr("RTHextion"),
+            QMessageBox::warning(this, QString::fromLatin1(AppInfo::Name),
                                  tr("Cannot write file %1:\n%2.")
-                                 .arg(fileName)
-                                 .arg(file.errorString()));
+                                     .arg(fileName)
+                                     .arg(file.errorString()));
             return;
         }
 
@@ -273,10 +288,10 @@ void MainWindow::saveToReadableFile()
     {
         QFile file(fileName);
         if (!file.open(QFile::WriteOnly | QFile::Text)) {
-            QMessageBox::warning(this, tr("RTHextion"),
+            QMessageBox::warning(this, QString::fromLatin1(AppInfo::Name),
                                  tr("Cannot write file %1:\n%2.")
-                                 .arg(fileName)
-                                 .arg(file.errorString()));
+                                     .arg(fileName)
+                                     .arg(file.errorString()));
             return;
         }
 
@@ -291,18 +306,40 @@ void MainWindow::saveToReadableFile()
 
 void MainWindow::setAddress(qint64 address)
 {
-    lbAddress->setText(QString("%1").arg(address, 1, 16));
+    if (!lbAddress)
+        return;
+
+    const int digits = (hexEdit ? qMax(1, hexEdit->addressWidth()) : 1);
+    lbAddress->setText(QString("0x%1").arg(address, digits, 16, QChar('0')));
     curOffset = address;
 
-    auto value = hexEdit->getValue(address);
+    updateValuePanels();
+}
 
-    QString bValue;
+void MainWindow::updateValuePanels()
+{
+    auto value = hexEdit->getValue(curOffset);
 
-    bValue = hexEdit->bigEndian ?
-                QString("byte: %1 | word: %2 | dword: %3").arg(value.uByte).arg(value.beWord).arg(value.beDword) :
-                QString("byte: %1 | word: %2 | dword: %3").arg(value.uByte).arg(value.leWord).arg(value.leDword);
+    const quint8 byteValue = value.uByte;
+    const quint16 wordValue = hexEdit->bigEndian ? static_cast<quint16>(value.beWord)
+                                                 : static_cast<quint16>(value.leWord);
+    const quint32 dwordValue = hexEdit->bigEndian ? static_cast<quint32>(value.beDword)
+                                                  : static_cast<quint32>(value.leDword);
 
-    lbValue->setText(bValue);
+    const bool showSigned = showSignedValuesAct && showSignedValuesAct->isChecked();
+
+    if (showSigned)
+    {
+        lbValueByte->setText(QString("B: %1").arg(static_cast<qint8>(byteValue)));
+        lbValueWord->setText(QString("W: %1").arg(static_cast<qint16>(wordValue)));
+        lbValueDword->setText(QString("D: %1").arg(static_cast<qint32>(dwordValue)));
+    }
+    else
+    {
+        lbValueByte->setText(QString("B: %1").arg(byteValue));
+        lbValueWord->setText(QString("W: %1").arg(wordValue));
+        lbValueDword->setText(QString("D: %1").arg(dwordValue));
+    }
 }
 
 void MainWindow::setSelection(qint64 start, qint64 end)
@@ -324,24 +361,70 @@ void MainWindow::setSize(qint64 size)
     lbSize->setText(QString("%1").arg(size));
 }
 
+void MainWindow::updateStatusBarVisibility()
+{
+    if (lbEndiannes)
+        lbEndiannes->setVisible(showStatusEndianAct->isChecked());
+
+    if (lbValueByte)
+        lbValueByte->setVisible(showStatusByteAct->isChecked());
+    if (lbValueWord)
+        lbValueWord->setVisible(showStatusWordAct->isChecked());
+    if (lbValueDword)
+        lbValueDword->setVisible(showStatusDwordAct->isChecked());
+
+    if (lbSelection)
+        lbSelection->setVisible(showStatusSelectionAct->isChecked());
+
+    const bool showAddress = showStatusAddressAct->isChecked();
+    if (lbAddressName)
+        lbAddressName->setVisible(showAddress);
+    if (lbAddress)
+        lbAddress->setVisible(showAddress);
+
+    const bool showSize = showStatusSizeAct->isChecked();
+    if (lbSizeName)
+        lbSizeName->setVisible(showSize);
+    if (lbSize)
+        lbSize->setVisible(showSize);
+
+    const bool showMode = showStatusModeAct->isChecked();
+    if (lbOverwriteModeName)
+        lbOverwriteModeName->setVisible(showMode);
+    if (lbOverwriteMode)
+        lbOverwriteMode->setVisible(showMode);
+}
+
 void MainWindow::showOptionsDialog()
 {
+    if (!optionsDialog)
+    {
+        optionsDialog = new OptionsDialog(this);
+        connect(optionsDialog, SIGNAL(accepted()), this, SLOT(optionsAccepted()));
+    }
     optionsDialog->show();
 }
 
 void MainWindow::showSearchDialog()
 {
+    if (!searchDialog)
+        searchDialog = new SearchDialog(hexEdit, this);
     searchDialog->show();
 }
 
 void MainWindow::showPointersDialog()
 {
+    if (!pointersDialog)
+    {
+        pointersDialog = new PointersDialog(hexEdit, this);
+        connect(pointersDialog, SIGNAL(accepted()), this, SLOT(pointersUpdated()));
+    }
     pointersDialog->show();
 }
 
 bool MainWindow::loadTable()
 {
-    auto fileName = QFileDialog::getOpenFileName(this, tr("Load translation table"), lastDirectory(kLastTableDirKey), "Tables (*.tbl *.tab *.table);;Text files (*.txt)");
+    auto fileName = QFileDialog::getOpenFileName(this, tr("Open translation table"), lastDirectory(kLastTableDirKey), "Tables (*.tbl *.tab *.table);;Text files (*.txt)");
 
     if (!fileName.isEmpty())
     {
@@ -358,6 +441,8 @@ bool MainWindow::loadTable()
         updateScriptMenuState();
         rememberDirectory(kLastTableDirKey, fileName);
         tableFilePath = fileName;
+        addToRecentTables(fileName);
+        statusBar()->showMessage(tr("Table loaded"), 2000);
     }
 
     return true;
@@ -399,8 +484,25 @@ void MainWindow::setLanguage()
 
     // Load and install new translator
     LangTranslator *translator = new LangTranslator(qApp);
-    if (translator->load(QStringLiteral(":/translations/") + language + QStringLiteral(".lang")) ||
-        translator->load(QStringLiteral(":/translations/") + languageShort + QStringLiteral(".lang")))
+    QStringList candidates;
+    candidates << language;
+    if (!languageShort.isEmpty() && languageShort != language)
+        candidates << languageShort;
+
+    bool loaded = false;
+    for (const QString &candidate : candidates)
+    {
+        const QString path = QStringLiteral(":/translations/") + candidate + QStringLiteral(".lang");
+        if (!QFile::exists(path))
+            continue;
+        if (translator->load(path))
+        {
+            loaded = true;
+            break;
+        }
+    }
+
+    if (loaded)
     {
         qApp->installTranslator(translator);
     }
@@ -434,13 +536,13 @@ void MainWindow::retranslateUi()
     openAct->setText(tr("Open..."));
     openAct->setStatusTip(tr("Open an existing file"));
     saveAct->setText(tr("Save"));
-    saveAct->setStatusTip(tr("Save the document to disk"));
+    saveAct->setStatusTip(tr("Save the file to disk"));
     closeAct->setText(tr("Close"));
     closeAct->setStatusTip(tr("Close the current file"));
     saveAsAct->setText(tr("Save As..."));
-    saveAsAct->setStatusTip(tr("Save the document under a new name"));
+    saveAsAct->setStatusTip(tr("Save the file under a new name"));
     saveReadable->setText(tr("Save Dump..."));
-    saveReadable->setStatusTip(tr("Save document as dump"));
+    saveReadable->setStatusTip(tr("Save the file as dump"));
     revertAct->setText(tr("Revert"));
     revertAct->setStatusTip(tr("Revert file to last saved version"));
     exitAct->setText(tr("Exit"));
@@ -502,8 +604,23 @@ void MainWindow::retranslateUi()
     pointersMenu->setTitle(tr("Pointers"));
     viewMenu->setTitle(tr("View"));
     toolbarMenu->setTitle(tr("Toolbar"));
+    statusBarMenu->setTitle(tr("Status bar"));
+    panelsMenu->setTitle(tr("Panels"));
     languageMenu->setTitle(tr("Language"));
     helpMenu->setTitle(tr("Help"));
+
+    showStatusEndianAct->setText(tr("Endianness"));
+    showStatusByteAct->setText(tr("Byte"));
+    showStatusWordAct->setText(tr("Word"));
+    showStatusDwordAct->setText(tr("DWord"));
+    showStatusSelectionAct->setText(tr("Selection"));
+    showStatusAddressAct->setText(tr("Address"));
+    showStatusSizeAct->setText(tr("Size"));
+    showStatusModeAct->setText(tr("Mode"));
+    showSignedValuesAct->setText(tr("Signed"));
+    showAddressAreaAct->setText(tr("Address area"));
+    showAsciiAreaAct->setText(tr("ASCII area"));
+    showAddressGridAct->setText(tr("Show grid"));
 
     // Toolbar names and their View menu entries
     fileToolBar->setWindowTitle(tr("File"));
@@ -515,15 +632,21 @@ void MainWindow::retranslateUi()
     resetToolbarsAct->setText(tr("Reset"));
 
     // Status bar labels
-    lbAddressName->setText(tr("Address:"));
-    lbSizeName->setText(tr("Size:"));
-    lbOverwriteModeName->setText(tr("Mode:"));
+    lbAddressName->setText(tr("Address") + QString(":"));
+    lbSizeName->setText(tr("Size") + QString(":"));
+    lbOverwriteModeName->setText(tr("Mode") + QString(":"));
     lbEndiannes->setText(hexEdit->bigEndian ? tr("Big-endian") : tr("Little-endian"));
     setOverwriteMode(hexEdit->overwriteMode());
+    updateValuePanels();
 }
 
 void MainWindow::editTable()
 {
+    if (!tableEditDialog)
+    {
+        tableEditDialog = new TableEditDialog(&tb, this);
+        connect(tableEditDialog, SIGNAL(tableChanged()), this, SLOT(onTranslationTableChanged()));
+    }
     tableEditDialog->show();
 }
 
@@ -552,11 +675,16 @@ void MainWindow::createEmptyTable()
     saveTableAsAct->setDisabled(false);
     updateScriptMenuState();
 
-    tableEditDialog->show();
+    editTable();
 }
 
 void MainWindow::showSemiAutoTableDialog()
 {
+    if (!semiAutoTableDialog)
+    {
+        semiAutoTableDialog = new SemiAutoTableDialog(hexEdit, &tb, this);
+        connect(semiAutoTableDialog, &SemiAutoTableDialog::tableGenerated, this, &MainWindow::onSemiAutoTableGenerated);
+    }
     semiAutoTableDialog->show();
 }
 
@@ -570,7 +698,7 @@ void MainWindow::onSemiAutoTableGenerated()
     hexEdit->setTranslationTable(tb);
     updateScriptMenuState();
 
-    tableEditDialog->show();
+    editTable();
 }
 
 void MainWindow::saveTable()
@@ -587,6 +715,11 @@ void MainWindow::saveTable()
     if (!tb->save(tableFilePath))
     {
         QMessageBox::warning(this, tr("Error"), tr("Could not save the table file."));
+    }
+    else
+    {
+        addToRecentTables(tableFilePath);
+        statusBar()->showMessage(tr("Table saved"), 2000);
     }
 }
 
@@ -608,16 +741,22 @@ void MainWindow::saveTableAs()
 
         rememberDirectory(kLastTableDirKey, fileName);
         tableFilePath = fileName;
+        addToRecentTables(fileName);
+        statusBar()->showMessage(tr("Table saved"), 2000);
     }
 }
 
 void MainWindow::dumpScript()
 {
+    if (!dumpScriptDialog)
+        dumpScriptDialog = new DumpScriptDialog(hexEdit, this);
     dumpScriptDialog->show();
 }
 
 void MainWindow::insertScript()
 {
+    if (!insertScriptDialog)
+        insertScriptDialog = new InsertScriptDialog(hexEdit, this);
     insertScriptDialog->show();
 }
 
@@ -627,10 +766,6 @@ void MainWindow::insertScript()
 void MainWindow::init()
 {
     setAttribute(Qt::WA_DeleteOnClose);
-
-    optionsDialog = new OptionsDialog(this);
-    connect(optionsDialog, SIGNAL(accepted()), this, SLOT(optionsAccepted()));
-
     isUntitled = true;
 
     hexEdit = new QHexEdit;
@@ -638,32 +773,21 @@ void MainWindow::init()
 
     connect(hexEdit, SIGNAL(overwriteModeChanged(bool)), this, SLOT(setOverwriteMode(bool)));
     connect(hexEdit, SIGNAL(dataChanged()), this, SLOT(dataChanged()));
-    searchDialog = new SearchDialog(hexEdit, this);
-
-    jumpToDialog = new JumpToDialog(hexEdit, this);
-
-    pointersDialog = new PointersDialog(hexEdit, this);
-    connect(pointersDialog, SIGNAL(accepted()), this, SLOT(pointersUpdated()));
-
-    tableEditDialog = new TableEditDialog(&tb, this);
-    connect(tableEditDialog, SIGNAL(tableChanged()), this, SLOT(onTranslationTableChanged()));
-
-    semiAutoTableDialog = new SemiAutoTableDialog(hexEdit, &tb, this);
-    connect(semiAutoTableDialog, &SemiAutoTableDialog::tableGenerated, this, &MainWindow::onSemiAutoTableGenerated);
-
-    dumpScriptDialog = new DumpScriptDialog(hexEdit, this);
-    insertScriptDialog = new InsertScriptDialog(hexEdit, this);
 
     createActions();
-    connect(hexEdit, SIGNAL(undoAvailable(bool)), undoAct, SLOT(setEnabled(bool)));
-    connect(hexEdit, SIGNAL(redoAvailable(bool)), redoAct, SLOT(setEnabled(bool)));
+    createActions(
     createToolBars();
+    createToolBars(
     createMenus();
+
     createStatusBar();
+
     defaultWindowState = saveState();
 
     setCurrentFile("");
+
     readSettings();
+
     updateActionStates();
 
     setUnifiedTitleAndToolBarOnMac(true);
@@ -672,10 +796,8 @@ void MainWindow::init()
 void MainWindow::createActions()
 {
     newAct = new QAction(tr("New"), this);
-    newAct->setShortcuts(QKeySequence::New);
     newAct->setStatusTip(tr("Create a new file"));
     connect(newAct, SIGNAL(triggered()), this, SLOT(newFile()));
-
     openAct = new QAction(QIcon(":/images/open.png"), tr("Open..."), this);
     openAct->setShortcuts(QKeySequence::Open);
     openAct->setStatusTip(tr("Open an existing file"));
@@ -686,7 +808,6 @@ void MainWindow::createActions()
     saveAct->setStatusTip(tr("Save the document to disk"));
     connect(saveAct, SIGNAL(triggered()), this, SLOT(save()));
 
-    closeAct = new QAction(tr("Close"), this);
     closeAct->setShortcuts(QKeySequence::Close);
     closeAct->setStatusTip(tr("Close the current file"));
     connect(closeAct, SIGNAL(triggered()), this, SLOT(closeFile()));
@@ -717,13 +838,12 @@ void MainWindow::createActions()
     redoAct->setShortcuts(QKeySequence::Redo);
     connect(redoAct, SIGNAL(triggered()), hexEdit, SLOT(redo()));
 
-    saveSelectionReadable = new QAction(tr("Save selection as dump"), this);
     saveSelectionReadable->setStatusTip(tr("Save selection as dump"));
     saveSelectionReadable->setEnabled(false);
     connect(saveSelectionReadable, SIGNAL(triggered()), this, SLOT(saveSelectionToReadableFile()));
 
-    loadTableAct = new QAction(tr("Load table"), this);
-    loadTableAct->setStatusTip(tr("Load translation table"));
+    loadTableAct = new QAction(tr("Open..."), this);
+    loadTableAct->setStatusTip(tr("Open translation table"));
     connect(loadTableAct, SIGNAL(triggered()), this, SLOT(loadTable()));
 
     useTableAct = new QAction(tr("Use table"), this);
@@ -786,7 +906,6 @@ void MainWindow::createActions()
     findAct->setStatusTip(tr("Show the Dialog for finding and replacing"));
     connect(findAct, SIGNAL(triggered()), this, SLOT(showSearchDialog()));
 
-    findNextAct = new QAction(tr("Find next"), this);
     findNextAct->setStatusTip(tr("Find next occurrence of the searched pattern"));
     connect(findNextAct, SIGNAL(triggered()), this, SLOT(findNext()));
 
@@ -872,13 +991,91 @@ void MainWindow::createActions()
         langChineseSimplifiedAct->setChecked(true);
     else
         langEnglishAct->setChecked(true);
+
+    showStatusEndianAct = new QAction(tr("Endianness"), this);
+    showStatusEndianAct->setCheckable(true);
+    showStatusEndianAct->setChecked(true);
+
+    showStatusByteAct = new QAction(tr("Byte"), this);
+    showStatusByteAct->setCheckable(true);
+    showStatusByteAct->setChecked(true);
+
+    showStatusWordAct = new QAction(tr("Word"), this);
+    showStatusWordAct->setCheckable(true);
+    showStatusWordAct->setChecked(true);
+
+    showStatusDwordAct = new QAction(tr("DWord"), this);
+    showStatusDwordAct->setCheckable(true);
+    showStatusDwordAct->setChecked(true);
+
+    showStatusSelectionAct = new QAction(tr("Selection"), this);
+    showStatusSelectionAct->setCheckable(true);
+    showStatusSelectionAct->setChecked(true);
+
+    showStatusAddressAct = new QAction(tr("Address"), this);
+    showStatusAddressAct->setCheckable(true);
+    showStatusAddressAct->setChecked(true);
+
+    showStatusSizeAct = new QAction(tr("Size"), this);
+    showStatusSizeAct->setCheckable(true);
+    showStatusSizeAct->setChecked(true);
+
+    showStatusModeAct = new QAction(tr("Mode"), this);
+    showStatusModeAct->setCheckable(true);
+    showStatusModeAct->setChecked(true);
+
+    showSignedValuesAct = new QAction(tr("Signed"), this);
+    showSignedValuesAct->setCheckable(true);
+    showSignedValuesAct->setChecked(false);
+
+    showAddressAreaAct = new QAction(tr("Address area"), this);
+    showAddressAreaAct->setCheckable(true);
+    showAddressAreaAct->setChecked(true);
+
+    showAsciiAreaAct = new QAction(tr("ASCII area"), this);
+    showAsciiAreaAct->setCheckable(true);
+    showAsciiAreaAct->setChecked(true);
+
+    showAddressGridAct = new QAction(tr("Show grid"), this);
+    showAddressGridAct->setCheckable(true);
+    showAddressGridAct->setChecked(true);
+
+    connect(showStatusEndianAct, &QAction::toggled, this, [this](bool)
+            { updateStatusBarVisibility(); });
+    connect(showStatusByteAct, &QAction::toggled, this, [this](bool)
+            { updateStatusBarVisibility(); });
+    connect(showStatusWordAct, &QAction::toggled, this, [this](bool)
+            { updateStatusBarVisibility(); });
+    connect(showStatusDwordAct, &QAction::toggled, this, [this](bool)
+            { updateStatusBarVisibility(); });
+    connect(showStatusSelectionAct, &QAction::toggled, this, [this](bool)
+            { updateStatusBarVisibility(); });
+    connect(showStatusAddressAct, &QAction::toggled, this, [this](bool)
+            { updateStatusBarVisibility(); });
+    connect(showStatusSizeAct, &QAction::toggled, this, [this](bool)
+            { updateStatusBarVisibility(); });
+    connect(showStatusModeAct, &QAction::toggled, this, [this](bool)
+            { updateStatusBarVisibility(); });
+    connect(showSignedValuesAct, &QAction::toggled, this, [this](bool)
+            { updateValuePanels(); });
+    connect(showAddressAreaAct, &QAction::toggled, this, [this](bool checked)
+            { hexEdit->setAddressArea(checked); });
+    connect(showAsciiAreaAct, &QAction::toggled, this, [this](bool checked)
+            { hexEdit->setAsciiArea(checked); });
+    connect(showAddressGridAct, &QAction::toggled, this, [this](bool checked)
+            { hexEdit->setShowHexGrid(checked); });
+
 }
 
 void MainWindow::createMenus()
 {
+
     fileMenu = menuBar()->addMenu(tr("File"));
+
     fileMenu->addAction(newAct);
     fileMenu->addAction(openAct);
+    recentFileMenu = fileMenu->addMenu(tr("Recent"));
+    recentFileMenu->setEnabled(false);
     fileMenu->addSeparator();
     fileMenu->addAction(saveAct);
     fileMenu->addAction(saveAsAct);
@@ -901,6 +1098,8 @@ void MainWindow::createMenus()
 
     tableMenu = menuBar()->addMenu(tr("Table"));
     tableMenu->addAction(loadTableAct);
+    recentTableMenu = tableMenu->addMenu(tr("Recent"));
+    recentTableMenu->setEnabled(false);
     createTableMenu = tableMenu->addMenu(tr("Create table"));
     createTableMenu->addAction(createEmptyTableAct);
     createTableMenu->addAction(semiAutoTableAct);
@@ -921,7 +1120,14 @@ void MainWindow::createMenus()
     pointersMenu->addAction(showPointersAct);
 
     viewMenu = menuBar()->addMenu(tr("View"));
+
+    panelsMenu = viewMenu->addMenu(tr("Panels"));
+    panelsMenu->addAction(showAddressAreaAct);
+    panelsMenu->addAction(showAsciiAreaAct);
+    panelsMenu->addAction(showAddressGridAct);
+
     toolbarMenu = viewMenu->addMenu(tr("Toolbar"));
+
     QAction *fileToolbarAct = fileToolBar->toggleViewAction();
     QAction *actionsToolbarAct = editToolBar->toggleViewAction();
     QAction *searchToolbarAct = searchToolBar->toggleViewAction();
@@ -933,6 +1139,7 @@ void MainWindow::createMenus()
     toolbarMenu->addAction(searchToolbarAct);
     toolbarMenu->addSeparator();
     resetToolbarsAct = toolbarMenu->addAction(tr("Reset"));
+
     connect(resetToolbarsAct, &QAction::triggered, this, [this]()
             {
         if (!defaultWindowState.isEmpty())
@@ -940,6 +1147,18 @@ void MainWindow::createMenus()
         fileToolBar->show();
         editToolBar->show();
         searchToolBar->show(); });
+
+    statusBarMenu = viewMenu->addMenu(tr("Status bar"));
+    statusBarMenu->addAction(showStatusEndianAct);
+    statusBarMenu->addAction(showStatusByteAct);
+    statusBarMenu->addAction(showStatusWordAct);
+    statusBarMenu->addAction(showStatusDwordAct);
+    statusBarMenu->addAction(showStatusSelectionAct);
+    statusBarMenu->addAction(showStatusAddressAct);
+    statusBarMenu->addAction(showStatusSizeAct);
+    statusBarMenu->addAction(showStatusModeAct);
+    statusBarMenu->addSeparator();
+    statusBarMenu->addAction(showSignedValuesAct);
 
     languageMenu = viewMenu->addMenu(tr("Language"));
     languageMenu->addAction(langRussianAct);
@@ -950,6 +1169,7 @@ void MainWindow::createMenus()
     languageMenu->addAction(langPortugueseAct);
     languageMenu->addAction(langJapaneseAct);
     languageMenu->addAction(langChineseSimplifiedAct);
+
     viewMenu->addSeparator();
     viewMenu->addAction(optionsAct);
 
@@ -972,36 +1192,50 @@ void MainWindow::createStatusBar()
     connect(lbEndiannes, SIGNAL(clicked()), this, SLOT(updateEndiannes()));
     statusBar()->addWidget(lbEndiannes);
 
-    // Value label
-    lbValue = new QLabel();
-    lbValue->setFrameShape(QFrame::Panel);
-    lbValue->setFrameShadow(QFrame::Sunken);
-    lbValue->setMinimumWidth(300);
-    //lbValue->setAlignment()
-    statusBar()->addPermanentWidget(lbValue);
+    // Value labels (separate panels)
+    lbValueByte = new QLabel();
+    lbValueByte->setFrameShape(QFrame::Panel);
+    lbValueByte->setFrameShadow(QFrame::Sunken);
+    lbValueByte->setMinimumWidth(45);
+    statusBar()->addPermanentWidget(lbValueByte);
+
+    lbValueWord = new QLabel();
+    lbValueWord->setFrameShape(QFrame::Panel);
+    lbValueWord->setFrameShadow(QFrame::Sunken);
+    lbValueWord->setMinimumWidth(60);
+    statusBar()->addPermanentWidget(lbValueWord);
+
+    lbValueDword = new QLabel();
+    lbValueDword->setFrameShape(QFrame::Panel);
+    lbValueDword->setFrameShadow(QFrame::Sunken);
+    lbValueDword->setMinimumWidth(98);
+    statusBar()->addPermanentWidget(lbValueDword);
 
     // Selection label
     lbSelection = new QLabel();
     lbSelection->setFrameShape(QFrame::Panel);
     lbSelection->setFrameShadow(QFrame::Sunken);
     lbSelection->setMinimumWidth(200);
+    lbSelection->setAlignment(Qt::AlignCenter);
     statusBar()->addPermanentWidget(lbSelection);
     connect(hexEdit, SIGNAL(selectionChanged(qint64, qint64)), this, SLOT(setSelection(qint64, qint64)));
 
     // Address Label
     lbAddressName = new QLabel();
-    lbAddressName->setText(tr("Address:"));
+    lbAddressName->setText(tr("Address") + QString(":"));
     statusBar()->addPermanentWidget(lbAddressName);
     lbAddress = new QLabel();
     lbAddress->setFrameShape(QFrame::Panel);
     lbAddress->setFrameShadow(QFrame::Sunken);
-    lbAddress->setMinimumWidth(70);
+    lbAddress->setAlignment(Qt::AlignCenter);
+    lbAddress->setMinimumWidth(120);
     statusBar()->addPermanentWidget(lbAddress);
     connect(hexEdit, SIGNAL(currentAddressChanged(qint64)), this, SLOT(setAddress(qint64)));
+    setAddress(hexEdit->getCurrentOffset());
 
     // Size Label
     lbSizeName = new QLabel();
-    lbSizeName->setText(tr("Size:"));
+    lbSizeName->setText(tr("Size") + QString(":"));
     statusBar()->addPermanentWidget(lbSizeName);
     lbSize = new QLabel();
     lbSize->setFrameShape(QFrame::Panel);
@@ -1012,7 +1246,7 @@ void MainWindow::createStatusBar()
 
     // Overwrite Mode Label
     lbOverwriteModeName = new QLabel();
-    lbOverwriteModeName->setText(tr("Mode:"));
+    lbOverwriteModeName->setText(tr("Mode") + QString(":"));
     statusBar()->addPermanentWidget(lbOverwriteModeName);
     lbOverwriteMode = new QPushButton();
     lbOverwriteMode->setFlat(true);
@@ -1021,6 +1255,9 @@ void MainWindow::createStatusBar()
     statusBar()->addPermanentWidget(lbOverwriteMode);
     connect(lbOverwriteMode, SIGNAL(clicked()), this, SLOT(toggleOverwriteMode()));
     setOverwriteMode(hexEdit->overwriteMode());
+
+    updateValuePanels();
+    updateStatusBarVisibility();
 
     statusBar()->showMessage(tr("Ready"), 2000);
 }
@@ -1052,10 +1289,10 @@ void MainWindow::loadFile(const QString &fileName)
 
     if (!hexEdit->setData(file))
     {
-        QMessageBox::warning(this, tr("RTHextion"),
+        QMessageBox::warning(this, QString::fromLatin1(AppInfo::Name),
                              tr("Cannot read file %1:\n%2.")
-                             .arg(fileName)
-                             .arg(file.errorString()));
+                                 .arg(fileName)
+                                 .arg(file.errorString()));
         return;
     }
 
@@ -1067,10 +1304,10 @@ void MainWindow::loadFile(const QString &fileName)
 
     settings.setValue("RecentFile0", fileName);
 
-/*    auto pos = settings.value("offset").toLongLong();
-    hexEdit->setCursorPosition(pos);
-    hexEdit->ensureVisible();
-*/
+    /*    auto pos = settings.value("offset").toLongLong();
+        hexEdit->setCursorPosition(pos);
+        hexEdit->ensureVisible();
+    */
 }
 
 void MainWindow::readSettings()
@@ -1081,11 +1318,12 @@ void MainWindow::readSettings()
     move(pos);
     resize(size);
 
-    hexEdit->setAddressArea(settings.value("AddressArea").toBool());
-    hexEdit->setAsciiArea(settings.value("AsciiArea").toBool());
+
+    hexEdit->setAddressArea(settings.value("AddressArea", true).toBool());
+    hexEdit->setAsciiArea(settings.value("AsciiArea", true).toBool());
     hexEdit->setHighlighting(settings.value("Highlighting").toBool());
-    hexEdit->setOverwriteMode(settings.value("OverwriteMode").toBool());
-    hexEdit->setReadOnly(settings.value("ReadOnly").toBool());
+    hexEdit->setOverwriteMode(settings.value("OverwriteMode", true).toBool());
+
 
     hexEdit->setHighlightingColor(settings.value("HighlightingColor").value<QColor>());
     hexEdit->setPointersColor(settings.value("PointersColor").value<QColor>());
@@ -1097,27 +1335,91 @@ void MainWindow::readSettings()
     hexEdit->setAsciiAreaColor(settings.value("AsciiAreaColor").value<QColor>());
     hexEdit->setAsciiFontColor(settings.value("AsciiFontColor").value<QColor>());
     hexEdit->setHexFontColor(settings.value("HexFontColor").value<QColor>());
+    hexEdit->setNonPrintableNoTableChar(readSingleCharSetting(settings, "NonPrintableNoTableChar", QChar(0x25AA)));
+    hexEdit->setNotInTableChar(readSingleCharSetting(settings, "NotInTableChar", QChar(0x25A1)));
+
 
     hexEdit->setAddressWidth(settings.value("AddressAreaWidth").toInt());
-    hexEdit->setDynamicBytesPerLine(settings.value("Autosize").toBool());
-    hexEdit->setBytesPerLine(settings.value("BytesPerLine").toInt());
+    hexEdit->setBytesPerLine(settings.value("BytesPerLine", 32).toInt());
+    hexEdit->setDynamicBytesPerLine(settings.value("Autosize", true).toBool());
     hexEdit->setHexCaps(settings.value("HexCaps", true).toBool());
+    hexEdit->setShowHexGrid(settings.value("ShowHexGrid", true).toBool());
+    hexEdit->setHexAreaBackgroundColor(settings.value("HexAreaBackgroundColor", QColor(Qt::white)).value<QColor>());
+    hexEdit->setHexAreaGridColor(settings.value("HexAreaGridColor", QColor(0x99, 0x99, 0x99)).value<QColor>());
+    hexEdit->setCursorCharColor(settings.value("CursorCharColor", QColor(0x00, 0x60, 0xFF, 0x80)).value<QColor>());
+    hexEdit->setCursorFrameColor(settings.value("CursorFrameColor", QColor(Qt::black)).value<QColor>());
+
+    if (showAddressAreaAct)
+        showAddressAreaAct->setChecked(hexEdit->addressArea());
+    if (showAsciiAreaAct)
+        showAsciiAreaAct->setChecked(hexEdit->asciiArea());
+    if (showAddressGridAct)
+        showAddressGridAct->setChecked(hexEdit->showHexGrid());
+
 
     const QByteArray windowState = settings.value(kMainWindowStateKey).toByteArray();
     if (!windowState.isEmpty())
         restoreState(windowState);
 
-    auto fileName = settings.value("RecentFile0").toString();
+    updateRecentFileMenu();
 
-    if (!fileName.isEmpty())
+    updateRecentTableMenu();
+
+    const bool autoLoadRecentFile = settings.value("AutoLoadRecentFile", true).toBool();
+    const QString fileName = settings.value("RecentFile0").toString();
+
+    if (autoLoadRecentFile && !fileName.isEmpty())
     {
-        loadFile(fileName);
+        if (QFile::exists(fileName))
+        {
+            loadFile(fileName);
+        }
     }
 }
 
 void MainWindow::switchShowPointers()
 {
     hexEdit->setShowPointers(showPointersAct->isChecked());
+}
+
+void MainWindow::updateHexEditorSettings()
+{
+    if (!hexEdit)
+        return;
+
+    // Apply settings from QSettings to hex editor without reloading file
+    QSettings settings;
+
+    hexEdit->setAddressArea(settings.value("AddressArea", true).toBool());
+    hexEdit->setAsciiArea(settings.value("AsciiArea", true).toBool());
+    hexEdit->setHighlighting(settings.value("Highlighting").toBool());
+    hexEdit->setHighlightingColor(settings.value("HighlightingColor").value<QColor>());
+    hexEdit->setPointersColor(settings.value("PointersColor").value<QColor>());
+    hexEdit->setPointedColor(settings.value("PointedColor").value<QColor>());
+    hexEdit->setAddressAreaColor(settings.value("AddressAreaColor").value<QColor>());
+    hexEdit->setSelectionColor(settings.value("SelectionColor").value<QColor>());
+    hexEdit->setFont(settings.value("WidgetFont").value<QFont>());
+    hexEdit->setAddressFontColor(settings.value("AddressFontColor").value<QColor>());
+    hexEdit->setAsciiAreaColor(settings.value("AsciiAreaColor").value<QColor>());
+    hexEdit->setAsciiFontColor(settings.value("AsciiFontColor").value<QColor>());
+    hexEdit->setHexFontColor(settings.value("HexFontColor").value<QColor>());
+    hexEdit->setNonPrintableNoTableChar(readSingleCharSetting(settings, "NonPrintableNoTableChar", QChar(0x25AA)));
+    hexEdit->setNotInTableChar(readSingleCharSetting(settings, "NotInTableChar", QChar(0x25A1)));
+    hexEdit->setAddressWidth(settings.value("AddressAreaWidth").toInt());
+    hexEdit->setBytesPerLine(settings.value("BytesPerLine", 32).toInt());
+    hexEdit->setDynamicBytesPerLine(settings.value("Autosize", true).toBool());
+    hexEdit->setShowHexGrid(settings.value("ShowHexGrid", true).toBool());
+    hexEdit->setHexAreaBackgroundColor(settings.value("HexAreaBackgroundColor", QColor(Qt::white)).value<QColor>());
+    hexEdit->setHexAreaGridColor(settings.value("HexAreaGridColor", QColor(0x99, 0x99, 0x99)).value<QColor>());
+    hexEdit->setCursorCharColor(settings.value("CursorCharColor", QColor(0x00, 0x60, 0xFF, 0x80)).value<QColor>());
+    hexEdit->setCursorFrameColor(settings.value("CursorFrameColor", QColor(Qt::black)).value<QColor>());
+
+    if (showAddressAreaAct)
+        showAddressAreaAct->setChecked(hexEdit->addressArea());
+    if (showAsciiAreaAct)
+        showAsciiAreaAct->setChecked(hexEdit->asciiArea());
+    if (showAddressGridAct)
+        showAddressGridAct->setChecked(hexEdit->showHexGrid());
 }
 
 bool MainWindow::saveFile(const QString &fileName)
@@ -1142,9 +1444,9 @@ bool MainWindow::saveFile(const QString &fileName)
     QApplication::restoreOverrideCursor();
 
     if (!ok) {
-        QMessageBox::warning(this, tr("RTHextion"),
+        QMessageBox::warning(this, QString::fromLatin1(AppInfo::Name),
                              tr("Cannot write file %1.")
-                             .arg(fileName));
+                                 .arg(fileName));
         return false;
     }
 
@@ -1165,7 +1467,10 @@ void MainWindow::setCurrentFile(const QString &fileName)
     if (fileName.isEmpty())
         setWindowTitle(QString("RTHextion"));
     else
+    {
         setWindowTitle(QString("%1[*] - RTHextion").arg(strippedName(curFile)));
+        addToRecentFiles(fileName);
+    }
 
     updateActionStates();
 }
@@ -1177,7 +1482,7 @@ bool MainWindow::maybeSave()
 
     QMessageBox::StandardButton result = QMessageBox::warning(
         this,
-        tr("RTHextion"),
+        QString::fromLatin1(AppInfo::Name),
         tr("The document has been modified.\nDo you want to save your changes?"),
         QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
 
@@ -1230,6 +1535,143 @@ void MainWindow::rememberDirectory(const QString &settingsKey, const QString &fi
 
     QSettings settings;
     settings.setValue(settingsKey, dirPath);
+}
+
+void MainWindow::addToRecentFiles(const QString &fileName)
+{
+    if (fileName.isEmpty())
+        return;
+
+    QSettings settings;
+    QStringList files = settings.value(kRecentFilesKey).toStringList();
+
+    files.removeAll(fileName);
+    files.prepend(fileName);
+
+    while (files.size() > kMaxRecentFiles)
+        files.removeLast();
+
+    settings.setValue(kRecentFilesKey, files);
+    updateRecentFileMenu();
+}
+
+void MainWindow::addToRecentTables(const QString &fileName)
+{
+    if (fileName.isEmpty())
+        return;
+
+    QSettings settings;
+    QStringList files = settings.value(kRecentTablesKey).toStringList();
+
+    files.removeAll(fileName);
+    files.prepend(fileName);
+
+    while (files.size() > kMaxRecentTables)
+        files.removeLast();
+
+    settings.setValue(kRecentTablesKey, files);
+    updateRecentTableMenu();
+}
+
+void MainWindow::updateRecentFileMenu()
+{
+    QSettings settings;
+    QStringList files = settings.value(kRecentFilesKey).toStringList();
+
+    recentFileMenu->clear();
+
+    if (files.isEmpty())
+    {
+        recentFileMenu->setEnabled(false);
+        return;
+    }
+
+    recentFileMenu->setEnabled(true);
+
+    for (int i = 0; i < files.size(); ++i)
+    {
+        const QString fileName = files[i];
+        const QString text = QStringLiteral("&%1 %2").arg(i + 1).arg(QFileInfo(fileName).fileName());
+
+        QAction *action = recentFileMenu->addAction(text);
+        action->setData(fileName);
+        connect(action, &QAction::triggered, this, &MainWindow::openRecentFile);
+    }
+}
+
+void MainWindow::updateRecentTableMenu()
+{
+    QSettings settings;
+    QStringList files = settings.value(kRecentTablesKey).toStringList();
+
+    recentTableMenu->clear();
+
+    if (files.isEmpty())
+    {
+        recentTableMenu->setEnabled(false);
+        return;
+    }
+
+    recentTableMenu->setEnabled(true);
+
+    for (int i = 0; i < files.size(); ++i)
+    {
+        const QString fileName = files[i];
+        const QString text = QStringLiteral("&%1 %2").arg(i + 1).arg(QFileInfo(fileName).fileName());
+
+        QAction *action = recentTableMenu->addAction(text);
+        action->setData(fileName);
+        connect(action, &QAction::triggered, this, &MainWindow::openRecentTable);
+    }
+}
+
+void MainWindow::openRecentFile()
+{
+    QAction *action = qobject_cast<QAction *>(sender());
+    if (!action)
+        return;
+
+    const QString fileName = action->data().toString();
+    if (!fileName.isEmpty())
+        loadFile(fileName);
+}
+
+void MainWindow::openRecentTable()
+{
+    QAction *action = qobject_cast<QAction *>(sender());
+    if (!action)
+        return;
+
+    const QString fileName = action->data().toString();
+    if (!fileName.isEmpty())
+    {
+        // Check if file still exists
+        if (!QFile::exists(fileName))
+        {
+            QMessageBox::warning(this, tr("Error"), tr("File not found: %1").arg(fileName));
+            return;
+        }
+
+        if (tb)
+            delete tb;
+
+        try
+        {
+            tb = new TranslationTable(fileName);
+            useTableAct->setEnabled(true);
+            editTableAct->setEnabled(true);
+            saveTableAct->setEnabled(true);
+            saveTableAsAct->setEnabled(true);
+            hexEdit->setTranslationTable(tb);
+            tableFilePath = fileName;
+            statusBar()->showMessage(tr("Table loaded"), 2000);
+            updateScriptMenuState();
+        }
+        catch (const std::exception &e)
+        {
+            QMessageBox::warning(this, tr("Error"), tr("Failed to load table: %1").arg(QString::fromStdString(e.what())));
+        }
+    }
 }
 
 void MainWindow::updateEndiannes()

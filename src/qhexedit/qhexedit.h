@@ -166,6 +166,30 @@ class QHEXEDIT_API QHexEdit : public QAbstractScrollArea
     */
     Q_PROPERTY(bool readOnly READ isReadOnly WRITE setReadOnly)
 
+    /*! Property showHexGrid switches the hex area grid on or off.
+     */
+    Q_PROPERTY(bool showHexGrid READ showHexGrid WRITE setShowHexGrid)
+
+    /*! Property hex area background color sets (setHexAreaBackgroundColor()) the background
+    color of the hex area. You can also read the color (hexAreaBackgroundColor()).
+    */
+    Q_PROPERTY(QColor hexAreaBackgroundColor READ hexAreaBackgroundColor WRITE setHexAreaBackgroundColor)
+
+    /*! Property hex area grid color sets (setHexAreaGridColor()) the color
+    of the hex area grid lines. You can also read the color (hexAreaGridColor()).
+    */
+    Q_PROPERTY(QColor hexAreaGridColor READ hexAreaGridColor WRITE setHexAreaGridColor)
+
+    /*! Property cursor char color is used to highlight the byte/character currently
+    under the cursor. You can set it (setCursorCharColor()) and read it (cursorCharColor()).
+    */
+    Q_PROPERTY(QColor cursorCharColor READ cursorCharColor WRITE setCursorCharColor)
+
+    /*! Property cursor frame color is used for the border around the byte/character
+    currently under the cursor.
+    */
+    Q_PROPERTY(QColor cursorFrameColor READ cursorFrameColor WRITE setCursorFrameColor)
+
     /*! Set the font of the widget. Please use fixed width fonts like Mono or Courier.*/
     Q_PROPERTY(QFont font READ font WRITE setFont)
 
@@ -348,6 +372,18 @@ public:
     QColor asciiFontColor();
     void setAsciiFontColor(const QColor &color);
 
+    QChar nonPrintableNoTableChar() const;
+    void setNonPrintableNoTableChar(const QChar &ch);
+
+    QChar notInTableChar() const;
+    void setNotInTableChar(const QChar &ch);
+
+    QColor cursorCharColor();
+    void setCursorCharColor(const QColor &color);
+
+    QColor cursorFrameColor();
+    void setCursorFrameColor(const QColor &color);
+
     QColor hexFontColor();
     void setHexFontColor(const QColor &color);
 
@@ -414,6 +450,15 @@ public:
     QColor selectionColor();
     void setSelectionColor(const QColor &color);
 
+    bool showHexGrid();
+    void setShowHexGrid(bool mode);
+
+    QColor hexAreaBackgroundColor();
+    void setHexAreaBackgroundColor(const QColor &color);
+
+    QColor hexAreaGridColor();
+    void setHexAreaGridColor(const QColor &color);
+
     bool hasSelection();
     void resetSelection();                      // set selectionEnd to selectionStart
     qint64 getSelectionBegin();
@@ -444,6 +489,10 @@ private:
     void init();
     void readBuffers();
     QString toReadable(const QByteArray &ba);
+    uint32_t computeAsciiAreaMaxWidthForBytesPerLine(int bytesPerLine);
+    void updateAsciiAreaMaxWidth();
+    void invalidateAsciiAreaWidthCache();
+    void ensureAsciiAreaWidthCache();
 
 private slots:
     void adjust();                              // recalc pixel positions
@@ -480,6 +529,10 @@ private:
     QColor _addressFontColor;
     QColor _asciiFontColor;
     QColor _hexFontColor;
+    QColor _hexAreaBackgroundColor;
+    QColor _hexAreaGridColor;
+    QColor _cursorCharColor;
+    QColor _cursorFrameColor;
     int _addressWidth;
     bool _asciiArea;
     qint64 _addressOffset;
@@ -487,6 +540,7 @@ private:
     int _hexCharsInLine;
     bool _highlighting;
     bool _overwriteMode;
+    bool _showHexGrid;
     QBrush _brushSelection;
     QPen _penSelection;
     QBrush _brushHighlighted;
@@ -521,6 +575,15 @@ private:
     int _rowsShown;                             // lines of text shown
     UndoStack * _undoStack;                     // Stack to store edit actions for undo/redo
     TranslationTable* _tb = nullptr;            // Translation table
+    QVector<int> _tbSymbolWidthPxCache;         // cached rendered width for byte values 0x00..0xFF
+    QVector<uint32_t> _asciiAreaMaxWidthByBpl;  // cached max ASCII row width by bytes-per-line
+    int _tbMaxSymbolWidthPx = 0;
+    bool _asciiAreaWidthCacheValid = false;
+    int _asciiAreaWidthCacheCharWidth = 0;
+    qint64 _asciiAreaWidthCacheDataSize = -1;
+    const TranslationTable *_asciiAreaWidthCacheTable = nullptr;
+    QChar _nonPrintableNoTableChar = QChar(0x25AA); // ▪
+    QChar _notInTableChar = QChar(0x25A1);          // □
     /*! \endcond docNever */
 };
 
