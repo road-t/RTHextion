@@ -22,7 +22,8 @@ protected:
     void changeEvent(QEvent *event) override;
 
 public slots:
-    virtual void accept();
+    void accept() override;
+    void reject() override;
 
 private slots:
     void on_pbHighlightingColor_clicked();
@@ -33,18 +34,61 @@ private slots:
     void on_pbHexFontColor_clicked();
     void on_pbSelectionColor_clicked();
     void on_pbWidgetFont_clicked();
-
     void on_pbPointerColor_clicked();
-
     void on_pbPointedColor_clicked();
-
-    void on_cbDynamicSize_stateChanged(int arg1);
+    void on_pbCursorCharColor_clicked();
+    void on_pbCursorFrameColor_clicked();
+    void on_cbDynamicSize_stateChanged(int);
+    void on_pbHexAreaBackground_clicked();
+    void on_pbHexAreaGrid_clicked();
+    void on_cbShowHexGrid_stateChanged(int);
+    void on_cbAddressArea_stateChanged(int);
+    void on_cbAsciiArea_stateChanged(int);
+    void on_pbDefault_clicked();
+    void on_spinBoxValueChanged(int);
+    void on_checkBoxToggled(bool);
 
 private:
     void updateSettings();
     void readSettings();
     void writeSettings();
     void setColor(QWidget *widget, QColor color);
+    void updateFontButtonText(const QFont &font);
+    void updateAreaControls();
+    void applySettings();
+    void saveCurrentSettings();
+    void restoreSettings();
+    void resetToDefaults();
+
+    struct SettingsSnapshot
+    {
+        bool addressArea;
+        int addressAreaWidth;
+        bool asciiArea;
+        bool hexGridShow;
+        bool highlighting;
+        bool autosize;
+        bool autoLoadRecentFile;
+        int bytesPerLine;
+        QColor highlightingColor;
+        QColor addressAreaColor;
+        QColor addressFontColor;
+        QColor asciiAreaColor;
+        QColor asciiFontColor;
+        QColor pointerColor;
+        QColor pointedColor;
+        QColor selectionColor;
+        QColor hexFontColor;
+        QColor hexAreaBgColor;
+        QColor hexAreaGridColor;
+        QColor cursorCharColor;
+        QColor cursorFrameColor;
+        QFont widgetFont;
+        QString nonPrintableNoTableChar;
+        QString notInTableChar;
+    };
+    SettingsSnapshot m_originalSettings, m_currentSettings;
+    bool m_suppressUpdate = false;
 };
 
 #endif // OPTIONSDIALOG_H
