@@ -117,7 +117,7 @@ QString TranslationTable::encodeSymbol(const char symbol, bool keepCode)
             return code;
     }
     else
-        return keepCode ? charToHex(symbol) : "#";
+        return keepCode ? charToHex(symbol) : "";
 }
 
 QString TranslationTable::escapeNonPrintable(QByteArray src)

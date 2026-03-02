@@ -17,6 +17,7 @@ namespace
     const int kHexRowExtraGapPx = 4;
     const int kAddressRightPaddingPx = 4;
     const int kAsciiAreaLeftPaddingPx = 4;
+    const int kAsciiColumnGapPx = 2;  // extra padding between ASCII column slots
 }
 
 // ********************************************************************** Constructor, destructor
@@ -288,15 +289,32 @@ void QHexEdit::setCursorPosition(qint64 position)
 
     if (_asciiArea)
     {
-        asciiOffsetPx = byteInLine * _pxCharWidth;
-        asciiCursorWidthPx = _pxCharWidth;
+        // Accumulate per-slot widths up to byteInLine so cursor lands on the right token.
+        asciiOffsetPx = 0;
+        for (int col = 0; col < byteInLine; ++col)
+        {
+            // Find the byte value at this column in the current row
+            const qint64 bytePos = (_bPosCurrent / _bytesPerLine) * _bytesPerLine + col;
+            const uint8_t bv = (bytePos < _dataShown.size())
+                ? static_cast<uint8_t>(_dataShown.at(bytePos))
+                : 0;
+            asciiOffsetPx += (_tb && !_tbSymbolWidthPxCache.isEmpty())
+                ? (_tbSymbolWidthPxCache[bv] + kAsciiColumnGapPx)
+                : (_pxCharWidth + kAsciiColumnGapPx);
+        }
+        // Width of the current slot
+        const qint64 curBytePos = (_bPosCurrent / _bytesPerLine) * _bytesPerLine + byteInLine;
+        const uint8_t curBv = (curBytePos < _dataShown.size())
+            ? static_cast<uint8_t>(_dataShown.at(curBytePos))
+            : 0;
+        asciiCursorWidthPx = (_tb && !_tbSymbolWidthPxCache.isEmpty())
+            ? (_tbSymbolWidthPxCache[curBv] + kAsciiColumnGapPx)
+            : (_pxCharWidth + kAsciiColumnGapPx);
     }
 
     _pxCursorX = _pxPosAsciiX + kAsciiAreaLeftPaddingPx + asciiOffsetPx;
 
-    //    _cursorPosition = position & 0xFFFFFFFFFFFFFFFE;
-
-    _asciiCursorRect = QRect(_pxCursorX - horizontalScrollBar()->value() - 2, _pxCursorY - _pxCharHeight + _pxSelectionSub - 6, asciiCursorWidthPx + 4, _pxCharHeight + 2);
+    _asciiCursorRect = QRect(_pxCursorX - horizontalScrollBar()->value() - 2, _pxCursorY - _pxCharHeight + _pxSelectionSub - 6, asciiCursorWidthPx, _pxCharHeight);
 
     // hex area cursor
     const int hexStridePx = 3 * _pxCharWidth + kHexColumnExtraGapPx;
@@ -355,11 +373,25 @@ qint64 QHexEdit::cursorPosition(QPoint pos)
         if (rowStart >= rowEnd)
             return -1;
 
-        const int x = xPx / _pxCharWidth;
-        if (x < 0 || x >= (rowEnd - rowStart))
-            return -1;
+        // Walk slots left-to-right accumulating pixel widths until we hit the click X
+        // This correctly handles variable-width translation-table tokens
+        int accumulated = 0;
+        int byteCol = static_cast<int>(rowEnd - rowStart) - 1; // default: last byte in row
+        for (int col = 0; col < static_cast<int>(rowEnd - rowStart); ++col)
+        {
+            const uint8_t bv = static_cast<uint8_t>(_dataShown.at(rowStart + col));
+            const int slotW = (_tb && !_tbSymbolWidthPxCache.isEmpty())
+                ? (_tbSymbolWidthPxCache[bv] + kAsciiColumnGapPx)
+                : (_pxCharWidth + kAsciiColumnGapPx);
+            if (xPx < accumulated + slotW)
+            {
+                byteCol = col;
+                break;
+            }
+            accumulated += slotW;
+        }
 
-        result = _bPosFirst * 2 + x * 2 + y;
+        result = _bPosFirst * 2 + byteCol * 2 + y;
     }
 
     return result;
@@ -789,6 +821,7 @@ void QHexEdit::setTranslationTable(TranslationTable *tb)
 {
     _tb = tb;
     invalidateAsciiAreaWidthCache();
+    ensureAsciiAreaWidthCache();   // populate cache now so updateAsciiAreaMaxWidth uses correct widths
     updateAsciiAreaMaxWidth();
 
     viewport()->update();
@@ -1333,8 +1366,6 @@ void QHexEdit::paintEvent(QPaintEvent *event)
         }
 
         // paint hex and ascii area
-        // QPen colStandard = QPen(viewport()->palette().color(QPalette::WindowText));
-
         painter.setBackgroundMode(Qt::TransparentMode);
 
         if (_asciiArea)
@@ -1349,7 +1380,7 @@ void QHexEdit::paintEvent(QPaintEvent *event)
             int pxPosAsciiX2 = _pxPosAsciiX + kAsciiAreaLeftPaddingPx - pxOfsX;
             qint64 bPosLine = row * _bytesPerLine;
 
-                // WARNING: probably slow here
+            // can be slow here
             for (int colIdx = 0; ((bPosLine + colIdx) < _dataShown.size() && (colIdx < _bytesPerLine)); colIdx++)
             {
                     QColor c = viewport()->palette().color(QPalette::Base);
@@ -1404,7 +1435,7 @@ void QHexEdit::paintEvent(QPaintEvent *event)
                     }
 
                     // render hex value
-                    auto r = QRect(pxPosX, pxPosY - _pxCharHeight + _pxSelectionSub, 2 * _pxCharWidth, _pxCharHeight);
+                    auto r = QRect(pxPosX - 1, pxPosY - _pxCharHeight + _pxSelectionSub, 2 * _pxCharWidth + 2, _pxCharHeight + 1);
 
                     // Only fill background if there's actual highlighting/selection (not just base color)
                     if (c != viewport()->palette().color(QPalette::Base))
@@ -1412,6 +1443,7 @@ void QHexEdit::paintEvent(QPaintEvent *event)
 
                     // Overlay cursor-char highlight on the byte under cursor
                     const bool isCursorByte = (bPosLine + colIdx) == (_cursorPosition / 2 - _bPosFirst);
+                    
                     if (isCursorByte && _cursorCharColor.alpha() > 0)
                         painter.fillRect(r, _cursorCharColor);
 
@@ -1419,40 +1451,47 @@ void QHexEdit::paintEvent(QPaintEvent *event)
                     painter.drawText(pxPosX, pxPosY, hexCaps() ? hex.toUpper() : hex);
                     pxPosX += hexStridePx;
 
-                    // render ascii value
+                // render ascii value
                 if (_asciiArea)
                 {
-                        if (c == viewport()->palette().color(QPalette::Base) || c == _brushPointers.color()) // don't highlight pointers in ASCII area
-                            c = _asciiAreaColor;
+                    if (c == viewport()->palette().color(QPalette::Base) || c == _brushPointers.color()) // don't highlight pointers in ASCII area
+                        c = _asciiAreaColor;
 
-                        char rawByte = _dataShown.at(bPosLine + colIdx);
-                        QChar ch = QChar::fromLatin1(rawByte);
+                    char rawByte = _dataShown.at(bPosLine + colIdx);
+                    QChar ch = QChar::fromLatin1(rawByte);
 
-                        QString sym = _tb ? _tb->encodeSymbol(rawByte) : ch;
-                        if (_tb)
-                        {
-                            if (sym == QStringLiteral("#"))
-                                sym = QString(_notInTableChar);
-                        }
-                        else if (sym.size() == 1 && sym[0].toLatin1() < 0x20)
-                        {
-                            sym = QString(_nonPrintableNoTableChar);
-                        }
-                        const uint8_t byteValue = static_cast<uint8_t>(rawByte);
-                        const int symWidthPx = _pxCharWidth;
+                    QString sym = _tb ? _tb->encodeSymbol(rawByte) : ch;
 
-                        r.setRect(pxPosAsciiX2, pxPosY - _pxCharHeight + _pxSelectionSub, symWidthPx, _pxCharHeight);
-                        if (c != _asciiAreaColor)
-                            painter.fillRect(r, c);
+                    if (_tb)
+                    {
+                        if (!sym.size())
+                            sym = QString(_notInTableChar);
+                    }
+                    else if (sym.size() == 1 && sym[0].toLatin1() < 0x20)
+                    {
+                        sym = QString(_nonPrintableNoTableChar);
+                    }
+                    
+                    const uint8_t byteValue = static_cast<uint8_t>(rawByte);
+                    
+                    // Use cached per-byte width when a translation table is active
+                    // fall back to single char width otherwise
+                    const int baseSymWidthPx = (_tb && !_tbSymbolWidthPxCache.isEmpty())
+                        ? _tbSymbolWidthPxCache[byteValue]
+                        : _pxCharWidth;
 
-                        if (isCursorByte && _cursorCharColor.alpha() > 0)
-                            painter.fillRect(r, _cursorCharColor);
+                    const int symWidthPx = baseSymWidthPx + kAsciiColumnGapPx;
 
-                        painter.setPen(QPen(_asciiFontColor));
-                        painter.save();
-                        painter.setClipRect(r);
-                        painter.drawText(r, Qt::AlignLeft | Qt::AlignVCenter, sym);
-                        painter.restore();
+                    r.setRect(pxPosAsciiX2 - 1, pxPosY - _pxCharHeight + _pxSelectionSub - 2, symWidthPx, _pxCharHeight);
+                    if (c != _asciiAreaColor)
+                        painter.fillRect(r, c);
+
+                    if (isCursorByte && _cursorCharColor.alpha() > 0)
+                        painter.fillRect(r, _cursorCharColor);
+
+                    painter.setPen(QPen(_asciiFontColor));
+                    // Draw text into the full slot (no clip) so multi-char tokens are visible
+                    painter.drawText(r, Qt::AlignLeft | Qt::AlignVCenter, sym);
 
                     if (_tb && (_cursorPosition - 2 * _bPosFirst) / 2 == (bPosLine + colIdx))
                         _asciiCursorRect = r;
@@ -1736,7 +1775,12 @@ uint32_t QHexEdit::computeAsciiAreaMaxWidthForBytesPerLine(int bytesPerLine)
     if (!_asciiArea || bytesPerLine <= 0)
         return 0;
 
-    return static_cast<uint32_t>(bytesPerLine * _pxCharWidth);
+    // When a table is loaded use its max symbol width, otherwise one char per byte.
+    const int slotWidthPx = (_tb && _tbMaxSymbolWidthPx > 0)
+        ? (_tbMaxSymbolWidthPx + kAsciiColumnGapPx)
+        : (_pxCharWidth + kAsciiColumnGapPx);
+        
+    return static_cast<uint32_t>(bytesPerLine * slotWidthPx);
 }
 
 void QHexEdit::updateAsciiAreaMaxWidth()
@@ -1767,13 +1811,36 @@ void QHexEdit::ensureAsciiAreaWidthCache()
     _asciiAreaMaxWidthByBpl = QVector<uint32_t>(65, 0);
     _tbMaxSymbolWidthPx = _pxCharWidth;
 
+    // Compute actual rendered width for each possible byte value using the table
     for (int value = 0; value <= 0xFF; ++value)
     {
-        _tbSymbolWidthPxCache[value] = _pxCharWidth;
+        char rawByte = static_cast<char>(value);
+        QString sym;
+        
+        if (_tb)
+        {
+            sym = _tb->encodeSymbol(rawByte);
+            // Replace "not in table" placeholder with actual placeholder char
+            if (!sym.size())
+                sym = QString(_notInTableChar);
+        }
+        else
+        {
+            QChar ch = QChar::fromLatin1(rawByte);
+            sym = ch;
+            // Replace non-printable chars with placeholder
+            if (sym.size() == 1 && sym[0].toLatin1() < 0x20)
+                sym = QString(_nonPrintableNoTableChar);
+        }
+        
+        int widthPx = sym.size() * _pxCharWidth;
+        _tbSymbolWidthPxCache[value] = widthPx;
+        if (widthPx > _tbMaxSymbolWidthPx)
+            _tbMaxSymbolWidthPx = widthPx;
     }
 
     for (int bpl = 4; bpl <= 64; bpl += 4)
-        _asciiAreaMaxWidthByBpl[bpl] = static_cast<uint32_t>(bpl * _pxCharWidth);
+        _asciiAreaMaxWidthByBpl[bpl] = static_cast<uint32_t>(bpl * (_tbMaxSymbolWidthPx + kAsciiColumnGapPx));
 
     _asciiAreaWidthCacheTable = _tb;
     _asciiAreaWidthCacheDataSize = -1;

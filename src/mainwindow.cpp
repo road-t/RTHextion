@@ -775,8 +775,6 @@ void MainWindow::init()
     connect(hexEdit, SIGNAL(dataChanged()), this, SLOT(dataChanged()));
 
     createActions();
-    createActions();
-    createToolBars();
     createToolBars();
     createMenus();
 
@@ -808,6 +806,7 @@ void MainWindow::createActions()
     saveAct->setStatusTip(tr("Save the document to disk"));
     connect(saveAct, SIGNAL(triggered()), this, SLOT(save()));
 
+    closeAct = new QAction(tr("Close"), this);
     closeAct->setShortcuts(QKeySequence::Close);
     closeAct->setStatusTip(tr("Close the current file"));
     connect(closeAct, SIGNAL(triggered()), this, SLOT(closeFile()));
@@ -838,6 +837,7 @@ void MainWindow::createActions()
     redoAct->setShortcuts(QKeySequence::Redo);
     connect(redoAct, SIGNAL(triggered()), hexEdit, SLOT(redo()));
 
+    saveSelectionReadable = new QAction(tr("Save Selection Dump..."), this);
     saveSelectionReadable->setStatusTip(tr("Save selection as dump"));
     saveSelectionReadable->setEnabled(false);
     connect(saveSelectionReadable, SIGNAL(triggered()), this, SLOT(saveSelectionToReadableFile()));
@@ -906,6 +906,7 @@ void MainWindow::createActions()
     findAct->setStatusTip(tr("Show the Dialog for finding and replacing"));
     connect(findAct, SIGNAL(triggered()), this, SLOT(showSearchDialog()));
 
+    findNextAct = new QAction(tr("Find Next"), this);
     findNextAct->setStatusTip(tr("Find next occurrence of the searched pattern"));
     connect(findNextAct, SIGNAL(triggered()), this, SLOT(findNext()));
 
@@ -916,7 +917,8 @@ void MainWindow::createActions()
 
     optionsAct = new QAction(tr("Preferences"), this);
     optionsAct->setStatusTip(tr("Show the Dialog to select applications options"));
-    optionsAct->setMenuRole(QAction::NoRole); // prevent macOS from auto-moving to Apple menu
+    optionsAct->setMenuRole(QAction::PreferencesRole); // macOS: moves to app menu automatically
+    optionsAct->setShortcut(QKeySequence::Preferences);
     connect(optionsAct, SIGNAL(triggered()), this, SLOT(showOptionsDialog()));
 
     languageGroup = new QActionGroup(this);
@@ -1084,6 +1086,8 @@ void MainWindow::createMenus()
     fileMenu->addAction(revertAct);
     fileMenu->addAction(closeAct);
     fileMenu->addSeparator();
+    fileMenu->addAction(optionsAct);
+    fileMenu->addSeparator();
     fileMenu->addAction(exitAct);
 
     editMenu = menuBar()->addMenu(tr("Edit"));
@@ -1171,7 +1175,6 @@ void MainWindow::createMenus()
     languageMenu->addAction(langChineseSimplifiedAct);
 
     viewMenu->addSeparator();
-    viewMenu->addAction(optionsAct);
 
     helpMenu = menuBar()->addMenu(tr("Help"));
     helpMenu->addAction(aboutAct);
