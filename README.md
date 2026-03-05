@@ -1,4 +1,4 @@
-# RTHextion v0.9
+# RTHextion v1.0
 
 A hex editor for retrogames translation and ROMHacking, a tribute to 00's Translhextion by Januschan. 
 
@@ -9,13 +9,47 @@ A hex editor for retrogames translation and ROMHacking, a tribute to 00's Transl
 - Translation tables support
 - Built-in editor
 - Semi-automatic translation tables generation
-- Most advanced data pointers search and navigation
+- Most advanced data pointers search and navigation (2-byte and 4-byte)
 - Script dump and import with insertion to offset and automatic pointers update
-- Byte order switch (big-endian/little-endian)
+- Byte order switch (big-endian/little-endian/word-swapped)
+- Auto-detect ROM type and default byte order from file extension
 
 <img src="assets/general_view.png" alt="General view" width="600" />
 <img src="assets/general_view2.png" alt="Pointers in-place" width="600" />
 <img src="assets/pointers.png" alt="Pointers search window" width="600" />
+
+## Supported ROM Formats
+
+RTHextion automatically detects ROM type and applies the correct byte order. Supported platforms:
+
+| System | Extensions | Default Byte Order | Notes |
+|--------|------------|-------------------|-------|
+| **Nintendo** | | | |
+| NES | `.nes`, `.unf`, `.unif` | Little-endian | iNES/NES 2.0 |
+| SNES | `.smc`, `.sfc`, `.swc`, `.fig` | Little-endian | Super Nintendo |
+| Game Boy | `.gb` | Little-endian | Game Boy/DMG |
+| Game Boy Color | `.gbc`, `.cgb` | Little-endian | GBC |
+| Game Boy Advance | `.gba`, `.agb` | Little-endian | GBA |
+| N64 (z64) | `.z64` | Big-endian | Motorola format |
+| N64 (v64) | `.v64` | Word-swapped | Byte-swapped format |
+| N64 (n64) | `.n64` | Little-endian | Standard format |
+| **Sega** | | | |
+| Genesis/Mega Drive | `.md`, `.gen`, `.smd` | Big-endian | Also supports auto-detect by header |
+| 32X | `.32x` | Big-endian | Sega 32X |
+| Master System | `.sms` | Little-endian | SMS/Mark III |
+| Game Gear | `.gg` | Little-endian | Sega Game Gear |
+| SG-1000 | `.sg`, `.mv` | Little-endian | Sega SG-1000 |
+| **Bandai** | | | |
+| WonderSwan | `.ws` | Little-endian | Monochrome WonderSwan |
+| WonderSwan Color | `.wsc`, `.pc2` | Little-endian | WSC |
+| **Coleco** | | | |
+| ColecoVision | `.col`, `.cv` | Little-endian | Coleco |
+| **Atari** | | | |
+| Atari 2600 | `.a26` | Little-endian | VCS/2600 |
+| Atari 5200 | `.a52`, `.xfd`, `.atr`, `.atx`, `.cdm`, `.cas`, `.xex` | Little-endian | 5200 and 8-bit |
+| Atari 7800 | `.a78` | Little-endian | ProSystem |
+
+Files with extensions `.bin` or `.rom` are matched using header heuristics (N64, Mega Drive signature detection). If the type cannot be determined, little-endian is used as a fallback.
 
 
 ## Installation
