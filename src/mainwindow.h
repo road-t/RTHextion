@@ -3,6 +3,7 @@
 
 #include <QMainWindow>
 #include <QByteArray>
+#include <QVector>
 
 #include "langtranslator.h"
 #include "translationtable.h"
@@ -62,10 +63,18 @@ private slots:
     void showSearchDialog();
     void showPointersDialog();
     void pointersUpdated();
+    void hexEditContextMenu(const QPoint &globalPos, qint64 bytePos);
+    void onQuickSearchCompleted(int found);
+    void goToPreviousPosition();
+    void goToNextPosition();
+    void goToFirstPosition();
+    void goToLastPosition();
+    void goToFileBeginning();
+    void goToFileEnd();
     bool loadTable();
     void switchShowPointers();
     void switchUseTable();
-    void updateScriptMenuState();
+    void updateScriptMenuState(bool enabled = false);
     void editTable();
     void onTranslationTableChanged();
     void createEmptyTable();
@@ -107,6 +116,11 @@ private:
     void addToRecentTables(const QString &fileName);
     void updateStatusBarVisibility();
     void updateValuePanels();
+    void updateEndiannesLabel();
+    void pushNavigationPosition(qint64 position);
+    void resetNavigationHistory();
+    void navigateToHistoryIndex(int index);
+    void updateNavigationActions();
 
     QString curFile;
     QString tableFilePath;
@@ -117,6 +131,7 @@ private:
 
     QMenu *fileMenu;
     QMenu *editMenu;
+    QMenu *goMenu;
     QMenu *tableMenu;
     QMenu *pointersMenu;
     QMenu *scriptMenu;
@@ -126,12 +141,15 @@ private:
     QMenu *toolbarMenu;
     QMenu *statusBarMenu;
     QMenu *panelsMenu;
+    QMenu *mapsMenu;
     QMenu *recentFileMenu;
     QMenu *recentTableMenu;
 
     QToolBar *fileToolBar;
     QToolBar *editToolBar;
     QToolBar *searchToolBar;
+    QToolBar *navigationToolBar = nullptr;
+    QToolBar *scriptToolBar = nullptr;
     QByteArray defaultWindowState;
 
     QAction *openAct;
@@ -180,6 +198,18 @@ private:
     QAction *findAct;
     QAction *findNextAct;
     QAction *gotoAct;
+    QAction *previousPositionAct = nullptr;
+    QAction *nextPositionAct = nullptr;
+    QAction *firstPositionAct = nullptr;
+    QAction *lastPositionAct = nullptr;
+    QAction *toolbarPreviousPositionAct = nullptr;
+    QAction *toolbarNextPositionAct = nullptr;
+    QAction *toolbarFirstPositionAct = nullptr;
+    QAction *toolbarLastPositionAct = nullptr;
+    QAction *toolbarDumpScriptAct = nullptr;
+    QAction *toolbarInsertScriptAct = nullptr;
+    QAction *toFileBeginningAct = nullptr;
+    QAction *toFileEndAct = nullptr;
     QAction *resetToolbarsAct;
     QAction *showStatusEndianAct;
     QAction *showStatusByteAct;
@@ -193,6 +223,8 @@ private:
     QAction *showAddressAreaAct;
     QAction *showAsciiAreaAct;
     QAction *showAddressGridAct;
+    QAction *showMapPointersAct;
+    QAction *showMapTargetsAct;
 
     QHexEdit *hexEdit;
     OptionsDialog *optionsDialog;
@@ -213,6 +245,10 @@ private:
     QPushButton *lbOverwriteMode;
     QLabel *lbOverwriteModeName;
     QLabel *lbSize, *lbSizeName;
+
+    QVector<qint64> navigationHistory;
+    int navigationHistoryIndex = -1;
+    bool navigationJumpInProgress = false;
 };
 
 #endif

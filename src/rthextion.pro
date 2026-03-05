@@ -1,4 +1,4 @@
-QT += core gui widgets
+QT += core gui widgets concurrent
 CONFIG += c++17
 
 TEMPLATE = app
@@ -25,7 +25,9 @@ HEADERS = \
     qhexedit/qhexedit.h \
     qhexedit/chunks.h \
     qhexedit/commands.h \
+    qhexedit/hexscrollmap.h \
     pointersdialog.h \
+    romdetect.h \
     searchdialog.h \
     translationtable.h
 
@@ -44,6 +46,7 @@ SOURCES = \
     qhexedit/qhexedit.cpp \
     qhexedit/chunks.cpp \
     qhexedit/commands.cpp \
+    qhexedit/hexscrollmap.cpp \
     pointersdialog.cpp \
     searchdialog.cpp \
     translationtable.cpp
