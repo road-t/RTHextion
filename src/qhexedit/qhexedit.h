@@ -4,12 +4,19 @@
 #include <QAbstractScrollArea>
 #include <QPen>
 #include <QBrush>
+#include <QVector>
+
+class QContextMenuEvent;
 
 #include "chunks.h"
 #include "commands.h"
 #include "translationtable.h"
 #include "../Datas.h"
 #include "../PointerListModel.h"
+#include "hexscrollmap.h"
+
+#include <QFutureWatcher>
+#include <QTimer>
 
 #ifdef QHEXEDIT_EXPORTS
 #define QHEXEDIT_API Q_DECL_EXPORT
@@ -352,6 +359,11 @@ signals:
     /*! The signal is emitted when redo availability changes. */
     void redoAvailable(bool available);
 
+    /*! The signal is emitted when the right mouse button is pressed and the
+        context menu should be shown. The point is in global screen coordinates.
+        bytePos is the byte offset under the cursor at the time of the click. */
+    void contextMenuRequested(const QPoint &globalPos, qint64 bytePos);
+
     /*! \cond docNever */
 public:
     ~QHexEdit();
@@ -413,8 +425,14 @@ public:
     void addPointer(const qint64 offset, qint64 val, char stopChar);
 
     qint64 getPointerOfsset(qint64 dataOffset);
+    qint64 pointerStartAt(qint64 bytePos, int pointerSize = 4);
+    qint64 pointerTargetAt(qint64 bytePos, int pointerSize = 4);
+    bool addPointerUndoable(qint64 pointerOffset, qint64 targetOffset);
+    bool removePointerUndoable(qint64 pointerOffset);
+    int removePointersUndoable(const QVector<qint64> &pointerOffsets);
+    int removePointersToOffsetUndoable(qint64 targetOffset);
 
-    qint64 findPointers(int pointerSize = 4, bool bigEndian = false, bool searchBefore = true, bool searchAfter = false, const char *firstPrintable = nullptr, const char *lastPrintable = nullptr, char stopChar = 0, bool excludeSelection = false);
+    qint64 findPointers(int pointerSize = 4, ByteOrder order = ByteOrder::LittleEndian, bool searchBefore = true, bool searchAfter = false, const char *firstPrintable = nullptr, const char *lastPrintable = nullptr, char stopChar = 0, bool excludeSelection = false);
 
     void setHexCaps(const bool isCaps);
     bool hexCaps();
@@ -436,6 +454,30 @@ public:
 
     QColor pointedColor();
     void setPointedColor(const QColor &color);
+
+    QColor pointedFontColor();
+    void setPointedFontColor(const QColor &color);
+
+    QColor pointerFontColor();
+    void setPointerFontColor(const QColor &color);
+
+    QColor pointerFrameColor();
+    void setPointerFrameColor(const QColor &color);
+
+    /** Show/hide the pointer-storage scroll map strip (orange). */
+    bool scrollMapPtrVisible() const;
+    void setScrollMapPtrVisible(bool visible);
+
+    /** Show/hide the pointer-target scroll map strip (sky-blue). */
+    bool scrollMapTargetVisible() const;
+    void setScrollMapTargetVisible(bool visible);
+
+    /** Set background color of each scroll map strip. */
+    void setScrollMapPtrBgColor(const QColor &c);
+    void setScrollMapTargetBgColor(const QColor &c);
+
+    QColor pointerFrameBackgroundColor();
+    void setPointerFrameBackgroundColor(const QColor &color);
 
     TranslationTable* getTranslationTable();
     void setTranslationTable(TranslationTable* tb = nullptr);
@@ -468,7 +510,7 @@ public:
     Datas getValue(qint64 offset);
     qint64 getCurrentOffset();
 
-    bool bigEndian;
+    ByteOrder byteOrder = ByteOrder::LittleEndian;
 
 protected:
     // Handle events
@@ -478,6 +520,7 @@ protected:
     void mouseDoubleClickEvent(QMouseEvent * event);
     void paintEvent(QPaintEvent *event);
     void resizeEvent(QResizeEvent *);
+    void contextMenuEvent(QContextMenuEvent *event) override;
     virtual bool focusNextPrevChild(bool next);
 
 private:
@@ -493,12 +536,16 @@ private:
     void updateAsciiAreaMaxWidth();
     void invalidateAsciiAreaWidthCache();
     void ensureAsciiAreaWidthCache();
+    void restoreTopVisibleByte(qint64 topByte);
 
 private slots:
     void adjust();                              // recalc pixel positions
     void dataChangedPrivate(int idx=0);         // emit dataChanged() signal
     void refresh();                             // ensureVisible() and readBuffers()
     void updateCursor();                        // update blinking cursor
+    void updateScrollMap();                     // debounce trigger: restart timer
+    void scheduleScrollMapCompute();            // launch background marker computation
+    void updateScrollMapMargins();              // sync viewport margins + positions after visibility change
 
 private:
     // Name convention: pixel positions start with _px
@@ -549,6 +596,10 @@ private:
     QPen _penPointers;
     QBrush _brushPointed;
     QPen _penPointed;
+    QColor _pointerFontColor;
+    QColor _pointedFontColor;
+    QColor _pointerFrameColor;
+    QColor _pointerFrameBackgroundColor;
     bool _readOnly;
     bool _showPointers;
     bool _hexCaps;
@@ -571,6 +622,13 @@ private:
     qint64 _lastEventSize;                      // size, which was emitted last time
     QByteArray _markedShown;                    // marked data in view
     PointerListModel _pointers;                 // pointers in view
+    HexScrollMap *_scrollMapPtr    = nullptr;   // pointer-storage strip (orange)
+    HexScrollMap *_scrollMapTarget = nullptr;   // pointer-target strip (sky-blue)
+    bool          _scrollMapPtrEnabled    = true;  // user preference: show ptr strip
+    bool          _scrollMapTargetEnabled = true;  // user preference: show target strip
+    int           _scrollMapCurrentMargin = 0;     // currently applied right viewport margin
+    QTimer       *_scrollMapTimer   = nullptr;  // debounce before launching computation
+    QFutureWatcher<ScrollMapMarkers> *_scrollMapWatcher = nullptr;  // background computation
     bool _modified;                             // Is any data in editor modified?
     int _rowsShown;                             // lines of text shown
     UndoStack * _undoStack;                     // Stack to store edit actions for undo/redo

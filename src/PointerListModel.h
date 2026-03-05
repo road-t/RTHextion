@@ -42,7 +42,15 @@ public:
     bool empty();
     void refreshData();
 
+    /** Returns all offsets where pointer values are stored (keys of _pointers map). */
+    QList<qint64> pointerKeys() const { return _pointers.keys(); }
+    /** Returns all target offsets that pointers point to (keys of _offsets map). */
+    QList<qint64> offsetKeys() const { return _offsets.keys(); }
+
     void setHexEdit(QHexEdit *hexEdit);
+
+signals:
+    void pointersChanged();
 
 private:
     void rebuildRowOrder();

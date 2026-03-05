@@ -97,6 +97,7 @@ void PointerListModel::clear()
     _offsets.clear();
     _rowOrder.clear();
     endResetModel();
+    emit pointersChanged();
 }
 
 quint32 PointerListModel::addPointer(const qint64 ptrOffset, qint64 offset)
@@ -114,6 +115,7 @@ quint32 PointerListModel::addPointer(const qint64 ptrOffset, qint64 offset)
     ++_offsets[offset];
     rebuildRowOrder();
     endResetModel();
+    emit pointersChanged();
 
     return _offsets[offset];
 }
@@ -144,6 +146,7 @@ quint32 PointerListModel::addPointersBatch(const QVector<QPair<qint64, qint64>> 
     }
     rebuildRowOrder();
     endResetModel();
+    emit pointersChanged();
 
     return added;
 }
@@ -160,6 +163,7 @@ bool PointerListModel::dropPointer(const qint64 offset)
         _pointers.remove(offset);
         rebuildRowOrder();
         endResetModel();
+        emit pointersChanged();
 
         return true;
     }
@@ -192,6 +196,8 @@ quint32 PointerListModel::dropPointersBatch(const QVector<qint64> &ptrOffsets)
         rebuildRowOrder();
 
     endResetModel();
+    if (dropped > 0)
+        emit pointersChanged();
     return dropped;
 }
 
@@ -209,6 +215,7 @@ quint32 PointerListModel::dropOffset(const qint64 offset)
         _offsets.remove(offset);
         rebuildRowOrder();
         endResetModel();
+        emit pointersChanged();
 
         return true;
     }
@@ -246,23 +253,43 @@ QString PointerListModel::getOffsetText(qint64 offset) const
     if (!_hexEdit)
         return "<unavailable>";
 
+    constexpr qint64 kMaxPreviewBytes = 0x100;
+
+    const qint64 targetOffset = _pointers.value(offset, -1);
+    if (targetOffset < 0)
+        return "<unavailable>";
+
     QString txt;
     auto _tb = _hexEdit->getTranslationTable();
 
-    auto data = _hexEdit->dataAt(_pointers[offset], 0x40);
+    const QByteArray raw = _hexEdit->dataAt(targetOffset, kMaxPreviewBytes);
+    QByteArray preview;
+    preview.reserve(raw.size());
+
+    bool truncatedByLength = false;
+
+    for (int i = 0; i < raw.size(); ++i)
+    {
+        if (i > 0 && _offsets.contains(targetOffset + i))
+            break;
+
+        preview.append(raw.at(i));
+    }
+
+    if (preview.size() >= kMaxPreviewBytes)
+        truncatedByLength = true;
 
     if (_tb)
     {
-        txt = _tb->encode(data, true);
+        txt = _tb->encode(preview, true);
     }
     else
     {
-        txt = QString(data);
+        txt = QString(preview);
     }
 
-    if (txt.size() > 0x40)
+    if (truncatedByLength)
     {
-        txt = txt.left(0x40);
         txt += "...";
     }
     else if (txt.isEmpty())

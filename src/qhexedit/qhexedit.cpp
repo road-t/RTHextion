@@ -1,15 +1,22 @@
 #include <QtGlobal>
 #include <QApplication>
 #include <QClipboard>
+#include <QContextMenuEvent>
 #include <QKeyEvent>
 #include <QPainter>
 #include <QScrollBar>
+#include <QStyleOptionSlider>
 #include <QToolTip>
 #include <QProgressDialog>
 #include <QTimer>
+#include <QSet>
+#include <QUndoCommand>
 
 #include "qhexedit.h"
+#include "hexscrollmap.h"
 #include <algorithm>
+#include <cmath>
+#include <QtConcurrent>
 
 namespace
 {
@@ -18,6 +25,77 @@ namespace
     const int kAddressRightPaddingPx = 4;
     const int kAsciiAreaLeftPaddingPx = 4;
     const int kAsciiColumnGapPx = 2;  // extra padding between ASCII column slots
+    const int kPointerByteSize = 4;
+    const int kScrollMapWidth = 12;   // width of the side-bar scroll map strip in pixels
+
+    struct PointerState
+    {
+        qint64 pointerOffset = -1;
+        bool hasTarget = false;
+        qint64 targetOffset = -1;
+    };
+
+    class PointerEditCommand : public QUndoCommand
+    {
+    public:
+        PointerEditCommand(PointerListModel *model,
+                           const QVector<PointerState> &before,
+                           const QVector<PointerState> &after,
+                           const QString &text,
+                           QUndoCommand *parent = nullptr)
+            : QUndoCommand(text, parent)
+            , _model(model)
+            , _before(before)
+            , _after(after)
+        {
+        }
+
+        void undo() override
+        {
+            apply(_before);
+        }
+
+        void redo() override
+        {
+            apply(_after);
+        }
+
+    private:
+        void apply(const QVector<PointerState> &states)
+        {
+            if (!_model)
+                return;
+
+            for (const PointerState &state : states)
+            {
+                if (state.hasTarget)
+                    _model->addPointer(state.pointerOffset, state.targetOffset);
+                else
+                    _model->dropPointer(state.pointerOffset);
+            }
+        }
+
+        PointerListModel *_model = nullptr;
+        QVector<PointerState> _before;
+        QVector<PointerState> _after;
+    };
+
+    PointerState capturePointerState(PointerListModel *model, qint64 pointerOffset)
+    {
+        PointerState state;
+        state.pointerOffset = pointerOffset;
+        if (!model)
+            return state;
+
+        const qint64 target = model->getOffset(pointerOffset);
+        if (target >= 0)
+        {
+            state.hasTarget = true;
+            state.targetOffset = target;
+        }
+
+        return state;
+    }
 }
 
 // ********************************************************************** Constructor, destructor
@@ -33,6 +111,10 @@ QHexEdit::QHexEdit(QWidget *parent) : QAbstractScrollArea(parent), _addressArea(
     setHighlightingColor(QColor(0xff, 0xff, 0x99, 0xff));
     setPointersColor(QColor(0xff, 0x99, 0x00, 0xff));
     setPointedColor(QColor(0x99, 0xff, 0x00, 0xff));
+    setPointerFontColor(this->palette().color(QPalette::WindowText));
+    setPointedFontColor(this->palette().color(QPalette::WindowText));
+    setPointerFrameColor(QColor(0, 0, 0xff));
+    setPointerFrameBackgroundColor(QColor(0, 0xFF, 0, 0x80));
     setSelectionColor(this->palette().highlight().color());
     setAddressFontColor(QPalette::WindowText);
     setAsciiAreaColor(this->palette().alternateBase().color());
@@ -51,6 +133,70 @@ QHexEdit::QHexEdit(QWidget *parent) : QAbstractScrollArea(parent), _addressArea(
 
     // not the best idea though
     _pointers.setHexEdit(this);
+
+    // Scroll map — two thin strips to the right of the viewport:
+    //   _scrollMapPtr    (orange)    — pointer storage locations
+    //   _scrollMapTarget (sky-blue)  — pointer target locations
+    _scrollMapPtr = new HexScrollMap(this);
+    _scrollMapPtr->setColor(pointersColor());
+    _scrollMapPtr->hide();  // shown only when pointers are present
+
+    _scrollMapTarget = new HexScrollMap(this);
+    _scrollMapTarget->setColor(QColor(0x40, 0xbf, 0xff));  // sky-blue — pointer targets
+    _scrollMapTarget->hide();
+
+    setViewportMargins(0, 0, 0, 0);  // margins set dynamically by updateScrollMapMargins()
+
+    // Debounce timer: coalesces rapid per-pointer model signals into one batch recompute
+    _scrollMapTimer = new QTimer(this);
+    _scrollMapTimer->setSingleShot(true);
+    _scrollMapTimer->setInterval(200);  // ms — waits for pointer search to complete
+    connect(_scrollMapTimer, &QTimer::timeout,
+            this, &QHexEdit::scheduleScrollMapCompute);
+
+    // Background computation result handler
+    _scrollMapWatcher = new QFutureWatcher<ScrollMapMarkers>(this);
+    connect(_scrollMapWatcher, &QFutureWatcher<ScrollMapMarkers>::finished,
+            this, [this]() {
+        if (_scrollMapWatcher->isCanceled()) return;
+        const auto &r = _scrollMapWatcher->result();
+        if (_scrollMapPtr) {
+            _scrollMapPtr->setTickOffsets(r.ptrYToOff);
+            _scrollMapPtr->setTicks(r.ptrYs);
+        }
+        if (_scrollMapTarget) {
+            _scrollMapTarget->setTickOffsets(r.targetYToOff);
+            _scrollMapTarget->setTicks(r.targetYs);
+        }
+    });
+
+    // Recompute when either strip height changes (Y-mapping depends on height).
+    // Goes through debounce timer to avoid rapid recomputes during window resize.
+    connect(_scrollMapPtr,    &HexScrollMap::heightChanged, this, &QHexEdit::updateScrollMap);
+    connect(_scrollMapTarget, &HexScrollMap::heightChanged, this, &QHexEdit::updateScrollMap);
+
+    // Click on a tick → jump to that exact byte offset (centered in viewport)
+    auto scrollMapJump = [this](qint64 off) {
+        const int bpl = qMax(1, _bytesPerLine);
+        const int targetLine = static_cast<int>(off / bpl);
+        const int targetValue = qBound(0,
+                                       targetLine - verticalScrollBar()->pageStep() / 2,
+                                       verticalScrollBar()->maximum());
+        verticalScrollBar()->setValue(targetValue);
+        setCursorPosition(off * 2);
+        resetSelection(off * 2);
+        ensureVisible();
+    };
+    connect(_scrollMapPtr,    &HexScrollMap::tickClicked, this, scrollMapJump);
+    connect(_scrollMapTarget, &HexScrollMap::tickClicked, this, scrollMapJump);
+
+    // Kick debounce timer on any pointer model change
+    auto onModelChanged = [this]() { updateScrollMap(); };
+    connect(&_pointers, &QAbstractTableModel::modelReset,   this, onModelChanged);
+    connect(&_pointers, &QAbstractTableModel::rowsInserted, this, onModelChanged);
+    connect(&_pointers, &QAbstractTableModel::rowsRemoved,  this, onModelChanged);
+    connect(&_pointers, &QAbstractTableModel::dataChanged,  this, onModelChanged);
+    connect(&_pointers, &PointerListModel::pointersChanged, this, onModelChanged);
 
     init();
 }
@@ -376,7 +522,9 @@ qint64 QHexEdit::cursorPosition(QPoint pos)
         // Walk slots left-to-right accumulating pixel widths until we hit the click X
         // This correctly handles variable-width translation-table tokens
         int accumulated = 0;
+        
         int byteCol = static_cast<int>(rowEnd - rowStart) - 1; // default: last byte in row
+
         for (int col = 0; col < static_cast<int>(rowEnd - rowStart); ++col)
         {
             const uint8_t bv = static_cast<uint8_t>(_dataShown.at(rowStart + col));
@@ -433,6 +581,28 @@ qint64 QHexEdit::getCurrentOffset()
     return _bPosCurrent;
 }
 
+qint64 QHexEdit::pointerStartAt(qint64 bytePos, int pointerSize)
+{
+    if (bytePos < 0 || pointerSize <= 0)
+        return -1;
+
+    const qint64 startMin = qMax(static_cast<qint64>(0), bytePos - pointerSize + 1);
+
+    for (qint64 candidate = bytePos; candidate >= startMin; --candidate)
+    {
+        if (_pointers.isPointer(candidate) && bytePos < candidate + pointerSize)
+            return candidate;
+    }
+
+    return -1;
+}
+
+qint64 QHexEdit::pointerTargetAt(qint64 bytePos, int pointerSize)
+{
+    const qint64 ptrStart = pointerStartAt(bytePos, pointerSize);
+    return (ptrStart >= 0) ? _pointers.getOffset(ptrStart) : -1;
+}
+
 void QHexEdit::setHighlighting(bool highlighting)
 {
     _highlighting = highlighting;
@@ -470,7 +640,9 @@ bool QHexEdit::showPointers()
 void QHexEdit::setPointersColor(const QColor &color)
 {
     _brushPointers = QBrush(color);
-    _penPointers = QPen(viewport()->palette().color(QPalette::WindowText));
+    _penPointers = QPen(_pointerFontColor);
+    if (_scrollMapPtr)
+        _scrollMapPtr->setColor(color);
     viewport()->update();
 }
 
@@ -482,13 +654,61 @@ QColor QHexEdit::pointersColor()
 void QHexEdit::setPointedColor(const QColor &color)
 {
     _brushPointed = QBrush(color);
-    _penPointed = QPen(viewport()->palette().color(QPalette::WindowText));
+    _penPointed = QPen(_pointedFontColor);
+    if (_scrollMapTarget)
+        _scrollMapTarget->setColor(color);
     viewport()->update();
 }
 
 QColor QHexEdit::pointedColor()
 {
     return _brushPointed.color();
+}
+
+void QHexEdit::setPointedFontColor(const QColor &color)
+{
+    _pointedFontColor = color;
+    _penPointed = QPen(_pointedFontColor);
+    viewport()->update();
+}
+
+QColor QHexEdit::pointedFontColor()
+{
+    return _pointedFontColor;
+}
+
+void QHexEdit::setPointerFontColor(const QColor &color)
+{
+    _pointerFontColor = color;
+    _penPointers = QPen(_pointerFontColor);
+    viewport()->update();
+}
+
+QColor QHexEdit::pointerFontColor()
+{
+    return _pointerFontColor;
+}
+
+void QHexEdit::setPointerFrameColor(const QColor &color)
+{
+    _pointerFrameColor = color;
+    viewport()->update();
+}
+
+QColor QHexEdit::pointerFrameColor()
+{
+    return _pointerFrameColor;
+}
+
+void QHexEdit::setPointerFrameBackgroundColor(const QColor &color)
+{
+    _pointerFrameBackgroundColor = color;
+    viewport()->update();
+}
+
+QColor QHexEdit::pointerFrameBackgroundColor()
+{
+    return _pointerFrameBackgroundColor;
 }
 
 void QHexEdit::setOverwriteMode(bool overwriteMode)
@@ -727,7 +947,7 @@ void QHexEdit::jumpTo(qint64 offset, bool relative)
     auto newPos = qBound(0LL, (relative ? (_cursorPosition / 2) + offset : offset), static_cast<qint64>(data().size()));
 
     setCursorPosition(newPos * 2);
-    resetSelection();
+    resetSelection(_cursorPosition);
     ensureVisible();
 }
 
@@ -790,7 +1010,7 @@ void QHexEdit::setFont(const QFont &font)
     _pxCharWidth = metrics.horizontalAdvance(QLatin1Char('2'));
     _pxCharHeight = metrics.height();
     _pxGapAdr = _pxCharWidth / 2;
-    _pxGapAdrHex = _pxCharWidth;
+    _pxGapAdrHex = _pxCharWidth * 2;
     _pxGapHexAscii = 2 * _pxCharWidth;
     _pxCursorWidth = _pxCharHeight / 7;
     _pxSelectionSub = _pxCharHeight / 5;
@@ -819,25 +1039,46 @@ TranslationTable *QHexEdit::getTranslationTable()
 
 void QHexEdit::setTranslationTable(TranslationTable *tb)
 {
+    // Save viewport position so toggling the table/autosize doesn't jump vertically
+    const qint64 savedTopByte = static_cast<qint64>(verticalScrollBar()->value()) * qMax(1, _bytesPerLine);
+    const qint64 savedCursorPos = _cursorPosition;
+    const int savedHorizontal = horizontalScrollBar()->value();
+
     _tb = tb;
     invalidateAsciiAreaWidthCache();
-    ensureAsciiAreaWidthCache();   // populate cache now so updateAsciiAreaMaxWidth uses correct widths
+    ensureAsciiAreaWidthCache();
     updateAsciiAreaMaxWidth();
 
+    if (_dynamicBytesPerLine)
+        resizeEvent(nullptr);
+    else
+        adjust();
+
+    restoreTopVisibleByte(savedTopByte);
+    horizontalScrollBar()->setValue(savedHorizontal);
+    setCursorPosition(savedCursorPos);
     viewport()->update();
-    //  ensureVisible();
-    adjust();
 }
 
 void QHexEdit::removeTranslationTable()
 {
-    horizontalScrollBar()->setValue(0);
     setTranslationTable(); // with no parameters removes translation table
 }
 
 // ********************************************************************** Handle events
 void QHexEdit::keyPressEvent(QKeyEvent *event)
 {
+    // Pure modifier keys must not trigger ensureVisible()/refresh() because that
+    // can unexpectedly jump vertical scroll position.
+    if (event->key() == Qt::Key_Shift
+        || event->key() == Qt::Key_Control
+        || event->key() == Qt::Key_Alt
+        || event->key() == Qt::Key_Meta)
+    {
+        event->accept();
+        return;
+    }
+
     // Cursor movements
     if (event->matches(QKeySequence::MoveToNextChar))
     {
@@ -1245,32 +1486,29 @@ void QHexEdit::mousePressEvent(QMouseEvent *event)
 
     if (cPos >= 0)
     {
-        if (event->button() != Qt::RightButton && event->modifiers() != Qt::ShiftModifier)
-            resetSelection(cPos);
-
-        setCursorPosition(cPos);
-        setSelection(cPos);
-
-        if (_showPointers)
+        if (event->button() == Qt::RightButton)
         {
-            if (_pointers.isPointer(_bPosCurrent))
+            // On right-click: only update cursor position, do NOT reset or
+            // change the selection so it is preserved for the context menu.
+            setCursorPosition(cPos);
+        }
+        else
+        {
+            if (event->modifiers() != Qt::ShiftModifier)
+                resetSelection(cPos);
+
+            setCursorPosition(cPos);
+            setSelection(cPos);
+
+            if (_showPointers)
             {
-                if (event->button() == Qt::RightButton)
+                const qint64 ptrStart = pointerStartAt(_bPosCurrent, kPointerByteSize);
+
+                if (ptrStart >= 0)
                 {
-                    _pointers.dropPointer(_bPosCurrent);
+                    QToolTip::showText(mapToGlobal(event->pos()), _pointers.getOffsetText(ptrStart));
                 }
-                else
-                {
-                    QToolTip::showText(mapToGlobal(event->pos()), _pointers.getOffsetText(_bPosCurrent));
-                }
-            }
-            else if (_pointers.hasOffset(_bPosCurrent))
-            {
-                if (event->button() == Qt::RightButton)
-                {
-                    _pointers.dropOffset(_bPosCurrent);
-                }
-                else
+                else if (_pointers.hasOffset(_bPosCurrent))
                 {
                     auto ptrs = _pointers.getPointers(_bPosCurrent);
 
@@ -1280,7 +1518,7 @@ void QHexEdit::mousePressEvent(QMouseEvent *event)
                     }
                     else
                     {
-                        QToolTip::showText(mapToGlobal(event->pos()), "...<list of pointers>...");
+                        QToolTip::showText(mapToGlobal(event->pos()), tr("%1 pointers").arg(ptrs.size()));
                     }
                 }
             }
@@ -1290,13 +1528,17 @@ void QHexEdit::mousePressEvent(QMouseEvent *event)
 
 void QHexEdit::mouseDoubleClickEvent(QMouseEvent *event)
 {
+    Q_UNUSED(event)
+
     if (_showPointers)
     {
+        const qint64 ptrStart = pointerStartAt(_bPosCurrent, kPointerByteSize);
+
         // jump to pointed offset
-        if (_pointers.isPointer(_bPosCurrent))
+        if (ptrStart >= 0)
         {
             _editAreaIsAscii = true;
-            setCursorPosition(_pointers.getOffset(_bPosCurrent) * 2);
+            setCursorPosition(_pointers.getOffset(ptrStart) * 2);
             ensureVisible();
         }
         // jump to pointer
@@ -1319,6 +1561,11 @@ void QHexEdit::mouseDoubleClickEvent(QMouseEvent *event)
     }
 }
 
+void QHexEdit::contextMenuEvent(QContextMenuEvent *event)
+{
+    emit contextMenuRequested(event->globalPos(), _bPosCurrent);
+}
+
 void QHexEdit::paintEvent(QPaintEvent *event)
 {
     QPainter painter(viewport());
@@ -1336,18 +1583,6 @@ void QHexEdit::paintEvent(QPaintEvent *event)
         int hexAreaWidth = _pxPosAsciiX - _pxPosHexX;
         painter.fillRect(QRect(_pxPosHexX - pxOfsX, event->rect().top(), hexAreaWidth - (_pxGapHexAscii / 2), height()), _hexAreaBackgroundColor);
 
-        if (_addressArea)
-            painter.fillRect(QRect(-pxOfsX, event->rect().top(), _pxPosHexX - _pxGapAdrHex / 2, height()), _addressAreaColor);
-
-        if (_asciiArea)
-        {
-            painter.fillRect(QRect(_pxPosAsciiX - pxOfsX, event->rect().top(), width(), height()), _asciiAreaColor);
-
-            int linePos = _pxPosAsciiX - (_pxGapHexAscii / 2);
-            painter.setPen(Qt::gray);
-            painter.drawLine(linePos - pxOfsX, event->rect().top(), linePos - pxOfsX, height());
-        }
-
         painter.setPen(viewport()->palette().color(QPalette::WindowText));
 
         // paint address area
@@ -1357,21 +1592,39 @@ void QHexEdit::paintEvent(QPaintEvent *event)
 
             auto rowsCount = (_dataShown.size() / _bytesPerLine);
 
+            painter.fillRect(QRect(-pxOfsX, event->rect().top(), _pxPosHexX - _pxGapAdrHex, height()), _addressAreaColor);
+
+            const QFont originalFont = painter.font();
+            QFont boldFont = originalFont;
+            boldFont.setBold(true);
+            painter.setFont(boldFont);
+
             for (int row = 0, pxPosY = _pxCharHeight; row <= rowsCount; row++, pxPosY += rowStridePx)
             {
                 address = QString("%1").arg(_bPosFirst + row * _bytesPerLine + _addressOffset, _addrDigits, 16, QChar('0'));
                 painter.setPen(QPen(_addressFontColor));
                 painter.drawText(_pxPosAdrX - pxOfsX, pxPosY, hexCaps() ? address.toUpper() : address);
             }
+
+            painter.setFont(originalFont);
         }
 
         // paint hex and ascii area
         painter.setBackgroundMode(Qt::TransparentMode);
 
         if (_asciiArea)
+        {
+            painter.fillRect(QRect(_pxPosAsciiX - pxOfsX, event->rect().top(), width(), height()), _asciiAreaColor);
+
+            int linePos = _pxPosAsciiX - (_pxGapHexAscii / 2);
+            painter.setPen(Qt::gray);
+            painter.drawLine(linePos - pxOfsX, event->rect().top(), linePos - pxOfsX, height());
+
             ensureAsciiAreaWidthCache();
+        }
 
         const int hexStridePx = 3 * _pxCharWidth + kHexColumnExtraGapPx;
+
         for (int row = 0; row < _rowsShown; row++)
         {
             QByteArray hex;
@@ -1383,78 +1636,134 @@ void QHexEdit::paintEvent(QPaintEvent *event)
             // can be slow here
             for (int colIdx = 0; ((bPosLine + colIdx) < _dataShown.size() && (colIdx < _bytesPerLine)); colIdx++)
             {
-                    QColor c = viewport()->palette().color(QPalette::Base);
-                    painter.setPen(QPen(_hexFontColor));
+                QColor c = viewport()->palette().color(QPalette::Base);
+                painter.setPen(QPen(_hexFontColor));
 
-                    qint64 posBa = _bPosFirst + bPosLine + colIdx;
+                qint64 posBa = _bPosFirst + bPosLine + colIdx;
+                const qint64 pointerStart = _showPointers ? pointerStartAt(posBa, kPointerByteSize) : -1;
+                const bool isPointerByte = pointerStart >= 0;
+                const bool isPointedByte = _showPointers && _pointers.hasOffset(posBa);
+                const bool isSelectedByte = (getSelectionBegin() <= posBa) && (getSelectionEnd() > posBa);
+                const bool isHighlightedByte = _highlighting && _markedShown.at((int)(posBa - _bPosFirst));
 
-                    if ((getSelectionBegin() <= posBa) && (getSelectionEnd() > posBa))
+                if (isSelectedByte)
+                {
+                    c = _brushSelection.color();
+                    painter.setPen(_penSelection);
+                }
+                else
+                {
+                    if (isHighlightedByte)
                     {
-                        c = _brushSelection.color();
-                        painter.setPen(_penSelection);
+                        c = _brushHighlighted.color();
+                        painter.setPen(_penHighlighted);
                     }
-                    else
+                }
+
+                // POINTERS
+                if (_showPointers)
+                {
+                    // cursor image for pointed data
+                    if (isPointedByte)
                     {
-                        if (_highlighting)
+                        QImage ptrIcon = QImage(":/images/pointer.png");
+
+                        if (!isSelectedByte && !isHighlightedByte)
+                            c = _brushPointed.color();
+
+                        if (!isSelectedByte)
+                            painter.setPen(_penPointed);
+
+                        painter.drawImage(pxPosX - _pxCharWidth - 2, pxPosY - (_pxCharHeight / 2), ptrIcon, 0, 0, 10, 10);
+                    }
+
+                    if (isPointerByte && !isSelectedByte && !isHighlightedByte && !isPointedByte)
+                        painter.setPen(_penPointers);
+                    
+                    if (isPointerByte)
+                    {
+                        // Draw pointer frame only at the first byte of the pointer on each row
+                        // The frame is clipped to the current line so it doesn't bleed into ASCII area
+                        const int colInLine = static_cast<int>(posBa % _bytesPerLine);
+                        const int ptrStartCol = static_cast<int>(pointerStart % _bytesPerLine);
+
+                        // We draw a partial frame segment on every row that the pointer occupies
+                        // Determine how many bytes of this pointer are on the current row starting from colIdx
+                        const int ptrEndByteExcl = static_cast<int>((pointerStart - _bPosFirst) + kPointerByteSize);
+                        const int rowEndCol = _bytesPerLine; // exclusive
+
+                        if (posBa == pointerStart || colInLine == 0)
                         {
-                            if (_markedShown.at((int)(posBa - _bPosFirst)))
+                            // First pointer byte on this row — draw frame segment
+                            const int bytesOnThisRow = qMin(ptrEndByteExcl - static_cast<int>(bPosLine + colIdx), rowEndCol - colInLine);
+
+                            if (bytesOnThisRow > 0)
                             {
-                                c = _brushHighlighted.color();
-                                painter.setPen(_penHighlighted);
+                                QPen pen;
+                                pen.setColor(_pointerFrameColor);
+                                pen.setWidth(1);
+                                painter.setPen(pen);
+
+                                auto frame = QRect(pxPosX - 6, pxPosY - _pxCharHeight + _pxSelectionSub + 1,
+                                                    (3 * bytesOnThisRow) * _pxCharWidth + (bytesOnThisRow - 1) * kHexColumnExtraGapPx,
+                                                    _pxCharHeight - _pxSelectionSub + 4);
+
+                                painter.drawRect(frame);
+                                painter.fillRect(frame, _pointerFrameBackgroundColor);
+
+                                if (_asciiArea)
+                                {
+                                    const int asciiStartX = pxPosAsciiX2;
+                                    int asciiFrameWidth = 0;
+                                    for (int k = 0; k < bytesOnThisRow; ++k)
+                                    {
+                                        const qint64 rowBytePos = bPosLine + colIdx + k;
+                                        if (rowBytePos >= _dataShown.size())
+                                            break;
+
+                                        const uint8_t rowByte = static_cast<uint8_t>(_dataShown.at(rowBytePos));
+                                        const int slotW = (_tb && !_tbSymbolWidthPxCache.isEmpty())
+                                            ? (_tbSymbolWidthPxCache[rowByte] + kAsciiColumnGapPx)
+                                            : (_pxCharWidth + kAsciiColumnGapPx);
+                                        asciiFrameWidth += slotW;
+                                    }
+
+                                    if (asciiFrameWidth > 0)
+                                    {
+                                        auto asciiFrame = QRect(asciiStartX - 4,
+                                                                pxPosY - _pxCharHeight + _pxSelectionSub - 3,
+                                                                asciiFrameWidth + 2,
+                                                                _pxCharHeight - _pxSelectionSub + 4);
+                                        painter.drawRect(asciiFrame);
+                                        painter.fillRect(asciiFrame, _pointerFrameBackgroundColor);
+                                    }
+                                }
                             }
                         }
                     }
+                }
 
-                    if (_showPointers)
-                    {
-                        if (_pointers.hasOffset(posBa))
-                        {
-                            QImage ptrIcon = QImage(":/images/pointer.png");
+                // render hex value
+                auto r = QRect(pxPosX - 1, pxPosY - _pxCharHeight + _pxSelectionSub, 2 * _pxCharWidth + 2, _pxCharHeight + 1);
 
-                            c = _brushPointed.color();
-                            painter.setPen(_penPointed);
+                // Only fill background if there's actual highlighting/selection (not just base color)
+                if (c != viewport()->palette().color(QPalette::Base))
+                    painter.fillRect(r, c);
 
-                            painter.drawImage(pxPosX - _pxCharWidth, pxPosY - (_pxCharHeight / 2 + 3), ptrIcon, 0, 0, 10, 10);
-                        }
+                // Overlay cursor-char highlight on the byte under cursor
+                const bool isCursorByte = (bPosLine + colIdx) == (_cursorPosition / 2 - _bPosFirst);
+                
+                if (isCursorByte && _cursorCharColor.alpha() > 0)
+                    painter.fillRect(r, _cursorCharColor);
 
-                        if (_pointers.isPointer(posBa))
-                        {
-                            QPen pen;
-                            pen.setColor(QColor(0, 0, 0xff));
-                            pen.setWidth(2);
-
-                            painter.setPen(pen);
-
-                            c = _brushPointers.color();
-
-                            auto frame = QRect(pxPosX, pxPosY - _pxCharHeight + _pxSelectionSub + 1, 11 * _pxCharWidth, _pxCharHeight - _pxSelectionSub);
-
-                            painter.drawRect(frame);
-                            painter.fillRect(frame, QColor(0, 0xFF, 0, 0x80));
-                        }
-                    }
-
-                    // render hex value
-                    auto r = QRect(pxPosX - 1, pxPosY - _pxCharHeight + _pxSelectionSub, 2 * _pxCharWidth + 2, _pxCharHeight + 1);
-
-                    // Only fill background if there's actual highlighting/selection (not just base color)
-                    if (c != viewport()->palette().color(QPalette::Base))
-                        painter.fillRect(r, c);
-
-                    // Overlay cursor-char highlight on the byte under cursor
-                    const bool isCursorByte = (bPosLine + colIdx) == (_cursorPosition / 2 - _bPosFirst);
-                    
-                    if (isCursorByte && _cursorCharColor.alpha() > 0)
-                        painter.fillRect(r, _cursorCharColor);
-
-                    hex = _hexDataShown.mid((bPosLine + colIdx) * 2, 2);
-                    painter.drawText(pxPosX, pxPosY, hexCaps() ? hex.toUpper() : hex);
-                    pxPosX += hexStridePx;
+                hex = _hexDataShown.mid((bPosLine + colIdx) * 2, 2);
+                painter.drawText(pxPosX, pxPosY, hexCaps() ? hex.toUpper() : hex);
+                pxPosX += hexStridePx;
 
                 // render ascii value
                 if (_asciiArea)
                 {
-                    if (c == viewport()->palette().color(QPalette::Base) || c == _brushPointers.color()) // don't highlight pointers in ASCII area
+                    if (c == viewport()->palette().color(QPalette::Base))
                         c = _asciiAreaColor;
 
                     char rawByte = _dataShown.at(bPosLine + colIdx);
@@ -1483,13 +1792,23 @@ void QHexEdit::paintEvent(QPaintEvent *event)
                     const int symWidthPx = baseSymWidthPx + kAsciiColumnGapPx;
 
                     r.setRect(pxPosAsciiX2 - 1, pxPosY - _pxCharHeight + _pxSelectionSub - 2, symWidthPx, _pxCharHeight);
+                    
                     if (c != _asciiAreaColor)
                         painter.fillRect(r, c);
 
                     if (isCursorByte && _cursorCharColor.alpha() > 0)
                         painter.fillRect(r, _cursorCharColor);
 
-                    painter.setPen(QPen(_asciiFontColor));
+                    if (isSelectedByte)
+                        painter.setPen(_penSelection);
+                    else if (isHighlightedByte)
+                        painter.setPen(_penHighlighted);
+                    else if (isPointedByte)
+                        painter.setPen(_penPointed);
+                    else if (isPointerByte)
+                        painter.setPen(_penPointers);
+                    else
+                        painter.setPen(QPen(_asciiFontColor));
                     // Draw text into the full slot (no clip) so multi-char tokens are visible
                     painter.drawText(r, Qt::AlignLeft | Qt::AlignVCenter, sym);
 
@@ -1538,37 +1857,17 @@ void QHexEdit::paintEvent(QPaintEvent *event)
         else
         {
             QPen pen;
-
+            pen.setColor(_cursorFrameColor);
             pen.setWidth(2);
             painter.setPen(pen);
 
             painter.drawRect(_hexCursorRect);
 
-            // pen.setColor(QColor(0xFF, 0, 0));
-            // painter.setPen(pen);
-
             if (_asciiArea)
                 painter.drawRect(_asciiCursorRect);
+
             painter.setPen(QPen(_hexFontColor));
         }
-
-        /*
-                if (_editAreaIsAscii)
-                {
-                    // every 2 hex there is 1 ascii
-                    int asciiPositionInShowData = hexPositionInShowData / 2;
-                    int ch = (uchar)_dataShown.at(asciiPositionInShowData);
-
-                    if (ch < ' ' || ch > '~')
-                        ch = '.';
-
-                    painter.setPen(QPen(_penHighlighted));
-                    painter.drawText(_pxCursorX - pxOfsX, _pxCursorY, QChar(ch));
-                }
-                else
-                {
-                    painter.drawText(_pxCursorX - pxOfsX, _pxCursorY, hexCaps() ? _hexDataShown.mid(hexPositionInShowData, 1).toUpper() : _hexDataShown.mid(hexPositionInShowData, 1));
-                }*/
     }
 
     // emit event, if size has changed
@@ -1746,6 +2045,26 @@ void QHexEdit::adjust()
 
     readBuffers();
     setCursorPosition(_cursorPosition);
+
+    // Reposition scroll map strips to the right margin reserved by setViewportMargins().
+    // Always use viewport geometry — scrollbar geometry is unreliable on macOS
+    // overlay scrollbars (often zero/transient).
+    {
+        const QRect vp = viewport()->geometry();
+        if (vp.isValid() && vp.height() > 0)
+        {
+            int x = vp.right() + 1;
+            if (_scrollMapPtr && _scrollMapPtr->isVisible())
+            {
+                _scrollMapPtr->setGeometry(x, vp.top(), kScrollMapWidth, vp.height());
+                x += kScrollMapWidth;
+            }
+            if (_scrollMapTarget && _scrollMapTarget->isVisible())
+            {
+                _scrollMapTarget->setGeometry(x, vp.top(), kScrollMapWidth, vp.height());
+            }
+        }
+    }
 }
 
 void QHexEdit::dataChangedPrivate(int)
@@ -1779,13 +2098,26 @@ uint32_t QHexEdit::computeAsciiAreaMaxWidthForBytesPerLine(int bytesPerLine)
     const int slotWidthPx = (_tb && _tbMaxSymbolWidthPx > 0)
         ? (_tbMaxSymbolWidthPx + kAsciiColumnGapPx)
         : (_pxCharWidth + kAsciiColumnGapPx);
-        
+
     return static_cast<uint32_t>(bytesPerLine * slotWidthPx);
 }
 
 void QHexEdit::updateAsciiAreaMaxWidth()
 {
+    if (_tb)
+        ensureAsciiAreaWidthCache();
+
     _asciiAreaMaxWidth = computeAsciiAreaMaxWidthForBytesPerLine(_bytesPerLine);
+}
+
+void QHexEdit::restoreTopVisibleByte(qint64 topByte)
+{
+    if (_bytesPerLine <= 0)
+        return;
+
+    const int topLine = static_cast<int>(qMax<qint64>(0, topByte) / _bytesPerLine);
+    verticalScrollBar()->setValue(topLine);
+    adjust();
 }
 
 void QHexEdit::invalidateAsciiAreaWidthCache()
@@ -1891,6 +2223,223 @@ void QHexEdit::updateCursor()
     viewport()->update(_hexCursorRect);
 }
 
+// ---- Scroll map visibility API -------------------------------------------------
+
+bool QHexEdit::scrollMapPtrVisible() const
+{
+    return _scrollMapPtrEnabled;
+}
+
+void QHexEdit::setScrollMapPtrVisible(bool visible)
+{
+    if (_scrollMapPtrEnabled == visible) return;
+    _scrollMapPtrEnabled = visible;
+    updateScrollMapMargins();
+}
+
+bool QHexEdit::scrollMapTargetVisible() const
+{
+    return _scrollMapTargetEnabled;
+}
+
+void QHexEdit::setScrollMapTargetVisible(bool visible)
+{
+    if (_scrollMapTargetEnabled == visible) return;
+    _scrollMapTargetEnabled = visible;
+    updateScrollMapMargins();
+}
+
+void QHexEdit::setScrollMapPtrBgColor(const QColor &c)
+{
+    if (_scrollMapPtr) _scrollMapPtr->setBgColor(c);
+}
+
+void QHexEdit::setScrollMapTargetBgColor(const QColor &c)
+{
+    if (_scrollMapTarget) _scrollMapTarget->setBgColor(c);
+}
+
+void QHexEdit::updateScrollMapMargins()
+{
+    // Immediate (non-debounced) re-evaluation of visibility + margins.
+    // Also kicks the debounce timer for future model changes.
+    scheduleScrollMapCompute();
+    updateScrollMap();
+}
+
+// ---- Scroll map computation ---------------------------------------------------
+
+void QHexEdit::updateScrollMap()
+{
+    // Debounce: restart timer on every rapid model change.
+    // scheduleScrollMapCompute() fires once things settle.
+    if (_scrollMapTimer)
+        _scrollMapTimer->start();
+}
+
+void QHexEdit::scheduleScrollMapCompute()
+{
+    if (!_scrollMapWatcher || !_chunks)
+        return;
+
+    const bool hasPointers = !_pointers.empty();
+    const bool wantPtr    = _scrollMapPtrEnabled    && hasPointers && _scrollMapPtr;
+    const bool wantTarget = _scrollMapTargetEnabled && hasPointers && _scrollMapTarget;
+
+    // Update strip visibility
+    if (_scrollMapPtr)    _scrollMapPtr->setVisible(wantPtr);
+    if (_scrollMapTarget) _scrollMapTarget->setVisible(wantTarget);
+    if (wantPtr)    _scrollMapPtr->raise();
+    if (wantTarget) _scrollMapTarget->raise();
+
+    // Update viewport right margin only when it actually changes (avoids recursive relayout)
+    const int newMargin = (wantPtr ? kScrollMapWidth : 0) + (wantTarget ? kScrollMapWidth : 0);
+    if (newMargin != _scrollMapCurrentMargin)
+    {
+        _scrollMapCurrentMargin = newMargin;
+        setViewportMargins(0, 0, newMargin, 0);
+        // setViewportMargins relayouts the viewport synchronously in Qt6,
+        // so we call adjust() immediately to size the strip before reading mapH.
+    }
+    adjust();  // always reposition strips so height() is up-to-date
+
+    if (!wantPtr && !wantTarget)
+    {
+        if (_scrollMapPtr)    _scrollMapPtr->setTicks({});
+        if (_scrollMapTarget) _scrollMapTarget->setTicks({});
+        return;
+    }
+
+    // If previous background task still running, retry after debounce
+    if (_scrollMapWatcher->isRunning())
+    {
+        _scrollMapTimer->start();
+        return;
+    }
+
+    // Both strips share the same height (set by adjust()).
+    // Read from viewport() directly — adjust() has just positioned the strips,
+    // but reading viewport()->height() is always authoritative and avoids any
+    // stale-geometry edge cases the first time the strips are shown.
+    const int mapH = viewport()->height();
+    const qint64 totalBytes = _chunks->size();
+
+    if (mapH <= 0 || totalBytes <= 0)
+        return;
+
+    // Get real groove geometry via QStyleOptionSlider (initFrom is public).
+    auto *vbar = verticalScrollBar();
+    const int sbMin  = vbar->minimum();
+    const int sbMax  = vbar->maximum();
+    const int sbPage = vbar->pageStep();
+    const int bytesPerLine = qMax(1, _bytesPerLine);
+
+    // Build QStyleOptionSlider from public scrollbar API — no initStyleOption needed.
+    // Use strip dimensions as the rect so subControlRect returns groove/thumb in strip coords.
+    QStyleOptionSlider vbarOpt;
+    vbarOpt.initFrom(vbar);                         // sets palette, state from the widget
+    vbarOpt.rect          = QRect(0, 0, kScrollMapWidth, mapH);  // ← strip size, not vbar size
+    vbarOpt.minimum       = sbMin;
+    vbarOpt.maximum       = sbMax;
+    vbarOpt.pageStep      = sbPage;
+    vbarOpt.singleStep    = vbar->singleStep();
+    vbarOpt.sliderValue   = vbar->value();
+    vbarOpt.sliderPosition = vbar->sliderPosition();
+    vbarOpt.orientation   = Qt::Vertical;
+    vbarOpt.upsideDown    = vbar->invertedAppearance();
+    vbarOpt.subControls   = QStyle::SC_All;
+    vbarOpt.activeSubControls = QStyle::SC_None;
+
+    // Groove rect — in strip coords because we set opt.rect to strip size.
+    const QRect grooveRect = vbar->style()->subControlRect(
+        QStyle::CC_ScrollBar, &vbarOpt, QStyle::SC_ScrollBarGroove, vbar);
+
+    // Slider (thumb) rect — also in strip coords.
+    const QRect sliderRect = vbar->style()->subControlRect(
+        QStyle::CC_ScrollBar, &vbarOpt, QStyle::SC_ScrollBarSlider, vbar);
+
+    const int grooveTop = grooveRect.isValid() ? grooveRect.top() : 0;
+    const int grooveH   = qMax(1, grooveRect.isValid() ? grooveRect.height() : mapH);
+    const int mThumbH   = qMax(1, sliderRect.isValid() ? sliderRect.height() : 1);
+
+    // mGrooveTop/mGrooveH are already in strip (mapH) coords — no scaling needed.
+    const int mGrooveTop = grooveTop;
+    const int mGrooveH   = grooveH;
+
+    QList<qint64> ptrKeys    = wantPtr    ? _pointers.pointerKeys() : QList<qint64>{};
+    QList<qint64> targetKeys = wantTarget ? _pointers.offsetKeys()  : QList<qint64>{};
+
+    auto future = QtConcurrent::run(
+        [mapH, totalBytes,
+         sbMin, sbMax, sbPage, bytesPerLine,
+         mGrooveTop, mGrooveH, mThumbH,
+         wantPtr, wantTarget,
+         ptrKeys    = std::move(ptrKeys),
+         targetKeys = std::move(targetKeys)]() -> ScrollMapMarkers
+        {
+            ScrollMapMarkers result;
+
+            // Map byte offset → Y that matches the scrollbar thumb CENTER,
+            // using real groove geometry obtained from QStyle on the main thread.
+            auto offToY = [mapH, totalBytes,
+                           sbMin, sbMax, sbPage, bytesPerLine,
+                           mGrooveTop, mGrooveH, mThumbH](qint64 off) -> int
+            {
+                if (totalBytes <= 1 || mapH <= 1)
+                    return 0;
+
+                const qint64 offClamped = qBound<qint64>(0, off, totalBytes - 1);
+                const double line = static_cast<double>(offClamped) / static_cast<double>(bytesPerLine);
+
+                // Scrollbar value that centers this offset in the viewport.
+                const double value = qBound(static_cast<double>(sbMin),
+                                            line - static_cast<double>(sbPage) * 0.5,
+                                            static_cast<double>(sbMax));
+
+                // Thumb travels within groove: from mGrooveTop to mGrooveTop+mGrooveH-mThumbH.
+                const double travel = qMax(0.0, static_cast<double>(mGrooveH - mThumbH));
+                const double valueRange = (sbMax > sbMin) ? static_cast<double>(sbMax - sbMin) : 1.0;
+                const double normVal = (value - sbMin) / valueRange;
+
+                // Y of the thumb CENTER in strip coordinates.
+                const double thumbTopInStrip = mGrooveTop + normVal * travel;
+                const double thumbCenterY = thumbTopInStrip + static_cast<double>(mThumbH) * 0.5;
+
+                return qBound(0, static_cast<int>(std::round(thumbCenterY)), mapH - 1);
+            };
+
+            if (wantPtr)
+            {
+                QVector<bool> px(mapH, false);
+                for (qint64 off : ptrKeys) {
+                    int y = offToY(off);
+                    px[y] = true;
+                    if (!result.ptrYToOff.contains(y))
+                        result.ptrYToOff.insert(y, off);
+                }
+                for (int i = 0; i < mapH; ++i)
+                    if (px[i]) result.ptrYs.push_back(i);
+            }
+
+            if (wantTarget)
+            {
+                QVector<bool> px(mapH, false);
+                for (qint64 off : targetKeys) {
+                    int y = offToY(off);
+                    px[y] = true;
+                    if (!result.targetYToOff.contains(y))
+                        result.targetYToOff.insert(y, off);
+                }
+                for (int i = 0; i < mapH; ++i)
+                    if (px[i]) result.targetYs.push_back(i);
+            }
+
+            return result;
+        });
+
+    _scrollMapWatcher->setFuture(future);
+}
+
 PointerListModel *QHexEdit::pointers()
 {
     return &_pointers;
@@ -1906,7 +2455,7 @@ void QHexEdit::clearPointers()
 /**
  * The function searches for pointers in the specified direction(s) and adds them to the pointers list.
  *
- * @param bigEndian - whether to search for big-endian or little-endian pointers
+ * @param order - byte order: LittleEndian, BigEndian or SwappedBytes
  * @param searchBefore - whether to search for pointers before the current selection
  * @param searchAfter - whether to search for pointers after the current selection
  * @param firstPrintable - if set, only consider values as pointers if the previous byte is not a printable character (between firstPrintable and lastPrintable)
@@ -1915,7 +2464,7 @@ void QHexEdit::clearPointers()
  * @param excludeSelection - whether to exclude the current selection from search (only applicable if both searchBefore and searchAfter are true)
  * @return number of pointers found
  */
-qint64 QHexEdit::findPointers(int pointerSize, bool bigEndian, bool searchBefore, bool searchAfter, const char *firstPrintable, const char *lastPrintable, char stopChar, bool excludeSelection)
+qint64 QHexEdit::findPointers(int pointerSize, ByteOrder order, bool searchBefore, bool searchAfter, const char *firstPrintable, const char *lastPrintable, char stopChar, bool excludeSelection)
 {
     // Validate pointer size
     if (pointerSize < 2 || pointerSize > 4)
@@ -2001,28 +2550,7 @@ qint64 QHexEdit::findPointers(int pointerSize, bool bigEndian, bool searchBefore
 
             quint64 value = 0;
             const uchar *ptr = reinterpret_cast<const uchar *>(buf + j);
-
-            if (pointerSize == 2)
-            {
-                const quint16 val16 = bigEndian ? qFromBigEndian<quint16>(ptr) : qFromLittleEndian<quint16>(ptr);
-                value = static_cast<quint64>(val16);
-            }
-            else if (pointerSize == 3)
-            {
-                if (bigEndian)
-                {
-                    value = (static_cast<quint64>(ptr[0]) << 16) | (static_cast<quint64>(ptr[1]) << 8) | static_cast<quint64>(ptr[2]);
-                }
-                else
-                {
-                    value = static_cast<quint64>(ptr[0]) | (static_cast<quint64>(ptr[1]) << 8) | (static_cast<quint64>(ptr[2]) << 16);
-                }
-            }
-            else // 4 bytes
-            {
-                const quint32 val32 = bigEndian ? qFromBigEndian<quint32>(ptr) : qFromLittleEndian<quint32>(ptr);
-                value = static_cast<quint64>(val32);
-            }
+            value = decodePointer(ptr, pointerSize, order);
 
             if (isCandidateOffset(value))
             {
@@ -2034,4 +2562,114 @@ qint64 QHexEdit::findPointers(int pointerSize, bool bigEndian, bool searchBefore
     }
 
     return found;
+}
+
+bool QHexEdit::addPointerUndoable(qint64 pointerOffset, qint64 targetOffset)
+{
+    if (pointerOffset < 0 || targetOffset < 0)
+        return false;
+
+    const PointerState before = capturePointerState(&_pointers, pointerOffset);
+
+    if (before.hasTarget && before.targetOffset == targetOffset)
+        return false;
+
+    PointerState after;
+    after.pointerOffset = pointerOffset;
+    after.hasTarget = true;
+    after.targetOffset = targetOffset;
+
+    _undoStack->push(new PointerEditCommand(&_pointers,
+                                            QVector<PointerState>{before},
+                                            QVector<PointerState>{after},
+                                            tr("Add pointer")));
+    refresh();
+    return true;
+}
+
+bool QHexEdit::removePointerUndoable(qint64 pointerOffset)
+{
+    const PointerState before = capturePointerState(&_pointers, pointerOffset);
+    if (!before.hasTarget)
+        return false;
+
+    PointerState after;
+    after.pointerOffset = pointerOffset;
+    after.hasTarget = false;
+
+    _undoStack->push(new PointerEditCommand(&_pointers,
+                                            QVector<PointerState>{before},
+                                            QVector<PointerState>{after},
+                                            tr("Drop pointer")));
+    refresh();
+    return true;
+}
+
+int QHexEdit::removePointersUndoable(const QVector<qint64> &pointerOffsets)
+{
+    if (pointerOffsets.isEmpty())
+        return 0;
+
+    QVector<PointerState> before;
+    QVector<PointerState> after;
+    QSet<qint64> uniqueOffsets;
+    uniqueOffsets.reserve(pointerOffsets.size());
+
+    for (qint64 pointerOffset : pointerOffsets)
+    {
+        if (uniqueOffsets.contains(pointerOffset))
+            continue;
+        uniqueOffsets.insert(pointerOffset);
+
+        const PointerState stateBefore = capturePointerState(&_pointers, pointerOffset);
+        if (!stateBefore.hasTarget)
+            continue;
+
+        before.append(stateBefore);
+
+        PointerState stateAfter;
+        stateAfter.pointerOffset = pointerOffset;
+        stateAfter.hasTarget = false;
+        after.append(stateAfter);
+    }
+
+    if (before.isEmpty())
+        return 0;
+
+    _undoStack->push(new PointerEditCommand(&_pointers, before, after, tr("Drop pointer")));
+    refresh();
+    return before.size();
+}
+
+int QHexEdit::removePointersToOffsetUndoable(qint64 targetOffset)
+{
+    const QList<qint64> pointersAtOffset = _pointers.getPointers(targetOffset);
+    if (pointersAtOffset.isEmpty())
+        return 0;
+
+    QVector<PointerState> before;
+    QVector<PointerState> after;
+    before.reserve(pointersAtOffset.size());
+    after.reserve(pointersAtOffset.size());
+
+    for (qint64 pointerOffset : pointersAtOffset)
+    {
+        const PointerState stateBefore = capturePointerState(&_pointers, pointerOffset);
+        if (!stateBefore.hasTarget)
+            continue;
+
+        before.append(stateBefore);
+
+        PointerState stateAfter;
+        stateAfter.pointerOffset = pointerOffset;
+        stateAfter.hasTarget = false;
+        after.append(stateAfter);
+    }
+
+    if (before.isEmpty())
+        return 0;
+
+    _undoStack->push(new PointerEditCommand(&_pointers, before, after, tr("Drop all")));
+    refresh();
+    return before.size();
 }

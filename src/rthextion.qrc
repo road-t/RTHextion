@@ -16,5 +16,11 @@
     <file>images/find_ptr.png</file>
     <file>images/tj.png</file>
     <file>images/pointer.png</file>
+    <file>images/rewind.png</file>
+    <file>images/prev.png</file>
+    <file>images/next.png</file>
+    <file>images/fast-forward.png</file>
+    <file>images/dump.png</file>
+    <file>images/insert_script.png</file>
   </qresource>
 </RCC>

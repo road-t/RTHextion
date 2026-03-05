@@ -4,6 +4,9 @@
 #include <QDialog>
 #include <QAbstractButton>
 #include <QFuture>
+#include <QFutureWatcher>
+#include <QMutex>
+#include <QTimer>
 #include <atomic>
 #include "qhexedit/qhexedit.h"
 #include "PointerListModel.h"
@@ -20,6 +23,10 @@ public:
     explicit PointersDialog(QHexEdit *hexEdit, QWidget *parent = nullptr);
     ~PointersDialog();
     void refreshFromTable();
+    void quickSearch(qint64 clickBytePos = -1);
+
+signals:
+    void searchCompleted(int found);
 
 private slots:
     void on_bbControls_accepted();
@@ -37,6 +44,8 @@ private slots:
     void on_leRangeBegin_textChanged(const QString &text);
     void on_leRangeEnd_textChanged(const QString &text);
     void finishSearchUi(bool cancelled, int found, qint64 elapsedMs);
+    void drainPendingResults();
+    void onSearchFinished();
 
 protected:
     void keyPressEvent(QKeyEvent *event) override;
@@ -46,6 +55,8 @@ protected:
     QFuture<void> searchFuture;
     std::atomic<bool> cancelRequested{false};
     bool searchActive = false;
+    bool _quickSearchMode = false;
+    bool _quickSearchBusyCursor = false;
 
     qint64 parseHexField(const QString &text, bool *ok) const;
     bool validateRangeInputs();
@@ -54,6 +65,18 @@ private:
     Ui::PointersDialog *ui;
     QHexEdit *_hexEdit;
     TranslationTable* tb;
+
+    // Thread-safe result buffer: background thread pushes here, timer drains on UI thread
+    QMutex _pendingMutex;
+    QVector<QPair<qint64, qint64>> _pendingResults;
+    std::atomic<qint64> _pendingFound{0};
+    std::atomic<int>    _pendingPercent{0};
+    std::atomic<bool>   _searchWasCancelled{false};
+    std::atomic<qint64> _searchElapsedMs{0};
+
+    QTimer *_uiUpdateTimer = nullptr;
+    QFutureWatcher<void> _futureWatcher;
+    bool _searchFinishPending = false;
 };
 
 #endif // POINTERSDIALOG_H

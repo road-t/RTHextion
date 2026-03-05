@@ -7,6 +7,7 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QMenuBar>
+#include <QMenu>
 #include <QToolBar>
 #include <QColorDialog>
 #include <QFontDialog>
@@ -14,12 +15,14 @@
 #include <QDropEvent>
 #include <QGridLayout>
 #include <QSettings>
+#include <QScrollBar>
 #include <QDir>
 
 #include "QtWidgets/qpushbutton.h"
 #include "appinfo.h"
 #include "langtranslator.h"
 #include "mainwindow.h"
+#include "romdetect.h"
 
 namespace
 {
@@ -144,6 +147,7 @@ void MainWindow::closeFile()
 
     hexEdit->setData(QByteArray());
     hexEdit->clearPointers();
+    resetNavigationHistory();
     showPointersAct->setEnabled(false);
     setCurrentFile("");
     statusBar()->showMessage(tr("File closed"), 2000);
@@ -156,6 +160,7 @@ void MainWindow::newFile()
 
     hexEdit->setData(QByteArray());
     hexEdit->clearPointers();
+    resetNavigationHistory();
     showPointersAct->setEnabled(false);
     setCurrentFile("");
     statusBar()->showMessage(tr("New file created"), 2000);
@@ -312,6 +317,7 @@ void MainWindow::setAddress(qint64 address)
     const int digits = (hexEdit ? qMax(1, hexEdit->addressWidth()) : 1);
     lbAddress->setText(QString("0x%1").arg(address, digits, 16, QChar('0')));
     curOffset = address;
+    pushNavigationPosition(address);
 
     updateValuePanels();
 }
@@ -321,14 +327,10 @@ void MainWindow::updateValuePanels()
     auto value = hexEdit->getValue(curOffset);
 
     const quint8 byteValue = value.uByte;
-    const quint16 wordValue = hexEdit->bigEndian ? static_cast<quint16>(value.beWord)
-                                                 : static_cast<quint16>(value.leWord);
-    const quint32 dwordValue = hexEdit->bigEndian ? static_cast<quint32>(value.beDword)
-                                                  : static_cast<quint32>(value.leDword);
+    const quint16 wordValue = readWord(value, hexEdit->byteOrder);
+    const quint32 dwordValue = readDword(value, hexEdit->byteOrder);
 
-    const bool showSigned = showSignedValuesAct && showSignedValuesAct->isChecked();
-
-    if (showSigned)
+    if (showSignedValuesAct && showSignedValuesAct->isChecked())
     {
         lbValueByte->setText(QString("B: %1").arg(static_cast<qint8>(byteValue)));
         lbValueWord->setText(QString("W: %1").arg(static_cast<qint16>(wordValue)));
@@ -345,10 +347,17 @@ void MainWindow::updateValuePanels()
 void MainWindow::setSelection(qint64 start, qint64 end)
 {
     auto len = end - start;
-    auto text = len ? QString("0x%1-0x%2: %3").arg(start, 2, 16, QChar('0')).arg(end, 2, 16, QChar('0')).arg(end - start) : tr("No selection");
+    auto text = len ?
+        QString("0x%1-0x%2: %3")
+            .arg(start, 2, 16, QChar('0'))
+            .arg(end, 2, 16, QChar('0'))
+            .arg(end - start + 1)
+        : tr("No selection");
 
     lbSelection->setText(text);
     saveSelectionReadable->setEnabled(len > 0);
+
+    updateScriptMenuState(len > 0);
 }
 
 void MainWindow::setOverwriteMode(bool mode)
@@ -418,8 +427,205 @@ void MainWindow::showPointersDialog()
     {
         pointersDialog = new PointersDialog(hexEdit, this);
         connect(pointersDialog, SIGNAL(accepted()), this, SLOT(pointersUpdated()));
+        connect(pointersDialog, &PointersDialog::searchCompleted, this, &MainWindow::onQuickSearchCompleted);
     }
     pointersDialog->show();
+}
+
+void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
+{
+    PointerListModel *model = hexEdit->pointers();
+    const qint64 pointerStart = hexEdit->pointerStartAt(bytePos, 4);
+    const qint64 fileSize = hexEdit->data().size();
+
+    bool canAddAsPointer = false;
+    qint64 addAsPointerTarget = -1;
+
+    if (bytePos >= 0 && bytePos + 4 <= fileSize)
+    {
+        const QByteArray rawPointer = hexEdit->dataAt(bytePos, 4);
+        if (rawPointer.size() == 4)
+        {
+            const quint64 decodedPointer = decodePointer(reinterpret_cast<const uchar *>(rawPointer.constData()), 4, hexEdit->byteOrder);
+            if (decodedPointer <= static_cast<quint64>(fileSize))
+            {
+                canAddAsPointer = true;
+                addAsPointerTarget = static_cast<qint64>(decodedPointer);
+            }
+        }
+    }
+
+    auto refreshPointersUi = [this]()
+    {
+        if (pointersDialog)
+            pointersDialog->refreshFromTable();
+        pointersUpdated();
+        hexEdit->viewport()->update();
+    };
+
+    // 1) Right click on a pointer entry (full pointer length is clickable).
+    if (pointerStart >= 0)
+    {
+        QMenu menu(this);
+        QAction *jumpAct = menu.addAction(tr("Jump to offset"));
+        QAction *dropAct = menu.addAction(tr("Drop pointer"));
+        menu.addSeparator();
+        QAction *addAsPointerAct = menu.addAction(tr("Add as pointer"));
+        addAsPointerAct->setEnabled(canAddAsPointer);
+
+        QAction *chosen = menu.exec(globalPos);
+        if (chosen == addAsPointerAct)
+        {
+            if (canAddAsPointer && hexEdit->addPointerUndoable(bytePos, addAsPointerTarget))
+                refreshPointersUi();
+        }
+        else if (chosen == jumpAct)
+        {
+            const qint64 targetOffset = model->getOffset(pointerStart);
+            if (targetOffset >= 0)
+            {
+                hexEdit->setCursorPosition(targetOffset * 2);
+                hexEdit->ensureVisible();
+            }
+        }
+        else if (chosen == dropAct)
+        {
+            if (hexEdit->removePointerUndoable(pointerStart))
+                refreshPointersUi();
+        }
+        return;
+    }
+
+    // 2) Right click on offset that has incoming pointers.
+    if (model->hasOffset(bytePos))
+    {
+        QMenu menu(this);
+        QAction *titleAct = menu.addAction(tr("Pointers") + ":");
+        titleAct->setEnabled(false);
+
+        const QList<qint64> ptrs = model->getPointers(bytePos);
+        QList<QAction *> ptrActs;
+        ptrActs.reserve(ptrs.size());
+
+        for (const qint64 ptr : ptrs)
+        {
+            QAction *ptrAct = menu.addAction(QStringLiteral("0x%1").arg(ptr, 8, 16, QChar('0')).toUpper());
+            ptrActs.append(ptrAct);
+        }
+
+        menu.addSeparator();
+        QAction *dropAllAct = menu.addAction(tr("Drop all"));
+        QAction *addAsPointerAct = menu.addAction(tr("Add as pointer"));
+        addAsPointerAct->setEnabled(canAddAsPointer);
+
+        QAction *chosen = menu.exec(globalPos);
+        if (!chosen)
+            return;
+
+        if (chosen == addAsPointerAct)
+        {
+            if (canAddAsPointer && hexEdit->addPointerUndoable(bytePos, addAsPointerTarget))
+                refreshPointersUi();
+            return;
+        }
+
+        const int ptrIdx = ptrActs.indexOf(chosen);
+        if (ptrIdx >= 0)
+        {
+            const qint64 ptrOffset = ptrs[ptrIdx];
+            hexEdit->setCursorPosition(ptrOffset * 2);
+            hexEdit->ensureVisible();
+            return;
+        }
+
+        if (chosen == dropAllAct)
+        {
+            QMessageBox confirm(QMessageBox::Question,
+                                QString(),
+                                tr("Drop all pointers to this offset?"),
+                                QMessageBox::Yes | QMessageBox::Cancel,
+                                this);
+            if (confirm.exec() == QMessageBox::Yes)
+            {
+                if (hexEdit->removePointersToOffsetUndoable(bytePos) > 0)
+                    refreshPointersUi();
+            }
+        }
+        return;
+    }
+
+    // 3) Default hex-area context menu.
+    QMenu menu(this);
+
+    QAction *quickSearchAct = menu.addAction(tr("Quick pointer search"));
+    QAction *findPtrAct     = menu.addAction(tr("Find pointers") + QString("..."));
+    menu.addSeparator();
+    QAction *addAsPointerAct = menu.addAction(tr("Add as pointer"));
+    addAsPointerAct->setEnabled(canAddAsPointer);
+
+    QAction *chosen = menu.exec(globalPos);
+
+    if (chosen == addAsPointerAct)
+    {
+        if (canAddAsPointer && hexEdit->addPointerUndoable(bytePos, addAsPointerTarget))
+            refreshPointersUi();
+    }
+    else if (chosen == quickSearchAct)
+    {
+        if (!pointersDialog)
+        {
+            pointersDialog = new PointersDialog(hexEdit, this);
+            connect(pointersDialog, SIGNAL(accepted()), this, SLOT(pointersUpdated()));
+            connect(pointersDialog, &PointersDialog::searchCompleted, this, &MainWindow::onQuickSearchCompleted);
+        }
+        pointersDialog->quickSearch(bytePos);
+    }
+    else if (chosen == findPtrAct)
+    {
+        showPointersDialog();
+    }
+}
+
+void MainWindow::onQuickSearchCompleted(int found)
+{
+    if (found == 0)
+    {
+        QMessageBox::information(this, QString(), tr("No pointers found"));
+    }
+    else
+    {
+        hexEdit->viewport()->update();
+    }
+}
+
+void MainWindow::goToPreviousPosition()
+{
+    navigateToHistoryIndex(navigationHistoryIndex - 1);
+}
+
+void MainWindow::goToNextPosition()
+{
+    navigateToHistoryIndex(navigationHistoryIndex + 1);
+}
+
+void MainWindow::goToFirstPosition()
+{
+    navigateToHistoryIndex(0);
+}
+
+void MainWindow::goToLastPosition()
+{
+    navigateToHistoryIndex(navigationHistory.size() - 1);
+}
+
+void MainWindow::goToFileBeginning()
+{
+    hexEdit->jumpTo(0);
+}
+
+void MainWindow::goToFileEnd()
+{
+    hexEdit->jumpTo(hexEdit->data().size());
 }
 
 bool MainWindow::loadTable()
@@ -438,7 +644,7 @@ bool MainWindow::loadTable()
         editTableAct->setDisabled(false);
         saveTableAct->setDisabled(false);
         saveTableAsAct->setDisabled(false);
-        updateScriptMenuState();
+        updateActionStates();
         rememberDirectory(kLastTableDirKey, fileName);
         tableFilePath = fileName;
         addToRecentTables(fileName);
@@ -451,13 +657,13 @@ bool MainWindow::loadTable()
 void MainWindow::switchUseTable()
 {
     useTableAct->isChecked() ? hexEdit->setTranslationTable(tb) : hexEdit->removeTranslationTable();
-    updateScriptMenuState();
+    updateActionStates();
 }
 
-void MainWindow::updateScriptMenuState()
+void MainWindow::updateScriptMenuState(bool enabled)
 {
-    bool tableActive = tb && useTableAct->isChecked();
-    scriptMenu->setEnabled(tableActive);
+    dumpScriptAct->setEnabled(enabled);
+    toolbarDumpScriptAct->setEnabled(enabled);
 }
 
 void MainWindow::toggleOverwriteMode()
@@ -584,17 +790,29 @@ void MainWindow::retranslateUi()
 
     // Actions - Search
     findAct->setText(tr("Find/Replace"));
-    findAct->setStatusTip(tr("Show the Dialog for finding and replacing"));
+    findAct->setStatusTip(tr("Show the dialog for finding and replacing"));
     findNextAct->setText(tr("Find next"));
     findNextAct->setStatusTip(tr("Find next occurrence of the searched pattern"));
-    gotoAct->setText(tr("Jump to offset..."));
+    gotoAct->setText(tr("Jump to offset") + QString("..."));
     gotoAct->setStatusTip(tr("Go to specified offset"));
+    previousPositionAct->setText(tr("Previous position"));
+    previousPositionAct->setStatusTip(tr("Go to previous cursor position"));
+    nextPositionAct->setText(tr("Next position"));
+    nextPositionAct->setStatusTip(tr("Go to next cursor position"));
+    firstPositionAct->setText(tr("First position"));
+    firstPositionAct->setStatusTip(tr("Go to first cursor position in history"));
+    lastPositionAct->setText(tr("Last position"));
+    lastPositionAct->setStatusTip(tr("Go to last cursor position in history"));
+    toFileBeginningAct->setText(tr("To file beginning"));
+    toFileBeginningAct->setStatusTip(tr("Go to beginning of file"));
+    toFileEndAct->setText(tr("To file end"));
+    toFileEndAct->setStatusTip(tr("Go to end of file"));
 
     // Actions - Help/Options
     aboutAct->setText(tr("About %1").arg(AppInfo::Name));
     aboutAct->setStatusTip(tr("Show the application's About box"));
     optionsAct->setText(tr("Preferences"));
-    optionsAct->setStatusTip(tr("Show the Dialog to select applications options"));
+    optionsAct->setStatusTip(tr("Show the application options dialog"));
 
     // Menu titles
     fileMenu->setTitle(tr("File"));
@@ -622,20 +840,31 @@ void MainWindow::retranslateUi()
     showAsciiAreaAct->setText(tr("ASCII area"));
     showAddressGridAct->setText(tr("Show grid"));
 
+    showMapPointersAct->setText(tr("Pointer map"));
+    showMapPointersAct->setStatusTip(tr("Show pointer locations on the side map"));
+    showMapTargetsAct->setText(tr("Target map"));
+    showMapTargetsAct->setStatusTip(tr("Show target locations on the side map"));
+
+    mapsMenu->setTitle(tr("Maps"));
+
     // Toolbar names and their View menu entries
     fileToolBar->setWindowTitle(tr("File"));
     editToolBar->setWindowTitle(tr("Edit"));
     searchToolBar->setWindowTitle(tr("Search"));
+    navigationToolBar->setWindowTitle(tr("Navigation"));
+    scriptToolBar->setWindowTitle(tr("Script"));
     fileToolBar->toggleViewAction()->setText(tr("File"));
     editToolBar->toggleViewAction()->setText(tr("Actions"));
     searchToolBar->toggleViewAction()->setText(tr("Search"));
+    navigationToolBar->toggleViewAction()->setText(tr("Navigation"));
+    scriptToolBar->toggleViewAction()->setText(tr("Script"));
     resetToolbarsAct->setText(tr("Reset"));
 
     // Status bar labels
     lbAddressName->setText(tr("Address") + QString(":"));
     lbSizeName->setText(tr("Size") + QString(":"));
     lbOverwriteModeName->setText(tr("Mode") + QString(":"));
-    lbEndiannes->setText(hexEdit->bigEndian ? tr("Big-endian") : tr("Little-endian"));
+    updateEndiannesLabel();
     setOverwriteMode(hexEdit->overwriteMode());
     updateValuePanels();
 }
@@ -673,7 +902,7 @@ void MainWindow::createEmptyTable()
     editTableAct->setDisabled(false);
     saveTableAct->setDisabled(false);
     saveTableAsAct->setDisabled(false);
-    updateScriptMenuState();
+    updateActionStates();
 
     editTable();
 }
@@ -696,7 +925,7 @@ void MainWindow::onSemiAutoTableGenerated()
     saveTableAsAct->setDisabled(false);
     useTableAct->setChecked(true);
     hexEdit->setTranslationTable(tb);
-    updateScriptMenuState();
+    updateActionStates();
 
     editTable();
 }
@@ -714,7 +943,7 @@ void MainWindow::saveTable()
 
     if (!tb->save(tableFilePath))
     {
-        QMessageBox::warning(this, tr("Error"), tr("Could not save the table file."));
+        QMessageBox::warning(this, tr("Error"), tr("Could not save the table file"));
     }
     else
     {
@@ -735,7 +964,7 @@ void MainWindow::saveTableAs()
     {
         if (!tb->save(fileName))
         {
-            QMessageBox::warning(this, tr("Error"), tr("Could not save the table file."));
+            QMessageBox::warning(this, tr("Error"), tr("Could not save the table file"));
             return;
         }
 
@@ -773,6 +1002,7 @@ void MainWindow::init()
 
     connect(hexEdit, SIGNAL(overwriteModeChanged(bool)), this, SLOT(setOverwriteMode(bool)));
     connect(hexEdit, SIGNAL(dataChanged()), this, SLOT(dataChanged()));
+    connect(hexEdit, &QHexEdit::contextMenuRequested, this, &MainWindow::hexEditContextMenu);
 
     createActions();
     createToolBars();
@@ -803,7 +1033,7 @@ void MainWindow::createActions()
 
     saveAct = new QAction(QIcon(":/images/save.png"), tr("Save"), this);
     saveAct->setShortcuts(QKeySequence::Save);
-    saveAct->setStatusTip(tr("Save the document to disk"));
+    saveAct->setStatusTip(tr("Save file to disk"));
     connect(saveAct, SIGNAL(triggered()), this, SLOT(save()));
 
     closeAct = new QAction(tr("Close"), this);
@@ -813,11 +1043,11 @@ void MainWindow::createActions()
 
     saveAsAct = new QAction(tr("Save As..."), this);
     saveAsAct->setShortcuts(QKeySequence::SaveAs);
-    saveAsAct->setStatusTip(tr("Save the document under a new name"));
+    saveAsAct->setStatusTip(tr("Save file under a new name"));
     connect(saveAsAct, SIGNAL(triggered()), this, SLOT(saveAs()));
 
     saveReadable = new QAction(tr("Save Dump..."), this);
-    saveReadable->setStatusTip(tr("Save document as dump"));
+    saveReadable->setStatusTip(tr("Save file as dump"));
     connect(saveReadable, SIGNAL(triggered()), this, SLOT(saveToReadableFile()));
 
     revertAct = new QAction(tr("Revert"), this);
@@ -877,12 +1107,14 @@ void MainWindow::createActions()
     saveTableAsAct->setStatusTip(tr("Save translation table to a new file"));
     connect(saveTableAsAct, &QAction::triggered, this, &MainWindow::saveTableAs);
 
-    dumpScriptAct = new QAction(tr("Dump script"), this);
+    dumpScriptAct = new QAction(QIcon(":/images/dump.png"), tr("Dump script"), this);
     dumpScriptAct->setStatusTip(tr("Dump text script"));
+    dumpScriptAct->setEnabled(false);
     connect(dumpScriptAct, SIGNAL(triggered()), this, SLOT(dumpScript()));
 
-    insertScriptAct = new QAction(tr("Insert script"), this);
+    insertScriptAct = new QAction(QIcon(":/images/insert_script.png"), tr("Insert script"), this);
     insertScriptAct->setStatusTip(tr("Insert text script"));
+    insertScriptAct->setEnabled(true);
     connect(insertScriptAct, SIGNAL(triggered()), this, SLOT(insertScript()));
 
     findPointersAct = new QAction(QIcon(":/images/find_ptr.png"), tr("Find pointers"), this);
@@ -903,20 +1135,54 @@ void MainWindow::createActions()
 
     findAct = new QAction(QIcon(":/images/find.png"), tr("Find/Replace"), this);
     findAct->setShortcuts(QKeySequence::Find);
-    findAct->setStatusTip(tr("Show the Dialog for finding and replacing"));
+    findAct->setStatusTip(tr("Show the dialog for finding and replacing"));
     connect(findAct, SIGNAL(triggered()), this, SLOT(showSearchDialog()));
 
-    findNextAct = new QAction(tr("Find Next"), this);
+    findNextAct = new QAction(tr("Find next"), this);
     findNextAct->setStatusTip(tr("Find next occurrence of the searched pattern"));
     connect(findNextAct, SIGNAL(triggered()), this, SLOT(findNext()));
 
-    gotoAct = new QAction(tr("Jump to offset..."), this);
+    gotoAct = new QAction(tr("Jump to offset") + QString("..."), this);
     gotoAct->setShortcut(QKeySequence::FindNext); // ctrl/cmd + G
     gotoAct->setStatusTip(tr("Go to specified offset"));
     connect(gotoAct, SIGNAL(triggered()), this, SLOT(showJumpToDialog()));
 
+    previousPositionAct = new QAction(tr("Previous position"), this);
+    previousPositionAct->setShortcuts({QKeySequence(Qt::CTRL | Qt::Key_BracketLeft),
+                                       QKeySequence(Qt::META | Qt::Key_BracketLeft)});
+    previousPositionAct->setStatusTip(tr("Go to previous cursor position"));
+    connect(previousPositionAct, &QAction::triggered, this, &MainWindow::goToPreviousPosition);
+
+    nextPositionAct = new QAction(tr("Next position"), this);
+    nextPositionAct->setShortcuts({QKeySequence(Qt::CTRL | Qt::Key_BracketRight),
+                                   QKeySequence(Qt::META | Qt::Key_BracketRight)});
+    nextPositionAct->setStatusTip(tr("Go to next cursor position"));
+    connect(nextPositionAct, &QAction::triggered, this, &MainWindow::goToNextPosition);
+
+    firstPositionAct = new QAction(tr("First position"), this);
+    firstPositionAct->setStatusTip(tr("Go to first cursor position in history"));
+    connect(firstPositionAct, &QAction::triggered, this, &MainWindow::goToFirstPosition);
+
+    lastPositionAct = new QAction(tr("Last position"), this);
+    firstPositionAct->setShortcuts({QKeySequence(Qt::CTRL | Qt::Key_Home),
+                                    QKeySequence(Qt::META | Qt::Key_Home)});
+    lastPositionAct->setStatusTip(tr("Go to last cursor position in history"));
+    connect(lastPositionAct, &QAction::triggered, this, &MainWindow::goToLastPosition);
+
+    toFileBeginningAct = new QAction(tr("To file beginning"), this);
+    lastPositionAct->setShortcuts({QKeySequence(Qt::CTRL | Qt::Key_End),
+                                   QKeySequence(Qt::META | Qt::Key_End)});
+    toFileBeginningAct->setStatusTip(tr("Go to beginning of file"));
+    connect(toFileBeginningAct, &QAction::triggered, this, &MainWindow::goToFileBeginning);
+
+    toFileEndAct = new QAction(tr("To file end"), this);
+    toFileBeginningAct->setShortcut(QKeySequence(Qt::Key_Home));
+    toFileEndAct->setStatusTip(tr("Go to end of file"));
+    connect(toFileEndAct, &QAction::triggered, this, &MainWindow::goToFileEnd);
+
     optionsAct = new QAction(tr("Preferences"), this);
-    optionsAct->setStatusTip(tr("Show the Dialog to select applications options"));
+    toFileEndAct->setShortcut(QKeySequence(Qt::Key_End));
+    optionsAct->setStatusTip(tr("Show the application options dialog"));
     optionsAct->setMenuRole(QAction::PreferencesRole); // macOS: moves to app menu automatically
     optionsAct->setShortcut(QKeySequence::Preferences);
     connect(optionsAct, SIGNAL(triggered()), this, SLOT(showOptionsDialog()));
@@ -974,7 +1240,7 @@ void MainWindow::createActions()
     languageGroup->addAction(langChineseSimplifiedAct);
 
     QSettings settings;
-    const QString language = settings.value("Language", QLocale::system().name()).toString();
+    const QString language = settings.value("Language", QStringLiteral("en")).toString();
     const QString languageShort = language.left(2);
 
     if (language == "de" || languageShort == "de")
@@ -1067,6 +1333,22 @@ void MainWindow::createActions()
     connect(showAddressGridAct, &QAction::toggled, this, [this](bool checked)
             { hexEdit->setShowHexGrid(checked); });
 
+    showMapPointersAct = new QAction(tr("Pointer map"), this);
+    showMapPointersAct->setCheckable(true);
+    showMapPointersAct->setChecked(true);
+    showMapPointersAct->setStatusTip(tr("Show pointer storage locations on the side map"));
+    connect(showMapPointersAct, &QAction::toggled, this, [this](bool checked)
+            { hexEdit->setScrollMapPtrVisible(checked); });
+
+    showMapTargetsAct = new QAction(tr("Target map"), this);
+    showMapTargetsAct->setCheckable(true);
+    showMapTargetsAct->setChecked(true);
+    showMapTargetsAct->setStatusTip(tr("Show pointer target locations on the side map"));
+    connect(showMapTargetsAct, &QAction::toggled, this, [this](bool checked)
+            { hexEdit->setScrollMapTargetVisible(checked); });
+
+    updateNavigationActions();
+
 }
 
 void MainWindow::createMenus()
@@ -1097,8 +1379,17 @@ void MainWindow::createMenus()
     editMenu->addSeparator();
     editMenu->addAction(findAct);
     editMenu->addAction(findNextAct);
-    editMenu->addSeparator();
-    editMenu->addAction(gotoAct);
+
+    goMenu = menuBar()->addMenu(tr("Go"));
+    goMenu->addAction(gotoAct);
+    goMenu->addSeparator();
+    goMenu->addAction(previousPositionAct);
+    goMenu->addAction(nextPositionAct);
+    goMenu->addAction(firstPositionAct);
+    goMenu->addAction(lastPositionAct);
+    goMenu->addSeparator();
+    goMenu->addAction(toFileBeginningAct);
+    goMenu->addAction(toFileEndAct);
 
     tableMenu = menuBar()->addMenu(tr("Table"));
     tableMenu->addAction(loadTableAct);
@@ -1115,7 +1406,7 @@ void MainWindow::createMenus()
     tableMenu->addAction(useTableAct);
 
     scriptMenu = menuBar()->addMenu(tr("Script"));
-    scriptMenu->setEnabled(false);
+    scriptMenu->setEnabled(true);
     scriptMenu->addAction(dumpScriptAct);
     scriptMenu->addAction(insertScriptAct);
 
@@ -1130,17 +1421,27 @@ void MainWindow::createMenus()
     panelsMenu->addAction(showAsciiAreaAct);
     panelsMenu->addAction(showAddressGridAct);
 
+    mapsMenu = viewMenu->addMenu(tr("Maps"));
+    mapsMenu->addAction(showMapPointersAct);
+    mapsMenu->addAction(showMapTargetsAct);
+
     toolbarMenu = viewMenu->addMenu(tr("Toolbar"));
 
     QAction *fileToolbarAct = fileToolBar->toggleViewAction();
     QAction *actionsToolbarAct = editToolBar->toggleViewAction();
     QAction *searchToolbarAct = searchToolBar->toggleViewAction();
+    QAction *navigationToolbarAct = navigationToolBar->toggleViewAction();
+    QAction *scriptToolbarAct = scriptToolBar->toggleViewAction();
     fileToolbarAct->setText(tr("File"));
     actionsToolbarAct->setText(tr("Actions"));
     searchToolbarAct->setText(tr("Search"));
+    navigationToolbarAct->setText(tr("Navigation"));
+    scriptToolbarAct->setText(tr("Script"));
     toolbarMenu->addAction(fileToolbarAct);
     toolbarMenu->addAction(actionsToolbarAct);
     toolbarMenu->addAction(searchToolbarAct);
+    toolbarMenu->addAction(navigationToolbarAct);
+    toolbarMenu->addAction(scriptToolbarAct);
     toolbarMenu->addSeparator();
     resetToolbarsAct = toolbarMenu->addAction(tr("Reset"));
 
@@ -1150,7 +1451,9 @@ void MainWindow::createMenus()
             restoreState(defaultWindowState);
         fileToolBar->show();
         editToolBar->show();
-        searchToolBar->show(); });
+        searchToolBar->show();
+        navigationToolBar->show();
+        scriptToolBar->show(); });
 
     statusBarMenu = viewMenu->addMenu(tr("Status bar"));
     statusBarMenu->addAction(showStatusEndianAct);
@@ -1178,8 +1481,6 @@ void MainWindow::createMenus()
 
     helpMenu = menuBar()->addMenu(tr("Help"));
     helpMenu->addAction(aboutAct);
-
-    connect(useTableAct, SIGNAL(triggered()), this, SLOT(updateScriptMenuState()));
 }
 
 void MainWindow::createStatusBar()
@@ -1191,7 +1492,7 @@ void MainWindow::createStatusBar()
     lbEndiannes = new QPushButton();
     lbEndiannes->setFlat(true);
     lbEndiannes->setText(tr("Little-endian"));
-    lbEndiannes->setMaximumSize(QSize(103, 24));
+    lbEndiannes->setMaximumSize(QSize(120, 24));
     connect(lbEndiannes, SIGNAL(clicked()), this, SLOT(updateEndiannes()));
     statusBar()->addWidget(lbEndiannes);
 
@@ -1281,12 +1582,66 @@ void MainWindow::createToolBars()
     searchToolBar->setObjectName("searchToolBar");
     searchToolBar->addAction(findAct);
     searchToolBar->addAction(findPointersAct);
+
+    navigationToolBar = addToolBar(tr("Navigation"));
+    navigationToolBar->setObjectName("navigationToolBar");
+
+    toolbarFirstPositionAct = navigationToolBar->addAction(QIcon(QStringLiteral(":/images/rewind.png")), QString());
+    toolbarFirstPositionAct->setToolTip(tr("First position"));
+    toolbarFirstPositionAct->setStatusTip(tr("Go to first cursor position in history"));
+    connect(toolbarFirstPositionAct, &QAction::triggered, this, &MainWindow::goToFirstPosition);
+
+    toolbarPreviousPositionAct = navigationToolBar->addAction(QIcon(QStringLiteral(":/images/prev.png")), QString());
+    toolbarPreviousPositionAct->setToolTip(tr("Previous position"));
+    toolbarPreviousPositionAct->setStatusTip(tr("Go to previous cursor position"));
+    connect(toolbarPreviousPositionAct, &QAction::triggered, this, &MainWindow::goToPreviousPosition);
+
+    toolbarNextPositionAct = navigationToolBar->addAction(QIcon(QStringLiteral(":/images/next.png")), QString());
+    toolbarNextPositionAct->setToolTip(tr("Next position"));
+    toolbarNextPositionAct->setStatusTip(tr("Go to next cursor position"));
+    connect(toolbarNextPositionAct, &QAction::triggered, this, &MainWindow::goToNextPosition);
+
+    toolbarLastPositionAct = navigationToolBar->addAction(QIcon(QStringLiteral(":/images/fast-forward.png")), QString());
+    toolbarLastPositionAct->setToolTip(tr("Last position"));
+    toolbarLastPositionAct->setStatusTip(tr("Go to last cursor position in history"));
+    connect(toolbarLastPositionAct, &QAction::triggered, this, &MainWindow::goToLastPosition);
+
+    scriptToolBar = addToolBar(tr("Script"));
+    scriptToolBar->setObjectName("scriptToolBar");
+
+    toolbarDumpScriptAct = scriptToolBar->addAction(QIcon(QStringLiteral(":/images/dump.png")), tr("Dump script"));
+    toolbarDumpScriptAct->setToolTip(tr("Dump script"));
+    toolbarDumpScriptAct->setStatusTip(tr("Dump text script"));
+    toolbarDumpScriptAct->setEnabled(false);
+    connect(toolbarDumpScriptAct, &QAction::triggered, this, &MainWindow::dumpScript);
+
+    toolbarInsertScriptAct = scriptToolBar->addAction(QIcon(QStringLiteral(":/images/insert_script.png")), tr("Insert script"));
+    toolbarInsertScriptAct->setToolTip(tr("Insert script"));
+    toolbarInsertScriptAct->setStatusTip(tr("Insert text script"));
+    toolbarInsertScriptAct->setEnabled(true);
+    connect(toolbarInsertScriptAct, &QAction::triggered, this, &MainWindow::insertScript);
 }
 
 void MainWindow::loadFile(const QString &fileName)
 {
     if (!maybeSave())
         return;
+    
+    const QString canonicalIncoming = QFileInfo(fileName).canonicalFilePath();
+    const QString incomingPath = canonicalIncoming.isEmpty() ? fileName : canonicalIncoming;
+    const bool loadingAnotherFile = !curFile.isEmpty() && !incomingPath.isEmpty() && curFile != incomingPath;
+    if (loadingAnotherFile && !hexEdit->pointers()->empty())
+    {
+        QMessageBox confirm(QMessageBox::Warning,
+                            QString::fromLatin1(AppInfo::Name),
+                            tr("You are about to load another file. Clear pointer list?"),
+                            QMessageBox::Yes | QMessageBox::Cancel,
+                            this);
+        if (confirm.exec() != QMessageBox::Yes)
+            return;
+        hexEdit->clearPointers();
+        pointersUpdated();
+    }
 
     file.setFileName(fileName);
 
@@ -1299,11 +1654,23 @@ void MainWindow::loadFile(const QString &fileName)
         return;
     }
 
+    resetNavigationHistory();
     setCurrentFile(fileName);
     statusBar()->showMessage(tr("File loaded"), 2000);
     rememberDirectory(kLastFileDirKey, fileName);
 
+    // Auto-detect endianness based on ROM type
     QSettings settings;
+    if (settings.value("DetectEndianness", true).toBool())
+    {
+        const QByteArray header = hexEdit->dataAt(0, 512);
+        const RomType rom = detectRomType(fileName, header);
+        if (rom != RomType::Unknown)
+        {
+            hexEdit->byteOrder = defaultByteOrder(rom);
+            updateEndiannesLabel();
+        }
+    }
 
     settings.setValue("RecentFile0", fileName);
 
@@ -1329,8 +1696,11 @@ void MainWindow::readSettings()
 
 
     hexEdit->setHighlightingColor(settings.value("HighlightingColor").value<QColor>());
-    hexEdit->setPointersColor(settings.value("PointersColor").value<QColor>());
     hexEdit->setPointedColor(settings.value("PointedColor").value<QColor>());
+    hexEdit->setPointedFontColor(settings.value("PointedFontColor", QColor(Qt::black)).value<QColor>());
+    hexEdit->setPointerFontColor(settings.value("PointerFontColor", QColor(Qt::black)).value<QColor>());
+    hexEdit->setPointerFrameColor(settings.value("PointerFrameColor", QColor(0x00, 0x00, 0xFF)).value<QColor>());
+    hexEdit->setPointerFrameBackgroundColor(settings.value("PointerFrameBgColor", QColor(0x00, 0xFF, 0x00, 0x80)).value<QColor>());
     hexEdit->setAddressAreaColor(settings.value("AddressAreaColor").value<QColor>());
     hexEdit->setSelectionColor(settings.value("SelectionColor").value<QColor>());
     hexEdit->setFont(settings.value("WidgetFont").value<QFont>());
@@ -1385,10 +1755,86 @@ void MainWindow::switchShowPointers()
     hexEdit->setShowPointers(showPointersAct->isChecked());
 }
 
+void MainWindow::pushNavigationPosition(qint64 position)
+{
+    if (navigationJumpInProgress || position < 0)
+        return;
+
+    if (navigationHistoryIndex >= 0
+        && navigationHistoryIndex < navigationHistory.size()
+        && navigationHistory[navigationHistoryIndex] == position)
+    {
+        return;
+    }
+
+    if (navigationHistoryIndex + 1 < navigationHistory.size())
+        navigationHistory.resize(navigationHistoryIndex + 1);
+
+    navigationHistory.append(position);
+
+    if (navigationHistory.size() > 1024)
+        navigationHistory.remove(0, navigationHistory.size() - 1024);
+
+    navigationHistoryIndex = navigationHistory.size() - 1;
+    updateNavigationActions();
+}
+
+void MainWindow::resetNavigationHistory()
+{
+    navigationHistory.clear();
+    navigationHistoryIndex = -1;
+    pushNavigationPosition(hexEdit ? hexEdit->getCurrentOffset() : 0);
+}
+
+void MainWindow::navigateToHistoryIndex(int index)
+{
+    if (index < 0 || index >= navigationHistory.size())
+        return;
+
+    navigationHistoryIndex = index;
+    navigationJumpInProgress = true;
+    hexEdit->jumpTo(navigationHistory[index]);
+    navigationJumpInProgress = false;
+    updateNavigationActions();
+}
+
+void MainWindow::updateNavigationActions()
+{
+    const bool hasHistory = !navigationHistory.isEmpty();
+    const bool hasPrev = hasHistory && navigationHistoryIndex > 0;
+    const bool hasNext = hasHistory && navigationHistoryIndex >= 0 && navigationHistoryIndex < navigationHistory.size() - 1;
+
+    if (previousPositionAct)
+        previousPositionAct->setEnabled(hasPrev);
+    if (nextPositionAct)
+        nextPositionAct->setEnabled(hasNext);
+    if (firstPositionAct)
+        firstPositionAct->setEnabled(hasPrev);
+    if (lastPositionAct)
+        lastPositionAct->setEnabled(hasNext);
+    if (toolbarPreviousPositionAct)
+        toolbarPreviousPositionAct->setEnabled(hasPrev);
+    if (toolbarNextPositionAct)
+        toolbarNextPositionAct->setEnabled(hasNext);
+    if (toolbarFirstPositionAct)
+        toolbarFirstPositionAct->setEnabled(hasPrev);
+    if (toolbarLastPositionAct)
+        toolbarLastPositionAct->setEnabled(hasNext);
+    if (toFileBeginningAct)
+        toFileBeginningAct->setEnabled(hexEdit && hexEdit->data().size() > 0);
+    if (toFileEndAct)
+        toFileEndAct->setEnabled(hexEdit && hexEdit->data().size() > 0);
+}
+
 void MainWindow::updateHexEditorSettings()
 {
     if (!hexEdit)
         return;
+
+    const qint64 savedCursorPos = hexEdit->cursorPosition();
+    const int savedBytesPerLine = qMax(1, hexEdit->bytesPerLine());
+    const qint64 savedTopByte = static_cast<qint64>(hexEdit->verticalScrollBar()->value()) * savedBytesPerLine;
+    const int savedHorizontal = hexEdit->horizontalScrollBar()->value();
 
     // Apply settings from QSettings to hex editor without reloading file
     QSettings settings;
@@ -1397,8 +1843,11 @@ void MainWindow::updateHexEditorSettings()
     hexEdit->setAsciiArea(settings.value("AsciiArea", true).toBool());
     hexEdit->setHighlighting(settings.value("Highlighting").toBool());
     hexEdit->setHighlightingColor(settings.value("HighlightingColor").value<QColor>());
-    hexEdit->setPointersColor(settings.value("PointersColor").value<QColor>());
     hexEdit->setPointedColor(settings.value("PointedColor").value<QColor>());
+    hexEdit->setPointedFontColor(settings.value("PointedFontColor", QColor(Qt::black)).value<QColor>());
+    hexEdit->setPointerFontColor(settings.value("PointerFontColor", QColor(Qt::black)).value<QColor>());
+    hexEdit->setPointerFrameColor(settings.value("PointerFrameColor", QColor(0x00, 0x00, 0xFF)).value<QColor>());
+    hexEdit->setPointerFrameBackgroundColor(settings.value("PointerFrameBgColor", QColor(0x00, 0xFF, 0x00, 0x80)).value<QColor>());
     hexEdit->setAddressAreaColor(settings.value("AddressAreaColor").value<QColor>());
     hexEdit->setSelectionColor(settings.value("SelectionColor").value<QColor>());
     hexEdit->setFont(settings.value("WidgetFont").value<QFont>());
@@ -1416,6 +1865,14 @@ void MainWindow::updateHexEditorSettings()
     hexEdit->setHexAreaGridColor(settings.value("HexAreaGridColor", QColor(0x99, 0x99, 0x99)).value<QColor>());
     hexEdit->setCursorCharColor(settings.value("CursorCharColor", QColor(0x00, 0x60, 0xFF, 0x80)).value<QColor>());
     hexEdit->setCursorFrameColor(settings.value("CursorFrameColor", QColor(Qt::black)).value<QColor>());
+    hexEdit->setScrollMapPtrBgColor(settings.value("ScrollMapPtrBgColor", QColor(0xd0, 0xd0, 0xd0)).value<QColor>());
+    hexEdit->setScrollMapTargetBgColor(settings.value("ScrollMapTargetBgColor", QColor(0xd0, 0xd0, 0xd0)).value<QColor>());
+
+    const int newBytesPerLine = qMax(1, hexEdit->bytesPerLine());
+    hexEdit->verticalScrollBar()->setValue(static_cast<int>(savedTopByte / newBytesPerLine));
+    hexEdit->horizontalScrollBar()->setValue(savedHorizontal);
+    hexEdit->setCursorPosition(savedCursorPos);
+    hexEdit->viewport()->update();
 
     if (showAddressAreaAct)
         showAddressAreaAct->setChecked(hexEdit->addressArea());
@@ -1486,7 +1943,7 @@ bool MainWindow::maybeSave()
     QMessageBox::StandardButton result = QMessageBox::warning(
         this,
         QString::fromLatin1(AppInfo::Name),
-        tr("The document has been modified.\nDo you want to save your changes?"),
+        tr("File has been modified.\nDo you want to save your changes?"),
         QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
 
     if (result == QMessageBox::Save)
@@ -1502,6 +1959,21 @@ void MainWindow::updateActionStates()
     closeAct->setEnabled(!isUntitled);
     undoAct->setEnabled(hexEdit->canUndo());
     redoAct->setEnabled(hexEdit->canRedo());
+    
+    const bool hasSelection = hexEdit && hexEdit->getRawSelection().size() > 1;
+    const bool dumpEnabled = hasSelection;
+    const bool insertEnabled = true;
+
+    if (scriptMenu)
+        scriptMenu->setEnabled(dumpEnabled || insertEnabled);
+    if (dumpScriptAct)
+        dumpScriptAct->setEnabled(dumpEnabled);
+    if (insertScriptAct)
+        insertScriptAct->setEnabled(insertEnabled);
+    if (toolbarDumpScriptAct)
+        toolbarDumpScriptAct->setEnabled(dumpEnabled);
+    if (toolbarInsertScriptAct)
+        toolbarInsertScriptAct->setEnabled(insertEnabled);
 }
 
 QString MainWindow::strippedName(const QString &fullFileName)
@@ -1668,7 +2140,6 @@ void MainWindow::openRecentTable()
             hexEdit->setTranslationTable(tb);
             tableFilePath = fileName;
             statusBar()->showMessage(tr("Table loaded"), 2000);
-            updateScriptMenuState();
         }
         catch (const std::exception &e)
         {
@@ -1679,9 +2150,35 @@ void MainWindow::openRecentTable()
 
 void MainWindow::updateEndiannes()
 {
-    hexEdit->bigEndian = !hexEdit->bigEndian;
+    // Cycle: Little-endian → Big-endian → Swapped bytes → Little-endian
+    switch (hexEdit->byteOrder) {
+    case ByteOrder::LittleEndian:
+        hexEdit->byteOrder = ByteOrder::BigEndian;
+        break;
+    case ByteOrder::BigEndian:
+        hexEdit->byteOrder = ByteOrder::SwappedBytes;
+        break;
+    case ByteOrder::SwappedBytes:
+    default:
+        hexEdit->byteOrder = ByteOrder::LittleEndian;
+        break;
+    }
 
-    lbEndiannes->setText(hexEdit->bigEndian ? tr("Big-endian") : tr("Little-endian"));
-
+    updateEndiannesLabel();
     setAddress(hexEdit->getCurrentOffset());
+}
+
+void MainWindow::updateEndiannesLabel()
+{
+    switch (hexEdit->byteOrder) {
+    case ByteOrder::BigEndian:
+        lbEndiannes->setText(tr("Big-endian"));
+        break;
+    case ByteOrder::SwappedBytes:
+        lbEndiannes->setText(tr("Swapped"));
+        break;
+    default:
+        lbEndiannes->setText(tr("Little-endian"));
+        break;
+    }
 }

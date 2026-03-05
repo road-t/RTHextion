@@ -1,6 +1,9 @@
 #include "QtWidgets/qpushbutton.h"
+#include <QApplication>
+#include <QCoreApplication>
 #include <QMessageBox>
 #include <QKeyEvent>
+#include <QShowEvent>
 #include <QInputDialog>
 #include <QElapsedTimer>
 #include <QHeaderView>
@@ -53,10 +56,38 @@ PointersDialog::PointersDialog(QHexEdit *hexEdit, QWidget *parent) :
             this, [this](const QItemSelection &, const QItemSelection &)
             { ui->btnDeletePointer->setEnabled(
                   !ui->tvPointers->selectionModel()->selectedRows().isEmpty()); });
+
+    // Timer-based UI drain: the background search thread pushes results to a
+    // mutex-protected buffer; the timer flushes it to the model at ~10 fps so
+    // the event queue is never flooded and the Stop button stays responsive.
+    _uiUpdateTimer = new QTimer(this);
+    _uiUpdateTimer->setInterval(100);
+    connect(_uiUpdateTimer, &QTimer::timeout, this, &PointersDialog::drainPendingResults);
+
+    // When the background future completes, finalize the UI on the main thread.
+    connect(&_futureWatcher, &QFutureWatcher<void>::finished,
+            this, &PointersDialog::onSearchFinished);
 }
 
 PointersDialog::~PointersDialog()
 {
+    // Stop the search cleanly before any members are destroyed.
+    if (searchActive)
+    {
+        cancelRequested.store(true);
+        _futureWatcher.disconnect(); // prevent onSearchFinished from running after destruction
+        searchFuture.waitForFinished();
+        // Drain any queued events the thread might have posted.
+        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents
+                                        | QEventLoop::ExcludeSocketNotifiers);
+    }
+    if (_uiUpdateTimer)
+        _uiUpdateTimer->stop();
+    if (_quickSearchBusyCursor)
+    {
+        QApplication::restoreOverrideCursor();
+        _quickSearchBusyCursor = false;
+    }
     delete ui;
 }
 
@@ -68,6 +99,77 @@ void PointersDialog::refreshFromTable()
 
     ui->tvPointers->viewport()->update();
     ui->tvPointers->resizeColumnsToContents();
+}
+
+void PointersDialog::quickSearch(qint64 clickBytePos)
+{
+    if (searchActive)
+        return;
+
+    // If combo boxes are not yet populated (dialog was never shown), initialize the UI first.
+    if (ui->cbRangeStart->count() == 0)
+    {
+        QShowEvent fakeEv;
+        showEvent(&fakeEv);
+    }
+
+    // Determine the range to use:
+    //  - If there is a selection AND the click was inside it → use the selection.
+    //  - Otherwise → use the clicked byte address as a single-byte range.
+    const qint64 selBegin = _hexEdit->getSelectionBegin();
+    const qint64 selEnd   = _hexEdit->getSelectionEnd();
+    const bool hasSelection = selBegin < selEnd;
+
+    if (hasSelection && clickBytePos >= selBegin && clickBytePos < selEnd)
+    {
+        ui->leRangeBegin->setText(QString::number(selBegin, 16).toUpper());
+        ui->leRangeEnd->setText(QString::number(selEnd,   16).toUpper());
+    }
+    else if (clickBytePos >= 0)
+    {
+        // Single-byte range: begin = clickBytePos, end = clickBytePos + 1
+        ui->leRangeBegin->setText(QString::number(clickBytePos,     16).toUpper());
+        ui->leRangeEnd->setText(QString::number(clickBytePos + 1, 16).toUpper());
+    }
+    // else: leave the fields as they were (e.g. launched without a click)
+
+    validateRangeInputs();
+
+    // Match the editor's current endianness, search the whole file, and skip
+    // text-optimization heuristics — they are irrelevant for a direct address search.
+    switch (_hexEdit->byteOrder) {
+    case ByteOrder::BigEndian:
+        ui->rbBE->setChecked(true);
+        break;
+    case ByteOrder::SwappedBytes:
+        ui->rbSW->setChecked(true);
+        break;
+    default:
+        ui->rbLE->setChecked(true);
+        break;
+    }
+    ui->rbBoth->setChecked(true);           // search pointers in the entire file
+    ui->cbOptimize->setChecked(false);      // no text optimization
+    ui->cbExcludeSelection->setChecked(false);
+
+    _quickSearchMode = true;
+    if (!_quickSearchBusyCursor)
+    {
+        QApplication::setOverrideCursor(Qt::BusyCursor);
+        _quickSearchBusyCursor = true;
+    }
+    on_bbControls_accepted();
+
+    // If the search did not actually start (e.g. invalid range), reset the flag.
+    if (!searchActive)
+    {
+        _quickSearchMode = false;
+        if (_quickSearchBusyCursor)
+        {
+            QApplication::restoreOverrideCursor();
+            _quickSearchBusyCursor = false;
+        }
+    }
 }
 
 qint64 PointersDialog::parseHexField(const QString &text, bool *ok) const
@@ -175,15 +277,16 @@ void PointersDialog::showEvent(QShowEvent *ev)
     if (selBegin >= selEnd)
     {
         selBegin = _hexEdit->getCurrentOffset();
-        selEnd = _hexEdit->data().size();
+        selEnd = selBegin + 1;
     }
 
     ui->leRangeBegin->setText(QString::number(selBegin, 16).toUpper());
     ui->leRangeEnd->setText(QString::number(selEnd, 16).toUpper());
     validateRangeInputs();
 
-    ui->rbLE->setChecked(!_hexEdit->bigEndian);
-    ui->rbBE->setChecked(_hexEdit->bigEndian);
+    ui->rbLE->setChecked(_hexEdit->byteOrder == ByteOrder::LittleEndian);
+    ui->rbBE->setChecked(_hexEdit->byteOrder == ByteOrder::BigEndian);
+    ui->rbSW->setChecked(_hexEdit->byteOrder == ByteOrder::SwappedBytes);
     ui->rb4Byte->setChecked(true);
 
     ui->progressBar->setValue(0);
@@ -227,6 +330,14 @@ void PointersDialog::on_bbControls_accepted()
     // Initialize UI for search
     cancelRequested.store(false);
     searchActive = true;
+    _pendingFound.store(0);
+    _pendingPercent.store(0);
+    _searchWasCancelled.store(false);
+    _searchElapsedMs.store(0);
+    {
+        QMutexLocker lock(&_pendingMutex);
+        _pendingResults.clear();
+    }
     ui->progressBar->setValue(0);
     ui->progressBar->setVisible(true);
     ui->btnStop->setEnabled(true);
@@ -239,7 +350,9 @@ void PointersDialog::on_bbControls_accepted()
     const char firstPrintable = ui->cbRangeStart->currentData().toChar().toLatin1();
     const char lastPrintable = ui->cbRangeEnd->currentData().toChar().toLatin1();
     auto stopChar = ui->cbStopChar->isEnabled() ? ui->cbStopChar->currentData().toChar().toLatin1() : 0;
-    const bool bigEndian = ui->rbBE->isChecked();
+    const ByteOrder searchOrder = ui->rbBE->isChecked() ? ByteOrder::BigEndian
+                                : ui->rbSW->isChecked() ? ByteOrder::SwappedBytes
+                                                        : ByteOrder::LittleEndian;
     const bool excludeSelection = ui->cbExcludeSelection->isChecked();
     const QByteArray fileData = _hexEdit->data();
     const qint64 fileSize = fileData.size();
@@ -247,14 +360,18 @@ void PointersDialog::on_bbControls_accepted()
     selBegin = qBound(static_cast<qint64>(0), selBegin, fileSize);
     selEnd = qBound(static_cast<qint64>(0), selEnd, fileSize);
 
-    if (selBegin >= selEnd)
+    // Treat begin==end as a single-byte inclusive range; only fall back to
+    // the whole file when begin is strictly greater than end (invalid input).
+    if (selBegin == selEnd)
+        selEnd = qMin(selBegin + 1, fileSize);
+    else if (selBegin > selEnd)
     {
         selBegin = 0;
         selEnd = fileSize;
     }
 
     searchFuture = QtConcurrent::run([=]()
-                                     {
+    {
         struct SearchRange
         {
             qint64 startOffset = 0;
@@ -299,7 +416,8 @@ void PointersDialog::on_bbControls_accepted()
 
         if (ranges.isEmpty())
         {
-            QMetaObject::invokeMethod(this, [=]() { finishSearchUi(false, 0, 0); }, Qt::QueuedConnection);
+            _searchWasCancelled.store(false);
+            _searchElapsedMs.store(0);
             return;
         }
 
@@ -329,7 +447,8 @@ void PointersDialog::on_bbControls_accepted()
 
         if (totalIterations <= 0)
         {
-            QMetaObject::invokeMethod(this, [=]() { finishSearchUi(false, 0, 0); }, Qt::QueuedConnection);
+            _searchWasCancelled.store(false);
+            _searchElapsedMs.store(0);
             return;
         }
 
@@ -341,15 +460,17 @@ void PointersDialog::on_bbControls_accepted()
         QVector<QPair<qint64, qint64>> batch;
         batch.reserve(512);
 
+        // Push accumulated batch to the shared buffer (no UI calls from this thread).
         auto flushBatch = [&](int percent)
         {
-            QVector<QPair<qint64, qint64>> out;
-            out.swap(batch);
-            QMetaObject::invokeMethod(this, [=]() {
-                if (!out.isEmpty())
-                    plModel->addPointersBatch(out);
-                updateProgress(percent, static_cast<int>(found));
-            }, Qt::QueuedConnection);
+            if (!batch.isEmpty())
+            {
+                QMutexLocker lock(&_pendingMutex);
+                _pendingResults.append(batch);
+                batch.clear();
+            }
+            _pendingFound.store(found);
+            _pendingPercent.store(percent);
         };
 
         for (const auto &range : ranges)
@@ -371,28 +492,7 @@ void PointersDialog::on_bbControls_accepted()
 
                 quint64 value = 0;
                 const uchar *ptr = reinterpret_cast<const uchar *>(buf + j);
-
-                if (pointerSize == 2)
-                {
-                    const quint16 val16 = bigEndian ? qFromBigEndian<quint16>(ptr) : qFromLittleEndian<quint16>(ptr);
-                    value = static_cast<quint64>(val16);
-                }
-                else if (pointerSize == 3)
-                {
-                    if (bigEndian)
-                    {
-                        value = (static_cast<quint64>(ptr[0]) << 16) | (static_cast<quint64>(ptr[1]) << 8) | static_cast<quint64>(ptr[2]);
-                    }
-                    else
-                    {
-                        value = static_cast<quint64>(ptr[0]) | (static_cast<quint64>(ptr[1]) << 8) | (static_cast<quint64>(ptr[2]) << 16);
-                    }
-                }
-                else // 4 bytes
-                {
-                    const quint32 val32 = bigEndian ? qFromBigEndian<quint32>(ptr) : qFromLittleEndian<quint32>(ptr);
-                    value = static_cast<quint64>(val32);
-                }
+                value = decodePointer(ptr, pointerSize, searchOrder);
 
                 if (isCandidateOffset(value))
                 {
@@ -418,11 +518,60 @@ void PointersDialog::on_bbControls_accepted()
             flushBatch(percent);
         }
 
-        const bool cancelled = cancelRequested.load();
-        const qint64 elapsed = timer.elapsed();
-        QMetaObject::invokeMethod(this, [=]() {
-            finishSearchUi(cancelled, static_cast<int>(found), elapsed);
-        }, Qt::QueuedConnection); });
+        // Store final state for onSearchFinished() to read on the main thread.
+        _searchWasCancelled.store(cancelRequested.load());
+        _searchElapsedMs.store(timer.elapsed());
+        _pendingFound.store(found);
+        _pendingPercent.store(100);
+    });
+
+    _futureWatcher.setFuture(searchFuture);
+    _uiUpdateTimer->start();
+}
+
+void PointersDialog::drainPendingResults()
+{
+    // Cap the amount of work done per timer tick so the main thread stays
+    // responsive and the Stop button can be pressed even during large searches.
+    constexpr int kMaxPerDrain = 4096;
+
+    QVector<QPair<qint64, qint64>> results;
+    bool bufferEmpty = false;
+    {
+        QMutexLocker lock(&_pendingMutex);
+        if (_pendingResults.size() <= kMaxPerDrain)
+        {
+            results.swap(_pendingResults);
+            bufferEmpty = true;
+        }
+        else
+        {
+            results = _pendingResults.mid(0, kMaxPerDrain);
+            _pendingResults.remove(0, kMaxPerDrain);
+        }
+    }
+    if (!results.isEmpty())
+        plModel->addPointersBatch(results);
+
+    updateProgress(_pendingPercent.load(), static_cast<int>(_pendingFound.load()));
+
+    // Finalize once the background thread has completed AND the buffer is empty.
+    if (_searchFinishPending && bufferEmpty)
+    {
+        _uiUpdateTimer->stop();
+        _searchFinishPending = false;
+        finishSearchUi(_searchWasCancelled.load(),
+                       static_cast<int>(_pendingFound.load()),
+                       _searchElapsedMs.load());
+    }
+}
+
+void PointersDialog::onSearchFinished()
+{
+    // Signal that the background thread is done. drainPendingResults() will
+    // continue ticking via the timer, consuming remaining buffered results in
+    // small chunks, and will call finishSearchUi() once the buffer is empty.
+    _searchFinishPending = true;
 }
 
 void PointersDialog::updateProgress(int percent, int found)
@@ -441,15 +590,28 @@ void PointersDialog::on_btnStop_clicked()
 void PointersDialog::finishSearchUi(bool cancelled, int found, qint64 elapsedMs)
 {
     searchActive = false;
+    if (_quickSearchBusyCursor)
+    {
+        QApplication::restoreOverrideCursor();
+        _quickSearchBusyCursor = false;
+    }
     updateProgress(100, found);
     ui->progressBar->setVisible(false);
     ui->btnStop->setEnabled(false);
     ui->bbControls->button(QDialogButtonBox::Ok)->setText(tr("Find"));
     ui->bbControls->button(QDialogButtonBox::Ok)->setEnabled(true);
     ui->bbControls->button(QDialogButtonBox::Close)->setEnabled(true);
-    ui->tvPointers->resizeColumnsToContents();
+    if (plModel->rowCount() <= 10000)
+        ui->tvPointers->resizeColumnsToContents();
     ui->tvPointers->setSortingEnabled(true);
     ui->btnCleanAll->setEnabled(!plModel->empty());
+
+    if (_quickSearchMode)
+    {
+        _quickSearchMode = false;
+        emit searchCompleted(found);
+        return;
+    }
 
     if (cancelled)
     {
@@ -551,7 +713,7 @@ void PointersDialog::on_btnAddPointer_clicked()
         return;
     }
 
-    plModel->addPointer(pointerOffset, pointedOffset);
+    _hexEdit->addPointerUndoable(pointerOffset, pointedOffset);
     ui->tvPointers->resizeColumnsToContents();
     ui->btnCleanAll->setEnabled(!plModel->empty());
 }
@@ -574,7 +736,7 @@ void PointersDialog::on_btnDeletePointer_clicked()
         pointersToDelete.append(pointer);
     }
 
-    plModel->dropPointersBatch(pointersToDelete);
+    _hexEdit->removePointersUndoable(pointersToDelete);
     ui->btnCleanAll->setEnabled(!plModel->empty());
 }
 
