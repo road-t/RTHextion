@@ -30,11 +30,12 @@ int main(int argc, char *argv[])
     app.setWindowIcon(QIcon(":/images/tj.png"));
 
     QSettings settings(AppInfo::Name, AppInfo::Name);
-    QString locale = settings.value("Language", QLocale::system().name()).toString();
+    QString locale = settings.value("Language", QStringLiteral("en")).toString();
     const QString languageShort = locale.left(2);
 
     LangTranslator *translator = new LangTranslator(&app);
     QStringList candidates;
+    candidates << locale;
     if (!languageShort.isEmpty() && languageShort != locale)
         candidates << languageShort;
 

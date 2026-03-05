@@ -2,6 +2,9 @@
 #include "ui_InsertScriptDialog.h"
 #include "Datas.h"
 #include <QEvent>
+#include <QFile>
+#include <QMessageBox>
+#include <algorithm>
 
 InsertScriptDialog::InsertScriptDialog(QHexEdit *hexEdit, QWidget *parent) :
     QDialog(parent),
@@ -21,9 +24,6 @@ void InsertScriptDialog::showEvent(QShowEvent *ev)
 
     ui->cbUseTable->setDisabled(!tb);
     ui->cbUseTable->setChecked(tb);
-
-    bigEndian = hexEdit->bigEndian;
-    bigEndian ? ui->rbBigEndian->setChecked(true) : ui->rbLittleEndian->setChecked(true);
 
     updateText();
 }
@@ -45,6 +45,31 @@ void InsertScriptDialog::updateText()
 
 void InsertScriptDialog::on_bbControls_clicked(QAbstractButton *button)
 {
+    if (ui->bbControls->standardButton(button) == QDialogButtonBox::Open)
+    {
+        QSettings settings;
+        const QString defaultDir = settings.value("Paths/LastDumpDir", QDir::homePath()).toString();
+        const QString fileName = QFileDialog::getOpenFileName(this, tr("Open script"), defaultDir, tr("Text files (*.txt *.script *.scr);;All files (*)"));
+        if (fileName.isEmpty())
+            return;
+
+        QFile file(fileName);
+        if (!file.open(QFile::ReadOnly | QFile::Text))
+        {
+            QMessageBox::warning(this, tr("Open script"),
+                                 tr("Cannot read file %1:\n%2.")
+                                 .arg(fileName)
+                                 .arg(file.errorString()));
+            return;
+        }
+
+        ui->pteScript->setPlainText(QString::fromUtf8(file.readAll()));
+        const QString dirPath = QFileInfo(fileName).absolutePath();
+        if (!dirPath.isEmpty())
+            settings.setValue("Paths/LastDumpDir", dirPath);
+        return;
+    }
+
     if (ui->bbControls->buttonRole(button) == QDialogButtonBox::ButtonRole::AcceptRole)
     {
         /* regex to match dumps like:
@@ -95,14 +120,23 @@ void InsertScriptDialog::on_bbControls_clicked(QAbstractButton *button)
                      {
                          auto ptrOffset = i.toUInt(nullptr, 16);
 
-                         Datas newPtr;
+                         QByteArray data(4, 0);
+                         const quint32 pointerValue = static_cast<quint32>(offset);
+                         uchar *raw = reinterpret_cast<uchar *>(data.data());
 
-                         if (bigEndian)
-                            newPtr.beDword = offset;
+                         if (hexEdit->byteOrder == ByteOrder::BigEndian)
+                         {
+                             qToBigEndian<quint32>(pointerValue, raw);
+                         }
                          else
-                             newPtr.leDword = offset;
-
-                         auto data = QByteArray(newPtr.chr, 4);
+                         {
+                             qToLittleEndian<quint32>(pointerValue, raw);
+                             if (hexEdit->byteOrder == ByteOrder::SwappedBytes)
+                             {
+                                 std::swap(data[0], data[1]);
+                                 std::swap(data[2], data[3]);
+                             }
+                         }
 
                          hexEdit->replace(ptrOffset, 4, data); // TODO: store offset size in dump and use endiannes
                      }
@@ -118,19 +152,7 @@ void InsertScriptDialog::on_bbControls_clicked(QAbstractButton *button)
 
 void InsertScriptDialog::on_cbUpdatePointers_stateChanged(int arg1)
 {
-    ui->rbLayout->setEnabled(arg1);
-}
-
-
-void InsertScriptDialog::on_rbLittleEndian_toggled(bool checked)
-{
-    bigEndian = !checked;
-}
-
-
-void InsertScriptDialog::on_rbBigEndian_toggled(bool checked)
-{
-    bigEndian = checked;
+    Q_UNUSED(arg1);
 }
 
 void InsertScriptDialog::changeEvent(QEvent *event)

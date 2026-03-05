@@ -11,6 +11,29 @@
 namespace
 {
     const char *kLastDumpDirKey = "Paths/LastDumpDir";
+
+    bool hasIncomingPointersInSelection(QHexEdit *hexEdit)
+    {
+        if (!hexEdit)
+            return false;
+
+        const QByteArray selection = hexEdit->getRawSelection();
+        if (selection.size() <= 1)
+            return false;
+
+        const qint64 begin = hexEdit->getSelectionBegin();
+        PointerListModel *model = hexEdit->pointers();
+        if (!model)
+            return false;
+
+        for (int i = 0; i < selection.size(); ++i)
+        {
+            if (model->hasOffset(begin + i))
+                return true;
+        }
+
+        return false;
+    }
 }
 
 DumpScriptDialog::DumpScriptDialog(QHexEdit *hexEdit, QWidget *parent) :
@@ -32,6 +55,13 @@ void DumpScriptDialog::showEvent(QShowEvent *ev)
     ui->cbUseTable->setDisabled(!tb);
     ui->cbUseTable->setChecked(tb);
 
+    const bool canUsePointers = hasIncomingPointersInSelection(hexEdit);
+    ui->cbUsePointers->setEnabled(canUsePointers);
+    ui->cbUsePointers->setChecked(canUsePointers);
+    ui->cbSplitByPointers->setEnabled(canUsePointers && ui->cbUsePointers->isChecked());
+    if (!canUsePointers)
+        ui->cbSplitByPointers->setChecked(false);
+
     updateText();
     populateStopCharCmb();
 }
@@ -50,6 +80,7 @@ void DumpScriptDialog::on_cbSplitByCharacter_stateChanged(int arg1)
 void DumpScriptDialog::updateText()
 {
     auto useTable = (tb && ui->cbUseTable->isChecked());
+    const bool usePointers = ui->cbUsePointers->isChecked();
     auto data = hexEdit->getRawSelection();
 
     QChar stopChar;
@@ -69,7 +100,7 @@ void DumpScriptDialog::updateText()
     {
         auto offset = i + selectionOffset;
 
-        if (hexEdit->pointers()->hasOffset(offset))
+        if (usePointers && hexEdit->pointers()->hasOffset(offset))
         {
             // split by pointers if requested
             if (ui->cbSplitByPointers->isChecked() && i)
@@ -116,6 +147,15 @@ void DumpScriptDialog::on_cbUseTable_stateChanged(int arg1)
 
     updateText();
     populateStopCharCmb();
+}
+
+void DumpScriptDialog::on_cbUsePointers_stateChanged(int arg1)
+{
+    ui->cbSplitByPointers->setEnabled(arg1 != 0);
+    if (!arg1)
+        ui->cbSplitByPointers->setChecked(false);
+
+    updateText();
 }
 
 void DumpScriptDialog::populateStopCharCmb()
@@ -169,10 +209,16 @@ void DumpScriptDialog::on_buttonBox_accepted()
 {
     QSettings settings;
     const QString defaultDir = settings.value(kLastDumpDirKey, QDir::homePath()).toString();
-    QString fileName = QFileDialog::getSaveFileName(this, tr("Save to readable file"), defaultDir);
+    QString fileName = QFileDialog::getSaveFileName(this,
+                                                    tr("Save to readable file"),
+                                                    defaultDir,
+                                                    tr("Text files (*.txt);;All files (*)"));
 
     if (!fileName.isEmpty())
     {
+        if (QFileInfo(fileName).suffix().isEmpty())
+            fileName += ".txt";
+
         QFile file(fileName);
 
         if (!file.open(QFile::WriteOnly | QFile::Text)) {

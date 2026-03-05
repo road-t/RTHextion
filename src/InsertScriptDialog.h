@@ -3,6 +3,7 @@
 
 #include <QDialog>
 #include <QAbstractButton>
+#include <QFileDialog>
 
 #include "qhexedit/qhexedit.h"
 #include "QtWidgets/qabstractbutton.h"
@@ -32,15 +33,10 @@ private slots:
 
     void on_cbUpdatePointers_stateChanged(int arg1);
 
-    void on_rbLittleEndian_toggled(bool checked);
-
-    void on_rbBigEndian_toggled(bool checked);
-
 private:
     Ui::InsertScriptDialog *ui;
     QHexEdit *hexEdit;
     TranslationTable* tb;
-    bool bigEndian = false;
 
 };
 

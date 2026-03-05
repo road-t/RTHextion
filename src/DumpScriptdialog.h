@@ -30,6 +30,8 @@ private slots:
 
     void on_cmbSplitCharacter_currentIndexChanged(int index);
 
+    void on_cbUsePointers_stateChanged(int arg1);
+
     void on_cbSplitByPointers_stateChanged(int arg1);
 
     void on_buttonBox_accepted();

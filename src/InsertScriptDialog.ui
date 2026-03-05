@@ -39,24 +39,6 @@
        </property>
       </widget>
      </item>
-     <item>
-      <layout class="QVBoxLayout" name="rbLayout">
-       <item>
-        <widget class="QRadioButton" name="rbLittleEndian">
-         <property name="text">
-          <string>Little-endian</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QRadioButton" name="rbBigEndian">
-         <property name="text">
-          <string>Big-endian</string>
-         </property>
-        </widget>
-       </item>
-      </layout>
-     </item>
     </layout>
    </item>
    <item row="10" column="0">
