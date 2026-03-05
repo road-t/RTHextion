@@ -82,7 +82,7 @@ void TableEditDialog::on_pbAdd_clicked()
 
     bool ok;
     QInputDialog hexDialog(this);
-    hexDialog.setWindowTitle(tr("Add Entry"));
+    hexDialog.setWindowTitle(tr("Add entry"));
     hexDialog.setLabelText(tr("Enter hex byte value (00-FF):"));
     hexDialog.setInputMode(QInputDialog::TextInput);
     hexDialog.setTextValue(QString::number(suggestedByte, 16).rightJustified(2, '0').toUpper());
@@ -112,7 +112,7 @@ void TableEditDialog::on_pbAdd_clicked()
     }
 
     // Now prompt for the translation value
-    QString valueStr = QInputDialog::getText(this, tr("Add Entry"),
+    QString valueStr = QInputDialog::getText(this, tr("Add entry"),
                                              tr("Enter translation text for byte 0x%1:").arg(QString::number(byteVal, 16).toUpper().rightJustified(2, '0')),
                                              QLineEdit::Normal,
                                              QString(),

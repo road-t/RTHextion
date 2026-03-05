@@ -63,8 +63,7 @@ void SemiAutoTableDialog::onFind()
     if (pos < 0)
     {
         QMessageBox::information(this, tr("Not found"),
-            tr("No relative match found for \"%1\".\n"
-               "Try a different string, possibly shorter.").arg(text));
+            tr("No relative match found for \"%1\".\nTry a different string, possibly shorter.").arg(text));
         return;
     }
 

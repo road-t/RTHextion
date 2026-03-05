@@ -44,28 +44,7 @@ OptionsDialog::OptionsDialog(QWidget *parent) : QDialog(parent), ui(new Ui::Opti
     ui->setupUi(this);
     m_suppressUpdate = true;
 
-    {
-        auto topGroupsContainer = new QWidget(this);
-        auto *topGroupsLayout = new QHBoxLayout(topGroupsContainer);
-        topGroupsLayout->setContentsMargins(0, 0, 0, 0);
-        topGroupsLayout->setSpacing(12);
-
-        auto *leftColumn = new QVBoxLayout();
-        auto *rightColumn = new QVBoxLayout();
-
-        leftColumn->addWidget(ui->gbAddressArea);
-        leftColumn->addWidget(ui->gbHexArea);
-        leftColumn->addWidget(ui->gbAsciiArea);
-
-        rightColumn->addWidget(ui->gbColors);
-        rightColumn->addWidget(ui->gbAuxiliary);
-
-        topGroupsLayout->addLayout(leftColumn, 1);
-        topGroupsLayout->addLayout(rightColumn, 1);
-
-        ui->verticalLayout->insertWidget(0, topGroupsContainer);
-        resize(qMax(width(), 860), 620);
-    }
+    resize(qMax(width(), 860), 620);
 
     // Connect signals for area enable/disable logic
     connect(ui->cbAddressArea, QOverload<int>::of(&QCheckBox::stateChanged),
@@ -80,6 +59,7 @@ OptionsDialog::OptionsDialog(QWidget *parent) : QDialog(parent), ui(new Ui::Opti
     connect(ui->cbDynamicSize, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
     connect(ui->cbShowHexGrid, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
     connect(ui->cbAutoLoadRecentFile, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
+    connect(ui->cbDetectEndianness, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
     connect(ui->sbAddressAreaWidth, QOverload<int>::of(&QSpinBox::valueChanged), this, &OptionsDialog::on_spinBoxValueChanged);
     connect(ui->sbBytesPerLine, QOverload<int>::of(&QSpinBox::valueChanged), this, &OptionsDialog::on_spinBoxValueChanged);
     connect(ui->leNonPrintableNoTableChar, &QLineEdit::textChanged, this, [this]()
@@ -175,17 +155,23 @@ void OptionsDialog::saveCurrentSettings()
     m_originalSettings.addressFontColor = ui->lbAddressFontColor->palette().color(ui->lbAddressFontColor->backgroundRole());
     m_originalSettings.asciiAreaColor = ui->lbAsciiAreaColor->palette().color(ui->lbAsciiAreaColor->backgroundRole());
     m_originalSettings.asciiFontColor = ui->lbAsciiFontColor->palette().color(ui->lbAsciiFontColor->backgroundRole());
-    m_originalSettings.pointerColor = ui->lbPointerColor->palette().color(ui->lbPointerColor->backgroundRole());
     m_originalSettings.pointedColor = ui->lbPointedColor->palette().color(ui->lbPointedColor->backgroundRole());
+    m_originalSettings.pointedFontColor = ui->lbPointedFontColor->palette().color(ui->lbPointedFontColor->backgroundRole());
+    m_originalSettings.pointerFontColor = ui->lbPointerFontColor->palette().color(ui->lbPointerFontColor->backgroundRole());
+    m_originalSettings.pointerFrameColor = ui->lbPointerFrameColor->palette().color(ui->lbPointerFrameColor->backgroundRole());
+    m_originalSettings.pointerFrameBgColor = ui->lbPointerFrameBgColor->palette().color(ui->lbPointerFrameBgColor->backgroundRole());
     m_originalSettings.selectionColor = ui->lbSelectionColor->palette().color(ui->lbSelectionColor->backgroundRole());
     m_originalSettings.hexFontColor = ui->lbHexFontColor->palette().color(ui->lbHexFontColor->backgroundRole());
     m_originalSettings.hexAreaBgColor = ui->lbHexAreaBackground->palette().color(ui->lbHexAreaBackground->backgroundRole());
     m_originalSettings.hexAreaGridColor = ui->lbHexAreaGrid->palette().color(ui->lbHexAreaGrid->backgroundRole());
     m_originalSettings.cursorCharColor = ui->lbCursorCharColor->palette().color(ui->lbCursorCharColor->backgroundRole());
     m_originalSettings.cursorFrameColor = ui->lbCursorFrameColor->palette().color(ui->lbCursorFrameColor->backgroundRole());
+    m_originalSettings.scrollMapPtrBgColor = ui->lbScrollMapPtrBgColor->palette().color(ui->lbScrollMapPtrBgColor->backgroundRole());
+    m_originalSettings.scrollMapTargetBgColor = ui->lbScrollMapTargetBgColor->palette().color(ui->lbScrollMapTargetBgColor->backgroundRole());
     m_originalSettings.widgetFont = ui->pbWidgetFont->font();
     m_originalSettings.nonPrintableNoTableChar = sanitizeSingleChar(ui->leNonPrintableNoTableChar->text(), kDefaultNonPrintableNoTableChar);
     m_originalSettings.notInTableChar = sanitizeSingleChar(ui->leNotInTableChar->text(), kDefaultNotInTableChar);
+    m_originalSettings.detectEndianness = ui->cbDetectEndianness->isChecked();
 }
 
 void OptionsDialog::restoreSettings()
@@ -204,18 +190,24 @@ void OptionsDialog::restoreSettings()
     setColor(ui->lbAddressFontColor, m_originalSettings.addressFontColor);
     setColor(ui->lbAsciiAreaColor, m_originalSettings.asciiAreaColor);
     setColor(ui->lbAsciiFontColor, m_originalSettings.asciiFontColor);
-    setColor(ui->lbPointerColor, m_originalSettings.pointerColor);
     setColor(ui->lbPointedColor, m_originalSettings.pointedColor);
+    setColor(ui->lbPointedFontColor, m_originalSettings.pointedFontColor);
+    setColor(ui->lbPointerFontColor, m_originalSettings.pointerFontColor);
+    setColor(ui->lbPointerFrameColor, m_originalSettings.pointerFrameColor);
+    setColor(ui->lbPointerFrameBgColor, m_originalSettings.pointerFrameBgColor);
     setColor(ui->lbSelectionColor, m_originalSettings.selectionColor);
     setColor(ui->lbHexFontColor, m_originalSettings.hexFontColor);
     setColor(ui->lbHexAreaBackground, m_originalSettings.hexAreaBgColor);
     setColor(ui->lbHexAreaGrid, m_originalSettings.hexAreaGridColor);
     setColor(ui->lbCursorCharColor, m_originalSettings.cursorCharColor);
     setColor(ui->lbCursorFrameColor, m_originalSettings.cursorFrameColor);
+    setColor(ui->lbScrollMapPtrBgColor, m_originalSettings.scrollMapPtrBgColor);
+    setColor(ui->lbScrollMapTargetBgColor, m_originalSettings.scrollMapTargetBgColor);
     ui->pbWidgetFont->setFont(m_originalSettings.widgetFont);
     updateFontButtonText(m_originalSettings.widgetFont);
     ui->leNonPrintableNoTableChar->setText(sanitizeSingleChar(m_originalSettings.nonPrintableNoTableChar, kDefaultNonPrintableNoTableChar));
     ui->leNotInTableChar->setText(sanitizeSingleChar(m_originalSettings.notInTableChar, kDefaultNotInTableChar));
+    ui->cbDetectEndianness->setChecked(m_originalSettings.detectEndianness);
     m_suppressUpdate = false;
     updateSettings(); // Apply restored settings
 }
@@ -250,11 +242,15 @@ void OptionsDialog::readSettings()
     ui->cbDynamicSize->setChecked(settings.value("Autosize", true).toBool());
     ui->cbShowHexGrid->setChecked(settings.value("ShowHexGrid", true).toBool());
     ui->cbAutoLoadRecentFile->setChecked(settings.value("AutoLoadRecentFile", true).toBool());
+    ui->cbDetectEndianness->setChecked(settings.value("DetectEndianness", true).toBool());
 
     setColor(ui->lbHighlightingColor, settings.value("HighlightingColor", QColor(0xff, 0xff, 0x99, 0xff)).value<QColor>());
     setColor(ui->lbAddressAreaColor, settings.value("AddressAreaColor", this->palette().alternateBase().color()).value<QColor>());
-    setColor(ui->lbPointerColor, settings.value("PointerColor", QColor(0xa0, 0xc0, 0x00, 0xff)).value<QColor>());
     setColor(ui->lbPointedColor, settings.value("PointedColor", QColor(0xc0, 0x80, 0x00, 0xff)).value<QColor>());
+    setColor(ui->lbPointedFontColor, settings.value("PointedFontColor", QColor(Qt::black)).value<QColor>());
+    setColor(ui->lbPointerFontColor, settings.value("PointerFontColor", QColor(Qt::black)).value<QColor>());
+    setColor(ui->lbPointerFrameColor, settings.value("PointerFrameColor", QColor(0x00, 0x00, 0xFF)).value<QColor>());
+    setColor(ui->lbPointerFrameBgColor, settings.value("PointerFrameBgColor", QColor(0x00, 0xFF, 0x00, 0x80)).value<QColor>());
     setColor(ui->lbSelectionColor, settings.value("SelectionColor", this->palette().highlight().color()).value<QColor>());
     setColor(ui->lbAddressFontColor, settings.value("AddressFontColor", QPalette::WindowText).value<QColor>());
     setColor(ui->lbAsciiAreaColor, settings.value("AsciiAreaColor", this->palette().alternateBase().color()).value<QColor>());
@@ -264,6 +260,8 @@ void OptionsDialog::readSettings()
     setColor(ui->lbHexAreaGrid, settings.value("HexAreaGridColor", QColor(0x99, 0x99, 0x99)).value<QColor>());
     setColor(ui->lbCursorCharColor, settings.value("CursorCharColor", QColor(0x00, 0x60, 0xFF, 0x80)).value<QColor>());
     setColor(ui->lbCursorFrameColor, settings.value("CursorFrameColor", QColor(Qt::black)).value<QColor>());
+    setColor(ui->lbScrollMapPtrBgColor, settings.value("ScrollMapPtrBgColor", QColor(0xd0, 0xd0, 0xd0)).value<QColor>());
+    setColor(ui->lbScrollMapTargetBgColor, settings.value("ScrollMapTargetBgColor", QColor(0xd0, 0xd0, 0xd0)).value<QColor>());
 
 #ifdef Q_OS_WIN32
     QFont defaultFont("Courier", 14);
@@ -291,8 +289,11 @@ void OptionsDialog::writeSettings()
 
     settings.setValue("HighlightingColor", ui->lbHighlightingColor->palette().color(ui->lbHighlightingColor->backgroundRole()));
     settings.setValue("AddressAreaColor", ui->lbAddressAreaColor->palette().color(ui->lbAddressAreaColor->backgroundRole()));
-    settings.setValue("PointersColor", ui->lbPointerColor->palette().color(ui->lbPointerColor->backgroundRole()));
     settings.setValue("PointedColor", ui->lbPointedColor->palette().color(ui->lbPointedColor->backgroundRole()));
+    settings.setValue("PointedFontColor", ui->lbPointedFontColor->palette().color(ui->lbPointedFontColor->backgroundRole()));
+    settings.setValue("PointerFontColor", ui->lbPointerFontColor->palette().color(ui->lbPointerFontColor->backgroundRole()));
+    settings.setValue("PointerFrameColor", ui->lbPointerFrameColor->palette().color(ui->lbPointerFrameColor->backgroundRole()));
+    settings.setValue("PointerFrameBgColor", ui->lbPointerFrameBgColor->palette().color(ui->lbPointerFrameBgColor->backgroundRole()));
     settings.setValue("SelectionColor", ui->lbSelectionColor->palette().color(ui->lbSelectionColor->backgroundRole()));
     settings.setValue("AddressFontColor", ui->lbAddressFontColor->palette().color(ui->lbAddressFontColor->backgroundRole()));
     settings.setValue("AsciiAreaColor", ui->lbAsciiAreaColor->palette().color(ui->lbAsciiAreaColor->backgroundRole()));
@@ -302,9 +303,13 @@ void OptionsDialog::writeSettings()
     settings.setValue("HexAreaGridColor", ui->lbHexAreaGrid->palette().color(ui->lbHexAreaGrid->backgroundRole()));
     settings.setValue("CursorCharColor", ui->lbCursorCharColor->palette().color(ui->lbCursorCharColor->backgroundRole()));
     settings.setValue("CursorFrameColor", ui->lbCursorFrameColor->palette().color(ui->lbCursorFrameColor->backgroundRole()));
+    settings.setValue("ScrollMapPtrBgColor", ui->lbScrollMapPtrBgColor->palette().color(ui->lbScrollMapPtrBgColor->backgroundRole()));
+    settings.setValue("ScrollMapTargetBgColor", ui->lbScrollMapTargetBgColor->palette().color(ui->lbScrollMapTargetBgColor->backgroundRole()));
     settings.setValue("WidgetFont", ui->pbWidgetFont->font());
     settings.setValue("NonPrintableNoTableChar", sanitizeSingleChar(ui->leNonPrintableNoTableChar->text(), kDefaultNonPrintableNoTableChar));
     settings.setValue("NotInTableChar", sanitizeSingleChar(ui->leNotInTableChar->text(), kDefaultNotInTableChar));
+
+    settings.setValue("DetectEndianness", ui->cbDetectEndianness->isChecked());
 
     settings.setValue("AddressAreaWidth", ui->sbAddressAreaWidth->value() * 2);
     settings.setValue("BytesPerLine", ui->sbBytesPerLine->value());
@@ -412,17 +417,6 @@ void OptionsDialog::on_pbWidgetFont_clicked()
     QWidget::show();
 }
 
-void OptionsDialog::on_pbPointerColor_clicked()
-{
-    QColor color = QColorDialog::getColor(currentSwatchColor(ui->lbPointerColor), this);
-
-    if (color.isValid())
-    {
-        setColor(ui->lbPointerColor, color);
-        updateSettings();
-    }
-}
-
 void OptionsDialog::on_pbPointedColor_clicked()
 {
     QColor color = QColorDialog::getColor(currentSwatchColor(ui->lbPointedColor), this);
@@ -430,6 +424,50 @@ void OptionsDialog::on_pbPointedColor_clicked()
     if (color.isValid())
     {
         setColor(ui->lbPointedColor, color);
+        updateSettings();
+    }
+}
+
+void OptionsDialog::on_pbPointedFontColor_clicked()
+{
+    QColor color = QColorDialog::getColor(currentSwatchColor(ui->lbPointedFontColor), this);
+
+    if (color.isValid())
+    {
+        setColor(ui->lbPointedFontColor, color);
+        updateSettings();
+    }
+}
+
+void OptionsDialog::on_pbPointerFontColor_clicked()
+{
+    QColor color = QColorDialog::getColor(currentSwatchColor(ui->lbPointerFontColor), this);
+
+    if (color.isValid())
+    {
+        setColor(ui->lbPointerFontColor, color);
+        updateSettings();
+    }
+}
+
+void OptionsDialog::on_pbPointerFrameColor_clicked()
+{
+    QColor color = QColorDialog::getColor(currentSwatchColor(ui->lbPointerFrameColor), this);
+
+    if (color.isValid())
+    {
+        setColor(ui->lbPointerFrameColor, color);
+        updateSettings();
+    }
+}
+
+void OptionsDialog::on_pbPointerFrameBgColor_clicked()
+{
+    QColor color = QColorDialog::getColor(currentSwatchColor(ui->lbPointerFrameBgColor), this, QString(), QColorDialog::ShowAlphaChannel);
+
+    if (color.isValid())
+    {
+        setColor(ui->lbPointerFrameBgColor, color);
         updateSettings();
     }
 }
@@ -458,6 +496,28 @@ void OptionsDialog::on_pbHexAreaGrid_clicked()
     if (color.isValid())
     {
         setColor(ui->lbHexAreaGrid, color);
+        updateSettings();
+    }
+}
+
+void OptionsDialog::on_pbScrollMapPtrBgColor_clicked()
+{
+    QColor color = QColorDialog::getColor(currentSwatchColor(ui->lbScrollMapPtrBgColor), this);
+
+    if (color.isValid())
+    {
+        setColor(ui->lbScrollMapPtrBgColor, color);
+        updateSettings();
+    }
+}
+
+void OptionsDialog::on_pbScrollMapTargetBgColor_clicked()
+{
+    QColor color = QColorDialog::getColor(currentSwatchColor(ui->lbScrollMapTargetBgColor), this);
+
+    if (color.isValid())
+    {
+        setColor(ui->lbScrollMapTargetBgColor, color);
         updateSettings();
     }
 }
@@ -544,8 +604,11 @@ void OptionsDialog::resetToDefaults()
 
     setColor(ui->lbHighlightingColor, QColor(0xff, 0xff, 0x99, 0xff));
     setColor(ui->lbAddressAreaColor, this->palette().alternateBase().color());
-    setColor(ui->lbPointerColor, QColor(0xa0, 0xc0, 0x00, 0xff));
     setColor(ui->lbPointedColor, QColor(0xc0, 0x80, 0x00, 0xff));
+    setColor(ui->lbPointedFontColor, QColor(Qt::black));
+    setColor(ui->lbPointerFontColor, QColor(Qt::black));
+    setColor(ui->lbPointerFrameColor, QColor(0x00, 0x00, 0xFF));
+    setColor(ui->lbPointerFrameBgColor, QColor(0x00, 0xFF, 0x00, 0x80));
     setColor(ui->lbSelectionColor, this->palette().highlight().color());
     setColor(ui->lbAddressFontColor, this->palette().color(QPalette::WindowText));
     setColor(ui->lbAsciiAreaColor, this->palette().alternateBase().color());
@@ -555,6 +618,8 @@ void OptionsDialog::resetToDefaults()
     setColor(ui->lbHexAreaGrid, QColor(0x99, 0x99, 0x99));
     setColor(ui->lbCursorCharColor, QColor(0x00, 0x60, 0xFF, 0x80));
     setColor(ui->lbCursorFrameColor, QColor(Qt::black));
+    setColor(ui->lbScrollMapPtrBgColor, QColor(0xd0, 0xd0, 0xd0));
+    setColor(ui->lbScrollMapTargetBgColor, QColor(0xd0, 0xd0, 0xd0));
 
 #ifdef Q_OS_WIN32
     QFont defaultFont("Courier", 14);
@@ -566,6 +631,7 @@ void OptionsDialog::resetToDefaults()
     applyPlaceholderFieldFont(ui->leNonPrintableNoTableChar, ui->leNotInTableChar, defaultFont);
     ui->leNonPrintableNoTableChar->setText(QString(kDefaultNonPrintableNoTableChar));
     ui->leNotInTableChar->setText(QString(kDefaultNotInTableChar));
+    ui->cbDetectEndianness->setChecked(true);
 
     updateAreaControls();
     m_suppressUpdate = false;

@@ -256,6 +256,16 @@
            </widget>
           </item>
           <item>
+           <widget class="QRadioButton" name="rbSW">
+            <property name="text">
+             <string>Swapped</string>
+            </property>
+            <attribute name="buttonGroup">
+             <string notr="true">bgEndianness</string>
+            </attribute>
+           </widget>
+          </item>
+          <item>
            <spacer name="horizontalSpacer_2">
             <property name="orientation">
              <enum>Qt::Horizontal</enum>
@@ -281,16 +291,6 @@
            <widget class="QRadioButton" name="rb2Byte">
             <property name="text">
              <string>2-byte</string>
-            </property>
-            <attribute name="buttonGroup">
-             <string notr="true">bgPointerSize</string>
-            </attribute>
-           </widget>
-          </item>
-          <item>
-           <widget class="QRadioButton" name="rb3Byte">
-            <property name="text">
-             <string>3-byte</string>
             </property>
             <attribute name="buttonGroup">
              <string notr="true">bgPointerSize</string>
