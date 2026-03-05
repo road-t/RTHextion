@@ -756,7 +756,9 @@ void MainWindow::retranslateUi()
 
     // Actions - Edit
     undoAct->setText(tr("Undo"));
+    undoAct->setStatusTip(tr("Undo last action"));
     redoAct->setText(tr("Redo"));
+    redoAct->setStatusTip(tr("Redo last undone action"));
     saveSelectionReadable->setText(tr("Save selection as dump"));
     saveSelectionReadable->setStatusTip(tr("Save selection as dump"));
 
@@ -787,6 +789,7 @@ void MainWindow::retranslateUi()
     findPointersAct->setText(tr("Find pointers"));
     findPointersAct->setStatusTip(tr("Find pointers for selected text"));
     showPointersAct->setText(tr("Show pointers"));
+    showPointersAct->setStatusTip(tr("Show the pointers dialog"));
 
     // Actions - Search
     findAct->setText(tr("Find/Replace"));
@@ -816,10 +819,13 @@ void MainWindow::retranslateUi()
 
     // Menu titles
     fileMenu->setTitle(tr("File"));
+    recentFileMenu->setTitle(tr("Recent"));
     editMenu->setTitle(tr("Edit"));
     tableMenu->setTitle(tr("Table"));
+    recentTableMenu->setTitle(tr("Recent"));
     scriptMenu->setTitle(tr("Script"));
     pointersMenu->setTitle(tr("Pointers"));
+    goMenu->setTitle(tr("Go"));
     viewMenu->setTitle(tr("View"));
     toolbarMenu->setTitle(tr("Toolbar"));
     statusBarMenu->setTitle(tr("Status bar"));
@@ -860,6 +866,24 @@ void MainWindow::retranslateUi()
     scriptToolBar->toggleViewAction()->setText(tr("Script"));
     resetToolbarsAct->setText(tr("Reset"));
 
+    // Toolbar navigation actions
+    toolbarFirstPositionAct->setToolTip(tr("First position"));
+    toolbarFirstPositionAct->setStatusTip(tr("Go to first cursor position in history"));
+    toolbarPreviousPositionAct->setToolTip(tr("Previous position"));
+    toolbarPreviousPositionAct->setStatusTip(tr("Go to previous cursor position"));
+    toolbarNextPositionAct->setToolTip(tr("Next position"));
+    toolbarNextPositionAct->setStatusTip(tr("Go to next cursor position"));
+    toolbarLastPositionAct->setToolTip(tr("Last position"));
+    toolbarLastPositionAct->setStatusTip(tr("Go to last cursor position in history"));
+
+    // Toolbar script actions
+    toolbarDumpScriptAct->setText(tr("Dump script"));
+    toolbarDumpScriptAct->setToolTip(tr("Dump script"));
+    toolbarDumpScriptAct->setStatusTip(tr("Dump text script"));
+    toolbarInsertScriptAct->setText(tr("Insert script"));
+    toolbarInsertScriptAct->setToolTip(tr("Insert script"));
+    toolbarInsertScriptAct->setStatusTip(tr("Insert text script"));
+
     // Status bar labels
     lbAddressName->setText(tr("Address") + QString(":"));
     lbSizeName->setText(tr("Size") + QString(":"));
@@ -867,6 +891,7 @@ void MainWindow::retranslateUi()
     updateEndiannesLabel();
     setOverwriteMode(hexEdit->overwriteMode());
     updateValuePanels();
+    setSelection(hexEdit->getSelectionBegin(), hexEdit->getSelectionEnd());
 }
 
 void MainWindow::editTable()
