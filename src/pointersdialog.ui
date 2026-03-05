@@ -258,7 +258,7 @@
           <item>
            <widget class="QRadioButton" name="rbSW">
             <property name="text">
-             <string>Swapped</string>
+             <string>Byte-swapped</string>
             </property>
             <attribute name="buttonGroup">
              <string notr="true">bgEndianness</string>

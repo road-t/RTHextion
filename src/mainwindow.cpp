@@ -2175,7 +2175,7 @@ void MainWindow::updateEndiannesLabel()
         lbEndiannes->setText(tr("Big-endian"));
         break;
     case ByteOrder::SwappedBytes:
-        lbEndiannes->setText(tr("Swapped"));
+        lbEndiannes->setText(tr("Byte-swapped"));
         break;
     default:
         lbEndiannes->setText(tr("Little-endian"));
