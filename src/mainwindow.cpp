@@ -1716,28 +1716,29 @@ void MainWindow::readSettings()
 
     hexEdit->setAddressArea(settings.value("AddressArea", true).toBool());
     hexEdit->setAsciiArea(settings.value("AsciiArea", true).toBool());
-    hexEdit->setHighlighting(settings.value("Highlighting").toBool());
+    hexEdit->setHighlighting(settings.value("Highlighting", true).toBool());
     hexEdit->setOverwriteMode(settings.value("OverwriteMode", true).toBool());
 
 
-    hexEdit->setHighlightingColor(settings.value("HighlightingColor").value<QColor>());
-    hexEdit->setPointedColor(settings.value("PointedColor").value<QColor>());
+    // Set color values with proper defaults for first-launch initialization
+    hexEdit->setHighlightingColor(settings.value("HighlightingColor", QColor(0xff, 0xff, 0x99, 0xff)).value<QColor>());
+    hexEdit->setPointedColor(settings.value("PointedColor", QColor(0xc0, 0x80, 0x00, 0xff)).value<QColor>());
     hexEdit->setPointedFontColor(settings.value("PointedFontColor", QColor(Qt::black)).value<QColor>());
     hexEdit->setPointerFontColor(settings.value("PointerFontColor", QColor(Qt::black)).value<QColor>());
     hexEdit->setPointerFrameColor(settings.value("PointerFrameColor", QColor(0x00, 0x00, 0xFF)).value<QColor>());
     hexEdit->setPointerFrameBackgroundColor(settings.value("PointerFrameBgColor", QColor(0x00, 0xFF, 0x00, 0x80)).value<QColor>());
-    hexEdit->setAddressAreaColor(settings.value("AddressAreaColor").value<QColor>());
-    hexEdit->setSelectionColor(settings.value("SelectionColor").value<QColor>());
-    hexEdit->setFont(settings.value("WidgetFont").value<QFont>());
-    hexEdit->setAddressFontColor(settings.value("AddressFontColor").value<QColor>());
-    hexEdit->setAsciiAreaColor(settings.value("AsciiAreaColor").value<QColor>());
-    hexEdit->setAsciiFontColor(settings.value("AsciiFontColor").value<QColor>());
-    hexEdit->setHexFontColor(settings.value("HexFontColor").value<QColor>());
+    hexEdit->setAddressAreaColor(settings.value("AddressAreaColor", palette().alternateBase().color()).value<QColor>());
+    hexEdit->setSelectionColor(settings.value("SelectionColor", palette().highlight().color()).value<QColor>());
+    hexEdit->setFont(settings.value("WidgetFont", QFont("Courier New", 14)).value<QFont>());
+    hexEdit->setAddressFontColor(settings.value("AddressFontColor", palette().color(QPalette::WindowText)).value<QColor>());
+    hexEdit->setAsciiAreaColor(settings.value("AsciiAreaColor", palette().alternateBase().color()).value<QColor>());
+    hexEdit->setAsciiFontColor(settings.value("AsciiFontColor", palette().color(QPalette::WindowText)).value<QColor>());
+    hexEdit->setHexFontColor(settings.value("HexFontColor", palette().color(QPalette::WindowText)).value<QColor>());
     hexEdit->setNonPrintableNoTableChar(readSingleCharSetting(settings, "NonPrintableNoTableChar", QChar(0x25AA)));
     hexEdit->setNotInTableChar(readSingleCharSetting(settings, "NotInTableChar", QChar(0x25A1)));
 
 
-    hexEdit->setAddressWidth(settings.value("AddressAreaWidth").toInt());
+    hexEdit->setAddressWidth(settings.value("AddressAreaWidth", 8).toInt());
     hexEdit->setBytesPerLine(settings.value("BytesPerLine", 32).toInt());
     hexEdit->setDynamicBytesPerLine(settings.value("Autosize", true).toBool());
     hexEdit->setHexCaps(settings.value("HexCaps", true).toBool());
@@ -2010,9 +2011,26 @@ void MainWindow::writeSettings()
 {
     QSettings settings;
 
+    // Save window geometry
     settings.setValue("pos", pos());
     settings.setValue("size", size());
     settings.setValue(kMainWindowStateKey, saveState());
+
+    // Save hex editor settings to ensure persisted state
+    if (hexEdit)
+    {
+        settings.setValue("AddressArea", hexEdit->addressArea());
+        settings.setValue("AsciiArea", hexEdit->asciiArea());
+        settings.setValue("Highlighting", hexEdit->highlighting());
+        settings.setValue("OverwriteMode", hexEdit->overwriteMode());
+        settings.setValue("ShowHexGrid", hexEdit->showHexGrid());
+        settings.setValue("Autosize", hexEdit->dynamicBytesPerLine());
+        settings.setValue("HexCaps", hexEdit->hexCaps());
+        settings.setValue("AddressAreaWidth", hexEdit->addressWidth());
+        settings.setValue("BytesPerLine", hexEdit->bytesPerLine());
+    }
+    
+    settings.sync();
 
     //settings.setValue("offset", curOffset);
 }

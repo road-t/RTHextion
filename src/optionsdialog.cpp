@@ -283,10 +283,17 @@ void OptionsDialog::readSettings()
 void OptionsDialog::writeSettings()
 {
     QSettings settings;
+    
+    // Write all boolean settings
+    settings.setValue("AddressArea", ui->cbAddressArea->isChecked());
+    settings.setValue("AsciiArea", ui->cbAsciiArea->isChecked());
     settings.setValue("Highlighting", ui->cbHighlighting->isChecked());
     settings.setValue("Autosize", ui->cbDynamicSize->isChecked());
+    settings.setValue("ShowHexGrid", ui->cbShowHexGrid->isChecked());
     settings.setValue("AutoLoadRecentFile", ui->cbAutoLoadRecentFile->isChecked());
+    settings.setValue("DetectEndianness", ui->cbDetectEndianness->isChecked());
 
+    // Write all color settings
     settings.setValue("HighlightingColor", ui->lbHighlightingColor->palette().color(ui->lbHighlightingColor->backgroundRole()));
     settings.setValue("AddressAreaColor", ui->lbAddressAreaColor->palette().color(ui->lbAddressAreaColor->backgroundRole()));
     settings.setValue("PointedColor", ui->lbPointedColor->palette().color(ui->lbPointedColor->backgroundRole()));
@@ -305,14 +312,16 @@ void OptionsDialog::writeSettings()
     settings.setValue("CursorFrameColor", ui->lbCursorFrameColor->palette().color(ui->lbCursorFrameColor->backgroundRole()));
     settings.setValue("ScrollMapPtrBgColor", ui->lbScrollMapPtrBgColor->palette().color(ui->lbScrollMapPtrBgColor->backgroundRole()));
     settings.setValue("ScrollMapTargetBgColor", ui->lbScrollMapTargetBgColor->palette().color(ui->lbScrollMapTargetBgColor->backgroundRole()));
+    
+    // Write other settings
     settings.setValue("WidgetFont", ui->pbWidgetFont->font());
     settings.setValue("NonPrintableNoTableChar", sanitizeSingleChar(ui->leNonPrintableNoTableChar->text(), kDefaultNonPrintableNoTableChar));
     settings.setValue("NotInTableChar", sanitizeSingleChar(ui->leNotInTableChar->text(), kDefaultNotInTableChar));
-
-    settings.setValue("DetectEndianness", ui->cbDetectEndianness->isChecked());
-
     settings.setValue("AddressAreaWidth", ui->sbAddressAreaWidth->value() * 2);
     settings.setValue("BytesPerLine", ui->sbBytesPerLine->value());
+    
+    // Ensure settings are persisted to disk
+    settings.sync();
 }
 
 void OptionsDialog::setColor(QWidget *widget, QColor color)
