@@ -14,9 +14,10 @@ A hex editor for retrogames translation and ROMHacking, a tribute to 00's Transl
 - Byte order switch (big-endian/little-endian/word-swapped)
 - Auto-detect ROM type and default byte order from file extension
 
-<img src="assets/general_view.png" alt="General view" width="600" />
-<img src="assets/general_view2.png" alt="Pointers in-place" width="600" />
+<img src="assets/main_window.png" alt="General view" width="600" />
+<img src="assets/minimap.png" alt="Minimap" width="600" />
 <img src="assets/pointers.png" alt="Pointers search window" width="600" />
+<img src="assets/script_dump.png" alt="Script dump window" width="600" />
 
 ## Supported ROM Formats
 
