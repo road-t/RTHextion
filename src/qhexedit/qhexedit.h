@@ -524,6 +524,7 @@ protected:
     void paintEvent(QPaintEvent *event);
     void resizeEvent(QResizeEvent *);
     void contextMenuEvent(QContextMenuEvent *event) override;
+    bool viewportEvent(QEvent *event) override;
     virtual bool focusNextPrevChild(bool next);
 
 private:

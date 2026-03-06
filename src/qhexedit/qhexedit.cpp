@@ -7,6 +7,7 @@
 #include <QScrollBar>
 #include <QStyleOptionSlider>
 #include <QToolTip>
+#include <QHelpEvent>
 #include <QProgressDialog>
 #include <QTimer>
 #include <QSet>
@@ -1515,6 +1516,39 @@ void QHexEdit::mouseMoveEvent(QMouseEvent *event)
         setCursorPosition(actPos);
         setSelection(actPos);
     }
+}
+
+bool QHexEdit::viewportEvent(QEvent *event)
+{
+    if (event->type() == QEvent::ToolTip && _showPointers)
+    {
+        QHelpEvent *helpEvent = static_cast<QHelpEvent *>(event);
+        const qint64 nibblePos = cursorPosition(helpEvent->pos());
+        const qint64 bytePos = nibblePos / 2;
+
+        if (bytePos >= 0)
+        {
+            const qint64 ptrStart = pointerStartAt(bytePos, kPointerByteSize);
+            if (ptrStart >= 0)
+            {
+                QToolTip::showText(helpEvent->globalPos(), _pointers.getOffsetText(ptrStart), viewport());
+                return true;
+            }
+            else if (_pointers.hasOffset(bytePos))
+            {
+                const auto ptrs = _pointers.getPointers(bytePos);
+                const QString tip = (ptrs.size() == 1)
+                    ? QStringLiteral("0x%1").arg(ptrs[0], 8, 16, QChar('0')).toUpper()
+                    : tr("%1 pointers").arg(ptrs.size());
+                QToolTip::showText(helpEvent->globalPos(), tip, viewport());
+                return true;
+            }
+        }
+        QToolTip::hideText();
+        event->ignore();
+        return true;
+    }
+    return QAbstractScrollArea::viewportEvent(event);
 }
 
 void QHexEdit::mousePressEvent(QMouseEvent *event)
