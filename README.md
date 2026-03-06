@@ -1,18 +1,18 @@
 # RTHextion v1.0
 
-A hex editor for retrogames translation and ROMHacking, a tribute to 00's Translhextion by Januschan. 
+A hex editor for retrogames translation and ROMHacking, a tribute to 00's Translhextion16c by Januschan. 
 
 **RTHextion** is based on an early version of Dax89's [QHexView](https://github.com/Dax89/QHexView) (MIT License) and uses the Qt framework (GPL/LGPL).
 
 ## Features
 - Dual view (hex + text) with synchronized scrolling and selection
-- Translation tables support
-- Built-in editor
-- Semi-automatic translation tables generation
-- Most advanced data pointers search and navigation (2-byte and 4-byte)
+- Translation tables support with built-in editor and semi-automatic translation tables generation
+- Advanced data pointers search and navigation
 - Script dump and import with insertion to offset and automatic pointers update
-- Byte order switch (big-endian/little-endian/word-swapped)
-- Auto-detect ROM type and default byte order from file extension
+- Byte order switch (big-endian/little-endian/byte-swapped)
+- Auto-detect ROM type and default byte order 
+
+## Screenshots
 
 <img src="assets/main_window.png" alt="General view" width="600" />
 <img src="assets/minimap.png" alt="Minimap" width="600" />
