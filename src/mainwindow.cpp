@@ -1,6 +1,7 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QApplication>
+#include <QClipboard>
 #include <QStatusBar>
 #include <QLabel>
 #include <QPixmap>
@@ -17,6 +18,7 @@
 #include <QSettings>
 #include <QScrollBar>
 #include <QDir>
+#include <algorithm>
 
 #include "QtWidgets/qpushbutton.h"
 #include "appinfo.h"
@@ -180,10 +182,7 @@ void MainWindow::revert()
     if (isUntitled)
     {
         // For new files, just clear the data
-        QMessageBox msg(QMessageBox::Warning, nullptr, tr("Clear all changes?"), QMessageBox::Yes | QMessageBox::Cancel, this);
-        auto result = msg.exec();
-
-        if (result == QMessageBox::Yes)
+        if (QMessageBox::warning(this, tr("Clear data"), tr("Clear all data and changes?"), QMessageBox::Yes | QMessageBox::Cancel) == QMessageBox::Yes)
         {
             hexEdit->setData(QByteArray());
             hexEdit->clearPointers();
@@ -194,13 +193,22 @@ void MainWindow::revert()
     else
     {
         // For existing files, reload from disk
-        QMessageBox msg(QMessageBox::Warning, nullptr, tr("Are you sure want to load last saved version and lose all the changes?"), QMessageBox::Yes | QMessageBox::Cancel, this);
-        auto result = msg.exec();
-
-        if (result == QMessageBox::Yes)
+        if (QMessageBox::warning(this, tr("Revert"), tr("Reload file from disk and discard all changes?"), QMessageBox::Yes | QMessageBox::Cancel) == QMessageBox::Yes)
         {
-            loadFile(curFile);
-            statusBar()->showMessage(tr("File reverted"), 2000);
+            // Reload file directly without triggering maybeSave()
+            file.setFileName(curFile);
+            if (hexEdit->setData(file))
+            {
+                resetNavigationHistory();
+                statusBar()->showMessage(tr("File reverted"), 2000);
+            }
+            else
+            {
+                QMessageBox::warning(this, QString::fromLatin1(AppInfo::Name),
+                                     tr("Cannot read file %1:\n%2.")
+                                     .arg(curFile)
+                                     .arg(file.errorString()));
+            }
         }
     }
 }
@@ -356,6 +364,9 @@ void MainWindow::setSelection(qint64 start, qint64 end)
 
     lbSelection->setText(text);
     saveSelectionReadable->setEnabled(len > 0);
+    copyAct->setEnabled(len > 0);
+    cutAct->setEnabled(len > 0 && !hexEdit->overwriteMode() && !hexEdit->isReadOnly());
+    pasteAct->setEnabled(!QApplication::clipboard()->text().isEmpty());
 
     updateScriptMenuState(len > 0);
 }
@@ -438,6 +449,11 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
     const qint64 pointerStart = hexEdit->pointerStartAt(bytePos, 4);
     const qint64 fileSize = hexEdit->data().size();
 
+    const bool hasSelection  = hexEdit->getSelectionBegin() != hexEdit->getSelectionEnd();
+    const bool isOverwrite   = hexEdit->overwriteMode();
+    const bool isReadOnly    = hexEdit->isReadOnly();
+    const bool clickedAscii  = hexEdit->editAreaIsAscii();
+
     bool canAddAsPointer = false;
     qint64 addAsPointerTarget = -1;
 
@@ -463,6 +479,182 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         hexEdit->viewport()->update();
     };
 
+    // --- Helper: clipboard has pasteable hex data ---
+    const QClipboard *clipboard = QApplication::clipboard();
+    const bool canPaste = !isReadOnly && !clipboard->text().isEmpty();
+
+    // --- Helper: add common clipboard + address actions to a menu ---
+    // Returns pointers to created actions via output params (nullptr when skipped).
+    struct ClipboardActions {
+        QAction *copyAddress = nullptr;
+        QAction *cut = nullptr;
+        QAction *copy = nullptr;
+        QAction *paste = nullptr;
+    };
+
+    auto addClipboardActions = [&](QMenu &menu, bool isHexArea = false) -> ClipboardActions
+    {
+        ClipboardActions acts;
+
+        menu.addSeparator();
+
+        // Copy address is always available
+        acts.copyAddress = menu.addAction(tr("Copy address"));
+
+        menu.addSeparator();
+        acts.cut  = menu.addAction(tr("Cut"));
+        acts.cut->setShortcut(QKeySequence::Cut);
+        acts.cut->setEnabled(hasSelection && !isReadOnly && !isOverwrite);
+
+        if (isHexArea)
+            acts.copy = menu.addAction(tr("Copy hex values"));
+        else
+            acts.copy = menu.addAction(tr("Copy"));
+        acts.copy->setShortcut(QKeySequence::Copy);
+        acts.copy->setEnabled(hasSelection);
+
+        if (isHexArea)
+            acts.paste = menu.addAction(tr("Paste hex values"));
+        else
+            acts.paste = menu.addAction(tr("Paste"));
+        acts.paste->setShortcut(QKeySequence::Paste);
+        acts.paste->setEnabled(!isReadOnly && canPaste);
+
+        return acts;
+    };
+
+    // --- Helper: handle clipboard action result ---
+    auto handleClipboardAction = [&](QAction *chosen, const ClipboardActions &acts)
+    {
+        if (!chosen)
+            return false;
+
+        if (chosen == acts.copyAddress)
+        {
+            // Keep "0x" prefix lowercase, uppercase only the hex digits
+            const QString addrText = QStringLiteral("0x") + QString("%1").arg(bytePos, 8, 16, QChar('0')).toUpper();
+            QApplication::clipboard()->setText(addrText);
+            return true;
+        }
+
+        if (chosen == acts.cut && acts.cut)
+        {
+            // Cut: copy selection to clipboard, remove bytes (INSERT) or zero-fill (REPLACE)
+            const qint64 selBegin = hexEdit->getSelectionBegin();
+            const qint64 selEnd   = hexEdit->getSelectionEnd();
+            const QByteArray raw = hexEdit->dataAt(selBegin, selEnd - selBegin);
+
+            if (clickedAscii)
+            {
+                // ASCII area: copy raw bytes as Latin-1 text
+                QApplication::clipboard()->setText(QString::fromLatin1(raw.constData(), raw.size()));
+            }
+            else
+            {
+                // Hex area: space-separated uppercase hex pairs
+                QApplication::clipboard()->setText(QString::fromLatin1(raw.toHex(' ')).toUpper());
+            }
+
+            if (isOverwrite)
+            {
+                // In overwrite mode cut is disabled, but just in case:
+                hexEdit->replace(selBegin, selEnd - selBegin, QByteArray(static_cast<int>(selEnd - selBegin), char(0)));
+            }
+            else
+            {
+                hexEdit->remove(selBegin, selEnd - selBegin);
+            }
+
+            hexEdit->setCursorPosition(2 * selBegin);
+            hexEdit->ensureVisible();
+            return true;
+        }
+
+        if (chosen == acts.copy && acts.copy)
+        {
+            const qint64 selBegin = hexEdit->getSelectionBegin();
+            const qint64 selEnd   = hexEdit->getSelectionEnd();
+            const QByteArray raw = hexEdit->dataAt(selBegin, selEnd - selBegin);
+
+            if (clickedAscii)
+            {
+                // ASCII area: copy raw bytes as Latin-1 text
+                QApplication::clipboard()->setText(QString::fromLatin1(raw.constData(), raw.size()));
+            }
+            else
+            {
+                // Hex area: space-separated uppercase hex pairs
+                QApplication::clipboard()->setText(QString::fromLatin1(raw.toHex(' ')).toUpper());
+            }
+            return true;
+        }
+
+        if (chosen == acts.paste && acts.paste)
+        {
+            // Decode clipboard depending on the area that was right-clicked
+            QByteArray ba;
+            if (clickedAscii)
+            {
+                // ASCII area: paste raw bytes (Latin-1 encoding)
+                ba = QApplication::clipboard()->text().toLatin1();
+            }
+            else
+            {
+                // Hex area: strip whitespace then decode hex pairs (e.g. "AF 00 91" or "AF0091")
+                const QString stripped = QApplication::clipboard()->text()
+                                             .remove(' ').remove('\t').remove('\n').remove('\r');
+                ba = QByteArray::fromHex(stripped.toLatin1());
+            }
+
+            if (ba.isEmpty())
+                return true;
+
+            if (isOverwrite)
+            {
+                // REPLACE mode
+                if (hasSelection)
+                {
+                    // REPLACE with selection: truncate paste to selection size, paste at selection beginning
+                    const qint64 selBegin = hexEdit->getSelectionBegin();
+                    const qint64 selLen   = hexEdit->getSelectionEnd() - selBegin;
+                    ba = ba.left(static_cast<int>(selLen));
+                    hexEdit->replace(selBegin, static_cast<int>(ba.size()), ba);
+                    hexEdit->setCursorPosition(2 * (selBegin + ba.size()));
+                }
+                else
+                {
+                    // REPLACE without selection: paste at clicked position
+                    ba = ba.left(static_cast<int>(std::min<qint64>(ba.size(), fileSize - bytePos)));
+                    hexEdit->replace(bytePos, static_cast<int>(ba.size()), ba);
+                    hexEdit->setCursorPosition(2 * (bytePos + ba.size()));
+                }
+            }
+            else
+            {
+                // INSERT mode
+                if (hasSelection)
+                {
+                    // INSERT with selection: delete entire selection, then insert paste at selection beginning
+                    const qint64 selBegin = hexEdit->getSelectionBegin();
+                    const qint64 selLen = hexEdit->getSelectionEnd() - selBegin;
+                    hexEdit->remove(selBegin, static_cast<int>(selLen));
+                    hexEdit->insert(selBegin, ba);
+                    hexEdit->setCursorPosition(2 * (selBegin + ba.size()));
+                }
+                else
+                {
+                    // INSERT without selection: insert at clicked position
+                    hexEdit->insert(bytePos, ba);
+                    hexEdit->setCursorPosition(2 * (bytePos + ba.size()));
+                }
+            }
+            hexEdit->ensureVisible();
+            return true;
+        }
+
+        return false;
+    };
+
     // 1) Right click on a pointer entry (full pointer length is clickable).
     if (pointerStart >= 0)
     {
@@ -473,7 +665,12 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         QAction *addAsPointerAct = menu.addAction(tr("Add as pointer"));
         addAsPointerAct->setEnabled(canAddAsPointer);
 
+        auto clipActs = addClipboardActions(menu);
+
         QAction *chosen = menu.exec(globalPos);
+        if (handleClipboardAction(chosen, clipActs))
+            return;
+
         if (chosen == addAsPointerAct)
         {
             if (canAddAsPointer && hexEdit->addPointerUndoable(bytePos, addAsPointerTarget))
@@ -518,8 +715,13 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         QAction *addAsPointerAct = menu.addAction(tr("Add as pointer"));
         addAsPointerAct->setEnabled(canAddAsPointer);
 
+        auto clipActs = addClipboardActions(menu);
+
         QAction *chosen = menu.exec(globalPos);
         if (!chosen)
+            return;
+
+        if (handleClipboardAction(chosen, clipActs))
             return;
 
         if (chosen == addAsPointerAct)
@@ -563,7 +765,11 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
     QAction *addAsPointerAct = menu.addAction(tr("Add as pointer"));
     addAsPointerAct->setEnabled(canAddAsPointer);
 
+    auto clipActs = addClipboardActions(menu, !clickedAscii);  // Show hex labels only in hex area
+
     QAction *chosen = menu.exec(globalPos);
+    if (handleClipboardAction(chosen, clipActs))
+        return;
 
     if (chosen == addAsPointerAct)
     {
@@ -759,6 +965,10 @@ void MainWindow::retranslateUi()
     undoAct->setStatusTip(tr("Undo last action"));
     redoAct->setText(tr("Redo"));
     redoAct->setStatusTip(tr("Redo last undone action"));
+    copyAddressAct->setText(tr("Copy address"));
+    cutAct->setText(tr("Cut"));
+    copyAct->setText(tr("Copy"));
+    pasteAct->setText(tr("Paste"));
     saveSelectionReadable->setText(tr("Save selection as dump"));
     saveSelectionReadable->setStatusTip(tr("Save selection as dump"));
 
@@ -1092,6 +1302,111 @@ void MainWindow::createActions()
     redoAct->setShortcuts(QKeySequence::Redo);
     connect(redoAct, SIGNAL(triggered()), hexEdit, SLOT(redo()));
 
+    copyAddressAct = new QAction(tr("Copy address"), this);
+    connect(copyAddressAct, &QAction::triggered, this, [this]()
+    {
+        qint64 bytePos = hexEdit->cursorPosition() / 2;
+        const QString addrText = QStringLiteral("0x") + QString("%1").arg(bytePos, 8, 16, QChar('0')).toUpper();
+        QApplication::clipboard()->setText(addrText);
+    });
+
+    cutAct = new QAction(tr("Cut"), this);
+    cutAct->setShortcut(QKeySequence::Cut);
+    cutAct->setEnabled(false);
+    connect(cutAct, &QAction::triggered, this, [this]()
+    {
+        const qint64 selBegin = hexEdit->getSelectionBegin();
+        const qint64 selEnd = hexEdit->getSelectionEnd();
+        if (selBegin >= selEnd) return;
+        const QByteArray raw = hexEdit->dataAt(selBegin, selEnd - selBegin);
+        
+        if (hexEdit->editAreaIsAscii())
+            QApplication::clipboard()->setText(QString::fromLatin1(raw.constData(), raw.size()));
+        else
+            QApplication::clipboard()->setText(QString::fromLatin1(raw.toHex(' ')).toUpper());
+        
+        if (!hexEdit->overwriteMode())
+            hexEdit->remove(selBegin, selEnd - selBegin);
+        hexEdit->setCursorPosition(2 * selBegin);
+    });
+
+    copyAct = new QAction(tr("Copy"), this);
+    copyAct->setShortcut(QKeySequence::Copy);
+    copyAct->setEnabled(false);
+    connect(copyAct, &QAction::triggered, this, [this]()
+    {
+        const qint64 selBegin = hexEdit->getSelectionBegin();
+        const qint64 selEnd = hexEdit->getSelectionEnd();
+        if (selBegin >= selEnd) return;
+        const QByteArray raw = hexEdit->dataAt(selBegin, selEnd - selBegin);
+        
+        if (hexEdit->editAreaIsAscii())
+            QApplication::clipboard()->setText(QString::fromLatin1(raw.constData(), raw.size()));
+        else
+            QApplication::clipboard()->setText(QString::fromLatin1(raw.toHex(' ')).toUpper());
+    });
+
+    pasteAct = new QAction(tr("Paste"), this);
+    pasteAct->setShortcut(QKeySequence::Paste);
+    pasteAct->setEnabled(false);
+    connect(pasteAct, &QAction::triggered, this, [this]()
+    {
+        const QString clipText = QApplication::clipboard()->text();
+        if (clipText.isEmpty()) return;
+
+        QByteArray ba;
+        if (hexEdit->editAreaIsAscii())
+            ba = clipText.toLatin1();
+        else
+        {
+            QString stripped = clipText;
+            stripped.remove(' ').remove('\t').remove('\n').remove('\r');
+            ba = QByteArray::fromHex(stripped.toLatin1());
+        }
+
+        if (ba.isEmpty()) return;
+
+        const qint64 selBegin = hexEdit->getSelectionBegin();
+        const qint64 selEnd   = hexEdit->getSelectionEnd();
+        const bool hasSelection = (selBegin != selEnd);
+
+        if (hexEdit->overwriteMode())
+        {
+            if (hasSelection)
+            {
+                // REPLACE with selection: truncate paste to selection size, paste at selection beginning
+                const qint64 selLen = selEnd - selBegin;
+                ba = ba.left(static_cast<int>(selLen));
+                hexEdit->replace(selBegin, ba.size(), ba);
+                hexEdit->setCursorPosition(2 * (selBegin + ba.size()));
+            }
+            else
+            {
+                const qint64 pos = hexEdit->cursorPosition() / 2;
+                ba = ba.left(static_cast<int>(std::min<qint64>(ba.size(), hexEdit->data().size() - pos)));
+                hexEdit->replace(pos, ba.size(), ba);
+                hexEdit->setCursorPosition(2 * (pos + ba.size()));
+            }
+        }
+        else
+        {
+            if (hasSelection)
+            {
+                // INSERT with selection: delete entire selection, then insert paste at selection beginning
+                const qint64 selLen = selEnd - selBegin;
+                hexEdit->remove(selBegin, static_cast<int>(selLen));
+                hexEdit->insert(selBegin, ba);
+                hexEdit->setCursorPosition(2 * (selBegin + ba.size()));
+            }
+            else
+            {
+                const qint64 pos = hexEdit->cursorPosition() / 2;
+                hexEdit->insert(pos, ba);
+                hexEdit->setCursorPosition(2 * (pos + ba.size()));
+            }
+        }
+    });
+
     saveSelectionReadable = new QAction(tr("Save Selection Dump..."), this);
     saveSelectionReadable->setStatusTip(tr("Save selection as dump"));
     saveSelectionReadable->setEnabled(false);
@@ -1400,6 +1715,12 @@ void MainWindow::createMenus()
     editMenu = menuBar()->addMenu(tr("Edit"));
     editMenu->addAction(undoAct);
     editMenu->addAction(redoAct);
+    editMenu->addSeparator();
+    editMenu->addAction(copyAddressAct);
+    editMenu->addAction(cutAct);
+    editMenu->addAction(copyAct);
+    editMenu->addAction(pasteAct);
+    editMenu->addSeparator();
     editMenu->addAction(saveSelectionReadable);
     editMenu->addSeparator();
     editMenu->addAction(findAct);

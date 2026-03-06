@@ -489,6 +489,9 @@ public:
     bool isReadOnly();
     void setReadOnly(bool readOnly);
 
+    /*! Returns true if the cursor / last click was in the ASCII area, false if in the hex area. */
+    bool editAreaIsAscii() const { return _editAreaIsAscii; }
+
     QColor selectionColor();
     void setSelectionColor(const QColor &color);
 

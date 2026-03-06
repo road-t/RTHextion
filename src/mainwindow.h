@@ -163,6 +163,10 @@ private:
 
     QAction *undoAct;
     QAction *redoAct;
+    QAction *copyAddressAct;
+    QAction *cutAct;
+    QAction *copyAct;
+    QAction *pasteAct;
     QAction *saveSelectionReadable;
 
     QAction *loadTableAct;

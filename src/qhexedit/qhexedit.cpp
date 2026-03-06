@@ -1239,28 +1239,28 @@ void QHexEdit::keyPressEvent(QKeyEvent *event)
         /* Cut */
         if (event->matches(QKeySequence::Cut))
         {
-            QByteArray ba = _chunks->data(getSelectionBegin(), getSelectionEnd() - getSelectionBegin()).toHex();
+            const qint64 selBegin = getSelectionBegin();
+            const qint64 selEnd = getSelectionEnd();
+            const QByteArray raw = _chunks->data(selBegin, selEnd - selBegin);
 
-            auto baLen = ba.size();
-
-            for (qint64 idx = 32; idx < baLen; idx += 33)
-                ba.insert(idx, "\n");
-
-            QClipboard *clipboard = QApplication::clipboard();
-            clipboard->setText(ba);
-
-            if (_overwriteMode)
+            if (_editAreaIsAscii)
             {
-                qint64 len = getSelectionEnd() - getSelectionBegin();
-                replace(getSelectionBegin(), (int)len, QByteArray((int)len, char(0)));
+                // ASCII area: copy raw bytes as Latin-1 text
+                QApplication::clipboard()->setText(QString::fromLatin1(raw.constData(), raw.size()));
             }
             else
             {
-                remove(getSelectionBegin(), getSelectionEnd() - getSelectionBegin());
+                // Hex area: space-separated uppercase hex pairs
+                QApplication::clipboard()->setText(QString::fromLatin1(raw.toHex(' ')).toUpper());
             }
 
-            setCursorPosition(2 * getSelectionBegin());
-            resetSelection(2 * getSelectionBegin());
+            // In REPLACE mode, cut only copies without deleting
+            if (!_overwriteMode)
+            {
+                remove(selBegin, selEnd - selBegin);
+                setCursorPosition(2 * selBegin);
+                resetSelection(2 * selBegin);
+            }
         }
         else
 
@@ -1268,17 +1268,60 @@ void QHexEdit::keyPressEvent(QKeyEvent *event)
             if (event->matches(QKeySequence::Paste))
             {
                 QClipboard *clipboard = QApplication::clipboard();
-                QByteArray ba = QByteArray().fromHex(clipboard->text().toLatin1());
+                QByteArray ba;
+                if (_editAreaIsAscii)
+                {
+                    // ASCII area: paste raw bytes (Latin-1 encoding)
+                    ba = clipboard->text().toLatin1();
+                }
+                else
+                {
+                    // Hex area: strip whitespace then decode hex pairs
+                    const QString stripped = clipboard->text()
+                                                .remove(' ').remove('\t').remove('\n').remove('\r');
+                    ba = QByteArray::fromHex(stripped.toLatin1());
+                }
+
+                const qint64 selBegin = getSelectionBegin();
+                const qint64 selEnd = getSelectionEnd();
+                const bool hasSelection = (selBegin != selEnd);
 
                 if (_overwriteMode)
                 {
-                    ba = ba.left(std::min<qint64>(ba.size(), (_chunks->size() - _bPosCurrent)));
-                    replace(_bPosCurrent, ba.size(), ba);
+                    if (hasSelection)
+                    {
+                        // REPLACE mode with selection: truncate paste to selection size, paste at selection beginning
+                        const qint64 selLen = selEnd - selBegin;
+                        ba = ba.left(static_cast<int>(selLen));
+                        replace(selBegin, ba.size(), ba);
+                        setCursorPosition(2 * (selBegin + ba.size()));
+                    }
+                    else
+                    {
+                        // REPLACE mode without selection: paste at cursor position
+                        ba = ba.left(static_cast<int>(std::min<qint64>(ba.size(), (_chunks->size() - _bPosCurrent))));
+                        replace(_bPosCurrent, ba.size(), ba);
+                        setCursorPosition(_cursorPosition + 2 * ba.size());
+                    }
                 }
                 else
-                    insert(_bPosCurrent, ba);
-
-                setCursorPosition(_cursorPosition + 2 * ba.size());
+                {
+                    // INSERT mode
+                    if (hasSelection)
+                    {
+                        // INSERT mode with selection: delete entire selection, then insert paste at selection beginning
+                        const qint64 selLen = selEnd - selBegin;
+                        remove(selBegin, static_cast<int>(selLen));
+                        insert(selBegin, ba);
+                        setCursorPosition(2 * (selBegin + ba.size()));
+                    }
+                    else
+                    {
+                        // INSERT mode without selection: insert at cursor position
+                        insert(_bPosCurrent, ba);
+                        setCursorPosition(_cursorPosition + 2 * ba.size());
+                    }
+                }
                 resetSelection(getSelectionBegin());
             }
             else
@@ -1428,15 +1471,12 @@ void QHexEdit::keyPressEvent(QKeyEvent *event)
     /* Copy */
     if (event->matches(QKeySequence::Copy))
     {
-        QByteArray ba = _chunks->data(getSelectionBegin(), getSelectionEnd() - getSelectionBegin()).toHex();
+        const qint64 selBegin = getSelectionBegin();
+        const qint64 selEnd = getSelectionEnd();
+        const QByteArray raw = _chunks->data(selBegin, selEnd - selBegin);
 
-        auto baLen = ba.size();
-
-        for (qint64 idx = 32; idx < baLen; idx += 33)
-            ba.insert(idx, "\n");
-
-        QClipboard *clipboard = QApplication::clipboard();
-        clipboard->setText(ba);
+        // Always copy raw bytes (ASCII area behavior), regardless of which area cursor is in
+        QApplication::clipboard()->setText(QString::fromLatin1(raw.constData(), raw.size()));
     }
 
     // Switch between insert/overwrite mode
