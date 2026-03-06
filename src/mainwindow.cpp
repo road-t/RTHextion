@@ -97,7 +97,7 @@ void MainWindow::about()
 
     // Build translated body parts separately to avoid huge translation strings
     QString versionLine = QStringLiteral("%1 v%2").arg(AppInfo::Name).arg(AppInfo::Version);
-    QString descriptionLine = tr("This is a hex editor for retro game translation/ROM hacking.\nA tribute to Translhextion editor made by Januschan in early 00's.");
+    QString descriptionLine = tr("This is a hex editor for retro game translation/ROM hacking.\nA tribute to Translhextion16c editor made by Januschan in early 00's.");
     QString copyrightLine = tr("Ilya 'Road Tripper' Annikov © 2021-2026. All rights reserved.");
     QString githubLine = QStringLiteral("GitHub: https://github.com/road-t/RTHextion");
 
