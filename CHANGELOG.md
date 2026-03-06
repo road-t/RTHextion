@@ -18,6 +18,7 @@ All notable changes to this project will be documented in this file.
 - "Auto-load last opened file at startup" option.
 - New interface customization options including custom non-printable characters selection
 - Pointer/offset minimap in the right sidebar with clickable entries for quick navigation.
+– Quick pointer search right from a context menu
 - File navigation history with back/forward buttons and keyboard shortcuts.
 - Signed byte/word/dword value display toggle for easier debugging of signed data.
 - New "View" menu with options for toggling hex/text panes, showing/hiding minimap, and customizing non-printable character display.
@@ -28,11 +29,13 @@ All notable changes to this project will be documented in this file.
 - Selection pointer centered
 - Byte order preference now set automatically based on detected ROM type when file is opened.
 - Script dump/insertion without table enabled
+- `<List of pointers...>` tooltip replaced with actual pointer list for better UX
 
 ### Fixed
 - UI translations
 - ASCII area rendering
 - Pointer frame rendering for non-dword-aligned pointers
+- Pointer data hint displays string up to next pointer or null byte 
 - Font fallback warnings on macOS by replacing Helvetica with system default font
 - Fixed various minor bugs and edge cases in pointer handling and translation table application
 
