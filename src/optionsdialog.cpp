@@ -6,6 +6,10 @@
 #include <QLineEdit>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QFormLayout>
+#include <QScrollArea>
+#include <QKeySequenceEdit>
+#include <QCoreApplication>
 
 namespace
 {
@@ -43,6 +47,8 @@ OptionsDialog::OptionsDialog(QWidget *parent) : QDialog(parent), ui(new Ui::Opti
 {
     ui->setupUi(this);
     m_suppressUpdate = true;
+
+    initHotkeysTab();
 
     resize(qMax(width(), 860), 620);
 
@@ -122,6 +128,7 @@ void OptionsDialog::show()
 {
     m_suppressUpdate = true;
     readSettings();
+    readHotkeySettings();
     saveCurrentSettings(); // Save original settings for potential rollback
     updateAreaControls();
     m_suppressUpdate = false;
@@ -172,6 +179,12 @@ void OptionsDialog::saveCurrentSettings()
     m_originalSettings.nonPrintableNoTableChar = sanitizeSingleChar(ui->leNonPrintableNoTableChar->text(), kDefaultNonPrintableNoTableChar);
     m_originalSettings.notInTableChar = sanitizeSingleChar(ui->leNotInTableChar->text(), kDefaultNotInTableChar);
     m_originalSettings.detectEndianness = ui->cbDetectEndianness->isChecked();
+
+    m_originalHotkeys.clear();
+    for (const auto &e : m_hotkeys) {
+        if (e.editor)
+            m_originalHotkeys[e.settingsKey] = e.editor->keySequence();
+    }
 }
 
 void OptionsDialog::restoreSettings()
@@ -208,6 +221,18 @@ void OptionsDialog::restoreSettings()
     ui->leNonPrintableNoTableChar->setText(sanitizeSingleChar(m_originalSettings.nonPrintableNoTableChar, kDefaultNonPrintableNoTableChar));
     ui->leNotInTableChar->setText(sanitizeSingleChar(m_originalSettings.notInTableChar, kDefaultNotInTableChar));
     ui->cbDetectEndianness->setChecked(m_originalSettings.detectEndianness);
+
+    QSettings s;
+    for (auto &e : m_hotkeys) {
+        if (e.editor && m_originalHotkeys.contains(e.settingsKey)) {
+            e.editor->setKeySequence(m_originalHotkeys[e.settingsKey]);
+            s.setValue(e.settingsKey, m_originalHotkeys[e.settingsKey]);
+        }
+    }
+    s.sync();
+    auto *mw = qobject_cast<MainWindow*>(parent());
+    if (mw) mw->applyShortcutsFromSettings();
+
     m_suppressUpdate = false;
     updateSettings(); // Apply restored settings
 }
@@ -596,7 +621,10 @@ void OptionsDialog::updateAreaControls()
 
 void OptionsDialog::on_pbDefault_clicked()
 {
-    resetToDefaults();
+    if (ui->tabWidget->currentWidget() == ui->pageHotkeys)
+        resetHotkeysToDefaults();
+    else
+        resetToDefaults();
 }
 
 void OptionsDialog::resetToDefaults()
@@ -659,8 +687,141 @@ void OptionsDialog::on_checkBoxToggled(bool)
 
 void OptionsDialog::changeEvent(QEvent *event)
 {
-    if (event->type() == QEvent::LanguageChange)
+    if (event->type() == QEvent::LanguageChange) {
         ui->retranslateUi(this);
+        retranslateHotkeys();
+    }
     QDialog::changeEvent(event);
 }
 
+void OptionsDialog::initHotkeysTab()
+{
+    m_hotkeys = {
+        {"Open...",           "hotkey_Open",          QKeySequence(QKeySequence::Open)},
+        {"Save",              "hotkey_Save",           QKeySequence(QKeySequence::Save)},
+        {"Save As...",        "hotkey_SaveAs",         QKeySequence(QKeySequence::SaveAs)},
+        {"Close",             "hotkey_Close",          QKeySequence(QKeySequence::Close)},
+        {"Undo",              "hotkey_Undo",           QKeySequence(QKeySequence::Undo)},
+        {"Redo",              "hotkey_Redo",           QKeySequence(QKeySequence::Redo)},
+        {"Cut",               "hotkey_Cut",            QKeySequence(QKeySequence::Cut)},
+        {"Copy",              "hotkey_Copy",           QKeySequence(QKeySequence::Copy)},
+        {"Paste",             "hotkey_Paste",          QKeySequence(QKeySequence::Paste)},
+        {"Find/Replace",      "hotkey_Find",           QKeySequence(QKeySequence::Find)},
+        {"Jump to offset",    "hotkey_Goto",           QKeySequence(QKeySequence::FindNext)},
+        {"Use table",         "hotkey_UseTable",       QKeySequence(QKeySequence::AddTab)},
+        {"Find pointers",     "hotkey_FindPointers",   QKeySequence(QKeySequence::New)},
+        {"Previous position", "hotkey_PrevPos",        QKeySequence(Qt::CTRL | Qt::Key_BracketLeft)},
+        {"Next position",     "hotkey_NextPos",        QKeySequence(Qt::CTRL | Qt::Key_BracketRight)},
+    };
+
+    auto *scroll = new QScrollArea(ui->pageHotkeys);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+
+    auto *inner = new QWidget();
+    auto *form  = new QFormLayout(inner);
+    form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    form->setRowWrapPolicy(QFormLayout::DontWrapRows);
+
+    // Conflict notice label (hidden until a conflict occurs)
+    m_conflictLabel = new QLabel();
+    m_conflictLabel->setWordWrap(true);
+    m_conflictLabel->setStyleSheet(QStringLiteral(
+        "color: #b04000; background: #fff3cd; border: 1px solid #e0b000;"
+        "border-radius: 4px; padding: 4px 8px;"));
+    m_conflictLabel->setVisible(false);
+    form->addRow(m_conflictLabel);
+
+    QSettings settings;
+    for (auto &e : m_hotkeys) {
+        e.label  = new QLabel(QCoreApplication::translate("MainWindow", e.displayKey));
+        e.editor = new QKeySequenceEdit(
+            settings.value(e.settingsKey, e.defaultSeq).value<QKeySequence>());
+        e.editor->setMaximumWidth(220);
+
+        // Capture by value to avoid dangling references to QList elements
+        QString key    = e.settingsKey;
+        QKeySequenceEdit *editor = e.editor;
+        connect(editor, &QKeySequenceEdit::keySequenceChanged, this, [this, key, editor]() {
+            const QKeySequence seq = editor->keySequence();
+            if (!seq.isEmpty())
+                resolveShortcutConflict(key, seq);
+            QSettings s;
+            s.setValue(key, seq);
+            s.sync();
+            auto *mw = qobject_cast<MainWindow*>(parent());
+            if (mw) mw->applyShortcutsFromSettings();
+        });
+
+        form->addRow(e.label, e.editor);
+    }
+
+    scroll->setWidget(inner);
+    auto *vl = new QVBoxLayout(ui->pageHotkeys);
+    vl->setContentsMargins(8, 8, 8, 8);
+    vl->addWidget(scroll);
+}
+
+void OptionsDialog::readHotkeySettings()
+{
+    QSettings settings;
+    for (auto &e : m_hotkeys) {
+        if (e.editor)
+            e.editor->setKeySequence(
+                settings.value(e.settingsKey, e.defaultSeq).value<QKeySequence>());
+    }
+}
+
+void OptionsDialog::resetHotkeysToDefaults()
+{
+    QSettings s;
+    for (auto &e : m_hotkeys) {
+        if (e.editor) {
+            e.editor->setKeySequence(e.defaultSeq);
+            s.setValue(e.settingsKey, e.defaultSeq);
+        }
+    }
+    s.sync();
+    auto *mw = qobject_cast<MainWindow*>(parent());
+    if (mw) mw->applyShortcutsFromSettings();
+}
+
+void OptionsDialog::retranslateHotkeys()
+{
+    for (auto &e : m_hotkeys) {
+        if (e.label)
+            e.label->setText(QCoreApplication::translate("MainWindow", e.displayKey));
+    }
+}
+
+void OptionsDialog::resolveShortcutConflict(const QString &sourceKey, const QKeySequence &seq)
+{
+    for (auto &e : m_hotkeys) {
+        if (e.settingsKey == sourceKey || !e.editor)
+            continue;
+        if (e.editor->keySequence() == seq) {
+            // Show notice before clearing, so we can reference the label text
+            const QString actionName = e.label
+                ? e.label->text()
+                : QString::fromUtf8(e.displayKey);
+            if (m_conflictLabel) {
+                m_conflictLabel->setText(
+                    tr("Shortcut %1 was removed from \u201c%2\u201d")
+                        .arg(seq.toString(QKeySequence::NativeText), actionName));
+                m_conflictLabel->setVisible(true);
+            }
+            // Clear conflicting entry
+            e.editor->blockSignals(true);
+            e.editor->setKeySequence(QKeySequence());
+            e.editor->blockSignals(false);
+            QSettings s;
+            s.setValue(e.settingsKey, QKeySequence());
+            s.sync();
+            return;
+        }
+    }
+    // No conflict — hide the notice
+    if (m_conflictLabel)
+        m_conflictLabel->setVisible(false);
+}

@@ -93,6 +93,7 @@ private slots:
 public:
     void loadFile(const QString &fileName);
     void updateHexEditorSettings();
+    void applyShortcutsFromSettings();
 
 private:
     void init();

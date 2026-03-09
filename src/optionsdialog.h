@@ -3,6 +3,12 @@
 
 #include <QtCore>
 #include <QDialog>
+#include <QKeySequence>
+#include <QList>
+#include <QMap>
+
+class QLabel;
+class QKeySequenceEdit;
 
 namespace Ui {
     class OptionsDialog;
@@ -64,6 +70,24 @@ private:
     void saveCurrentSettings();
     void restoreSettings();
     void resetToDefaults();
+
+    // Hotkeys tab
+    struct HotkeyEntry {
+        const char *displayKey;   // English string (same as used in tr() in MainWindow)
+        QString     settingsKey;  // QSettings key, e.g. "hotkey_Open"
+        QKeySequence defaultSeq;
+        QLabel          *label  = nullptr;
+        QKeySequenceEdit *editor = nullptr;
+    };
+    void initHotkeysTab();
+    void readHotkeySettings();
+    void resetHotkeysToDefaults();
+    void retranslateHotkeys();
+    void resolveShortcutConflict(const QString &sourceKey, const QKeySequence &seq);
+
+    QList<HotkeyEntry>          m_hotkeys;
+    QMap<QString, QKeySequence> m_originalHotkeys;
+    QLabel                     *m_conflictLabel = nullptr;
 
     struct SettingsSnapshot
     {

@@ -2099,6 +2099,32 @@ void MainWindow::readSettings()
             loadFile(fileName);
         }
     }
+
+    applyShortcutsFromSettings();
+}
+
+void MainWindow::applyShortcutsFromSettings()
+{
+    QSettings s;
+    openAct->setShortcut(s.value("hotkey_Open",         QKeySequence(QKeySequence::Open)).value<QKeySequence>());
+    saveAct->setShortcut(s.value("hotkey_Save",          QKeySequence(QKeySequence::Save)).value<QKeySequence>());
+    saveAsAct->setShortcut(s.value("hotkey_SaveAs",      QKeySequence(QKeySequence::SaveAs)).value<QKeySequence>());
+    closeAct->setShortcut(s.value("hotkey_Close",        QKeySequence(QKeySequence::Close)).value<QKeySequence>());
+    undoAct->setShortcut(s.value("hotkey_Undo",          QKeySequence(QKeySequence::Undo)).value<QKeySequence>());
+    redoAct->setShortcut(s.value("hotkey_Redo",          QKeySequence(QKeySequence::Redo)).value<QKeySequence>());
+    cutAct->setShortcut(s.value("hotkey_Cut",            QKeySequence(QKeySequence::Cut)).value<QKeySequence>());
+    copyAct->setShortcut(s.value("hotkey_Copy",          QKeySequence(QKeySequence::Copy)).value<QKeySequence>());
+    pasteAct->setShortcut(s.value("hotkey_Paste",        QKeySequence(QKeySequence::Paste)).value<QKeySequence>());
+    findAct->setShortcut(s.value("hotkey_Find",          QKeySequence(QKeySequence::Find)).value<QKeySequence>());
+    gotoAct->setShortcut(s.value("hotkey_Goto",          QKeySequence(QKeySequence::FindNext)).value<QKeySequence>());
+    useTableAct->setShortcut(s.value("hotkey_UseTable",  QKeySequence(QKeySequence::AddTab)).value<QKeySequence>());
+    findPointersAct->setShortcut(s.value("hotkey_FindPointers", QKeySequence(QKeySequence::New)).value<QKeySequence>());
+    if (previousPositionAct)
+        previousPositionAct->setShortcut(s.value("hotkey_PrevPos",
+            QKeySequence(Qt::CTRL | Qt::Key_BracketLeft)).value<QKeySequence>());
+    if (nextPositionAct)
+        nextPositionAct->setShortcut(s.value("hotkey_NextPos",
+            QKeySequence(Qt::CTRL | Qt::Key_BracketRight)).value<QKeySequence>());
 }
 
 void MainWindow::switchShowPointers()
