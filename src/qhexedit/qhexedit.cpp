@@ -1330,7 +1330,7 @@ void QHexEdit::keyPressEvent(QKeyEvent *event)
                 /* Delete char */
                 if (event->matches(QKeySequence::Delete))
                 {
-                    if (getSelectionBegin() != getSelectionEnd())
+                    if (getSelectionEnd() - getSelectionBegin() > 1)
                     {
                         _bPosCurrent = getSelectionBegin();
                         if (_overwriteMode)
@@ -1358,7 +1358,7 @@ void QHexEdit::keyPressEvent(QKeyEvent *event)
                     /* Backspace */
                     if ((event->key() == Qt::Key_Backspace) && (event->modifiers() == Qt::NoModifier))
                     {
-                        if (getSelectionBegin() != getSelectionEnd())
+                        if (getSelectionEnd() - getSelectionBegin() > 1)
                         {
                             _bPosCurrent = getSelectionBegin();
                             setCursorPosition(2 * _bPosCurrent);
@@ -2035,7 +2035,7 @@ bool QHexEdit::focusNextPrevChild(bool next)
 // ********************************************************************** Handle selections
 bool QHexEdit::hasSelection()
 {
-    return _bSelectionBegin != _bSelectionEnd;
+    return _bSelectionEnd - _bSelectionBegin > 1;
 }
 
 void QHexEdit::resetSelection()
@@ -2073,13 +2073,15 @@ void QHexEdit::setSelection(qint64 pos)
 
     if (pos >= _bSelectionInit)
     {
-        _bSelectionEnd = pos;
+        // Include the cursor byte: end is exclusive, so +1
+        _bSelectionEnd = qMin(pos + 1, _chunks->size());
         _bSelectionBegin = _bSelectionInit;
     }
     else
     {
+        // Cursor is before init: include init byte too
         _bSelectionBegin = pos;
-        _bSelectionEnd = _bSelectionInit;
+        _bSelectionEnd = qMin(_bSelectionInit + 1, _chunks->size());
     }
 
     emit selectionChanged(_bSelectionBegin, _bSelectionEnd);

@@ -354,21 +354,25 @@ void MainWindow::updateValuePanels()
 
 void MainWindow::setSelection(qint64 start, qint64 end)
 {
+    // end is now exclusive (half-open range); real byte count = end - start.
+    // A selection of exactly 1 means only the cursor byte = no real selection.
     auto len = end - start;
-    auto text = len ?
+    auto selBytes = len > 1 ? len : 0;   // bytes actually selected (excluding mere cursor byte)
+
+    auto text = selBytes ?
         QString("0x%1-0x%2: %3")
             .arg(start, 2, 16, QChar('0'))
-            .arg(end, 2, 16, QChar('0'))
-            .arg(end - start + 1)
+            .arg(end - 1, 2, 16, QChar('0'))   // end-1 = last included byte
+            .arg(selBytes)
         : tr("No selection");
 
     lbSelection->setText(text);
-    saveSelectionReadable->setEnabled(len > 0);
-    copyAct->setEnabled(len > 0);
-    cutAct->setEnabled(len > 0 && !hexEdit->overwriteMode() && !hexEdit->isReadOnly());
+    saveSelectionReadable->setEnabled(selBytes > 0);
+    copyAct->setEnabled(selBytes > 0);
+    cutAct->setEnabled(selBytes > 0 && !hexEdit->overwriteMode() && !hexEdit->isReadOnly());
     pasteAct->setEnabled(!QApplication::clipboard()->text().isEmpty());
 
-    updateScriptMenuState(len > 0);
+    updateScriptMenuState(selBytes > 0);
 }
 
 void MainWindow::setOverwriteMode(bool mode)
@@ -449,7 +453,7 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
     const qint64 pointerStart = hexEdit->pointerStartAt(bytePos, 4);
     const qint64 fileSize = hexEdit->data().size();
 
-    const bool hasSelection  = hexEdit->getSelectionBegin() != hexEdit->getSelectionEnd();
+    const bool hasSelection  = hexEdit->getSelectionEnd() - hexEdit->getSelectionBegin() > 1;
     const bool isOverwrite   = hexEdit->overwriteMode();
     const bool isReadOnly    = hexEdit->isReadOnly();
     const bool clickedAscii  = hexEdit->editAreaIsAscii();
@@ -1368,7 +1372,7 @@ void MainWindow::createActions()
 
         const qint64 selBegin = hexEdit->getSelectionBegin();
         const qint64 selEnd   = hexEdit->getSelectionEnd();
-        const bool hasSelection = (selBegin != selEnd);
+        const bool hasSelection = (selEnd - selBegin > 1);
 
         if (hexEdit->overwriteMode())
         {
