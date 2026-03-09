@@ -1831,7 +1831,37 @@ void QHexEdit::paintEvent(QPaintEvent *event)
                     painter.fillRect(r, _cursorCharColor);
 
                 hex = _hexDataShown.mid((bPosLine + colIdx) * 2, 2);
-                painter.drawText(pxPosX, pxPosY, hexCaps() ? hex.toUpper() : hex);
+
+                // In hex area: draw the active nibble of the cursor byte in bold
+                if (isCursorByte && !_editAreaIsAscii)
+                {
+                    const int activeNibble = _cursorPosition % 2; // 0 = high, 1 = low
+                    const QString ch0 = (hexCaps() ? hex.toUpper() : hex).mid(0, 1);
+                    const QString ch1 = (hexCaps() ? hex.toUpper() : hex).mid(1, 1);
+
+                    QFont boldFont = painter.font();
+                    boldFont.setBold(true);
+                    QFont normalFont = painter.font();
+
+                    if (activeNibble == 0)
+                    {
+                        painter.setFont(boldFont);
+                        painter.drawText(pxPosX, pxPosY, ch0);
+                        painter.setFont(normalFont);
+                        painter.drawText(pxPosX + _pxCharWidth, pxPosY, ch1);
+                    }
+                    else
+                    {
+                        painter.drawText(pxPosX, pxPosY, ch0);
+                        painter.setFont(boldFont);
+                        painter.drawText(pxPosX + _pxCharWidth, pxPosY, ch1);
+                        painter.setFont(normalFont);
+                    }
+                }
+                else
+                {
+                    painter.drawText(pxPosX, pxPosY, hexCaps() ? hex.toUpper() : hex);
+                }
                 pxPosX += hexStridePx;
 
                 // render ascii value
