@@ -1,5 +1,7 @@
 #include <QPushButton>
 #include <QEvent>
+#include <QRegularExpression>
+#include <QRegularExpressionValidator>
 
 #include "JumpToDialog.h"
 #include "ui_JumpToDialog.h"
@@ -11,6 +13,10 @@ JumpToDialog::JumpToDialog(QHexEdit *hexEdit, QWidget *parent) :
 {
     ui->setupUi(this);
     ui->bbControls->button(QDialogButtonBox::Ok)->setText(tr("Go"));
+
+    ui->leOffset->setInputMask("");
+    ui->leOffset->setValidator(new QRegularExpressionValidator(
+        QRegularExpression("[+-]?[0-9A-Fa-f]*"), ui->leOffset));
 
     setWindowFlags(Qt::CustomizeWindowHint | Qt::WindowTitleHint | Qt::WindowStaysOnTopHint | Qt::WindowCloseButtonHint | Qt::Window);
 }

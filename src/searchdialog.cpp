@@ -4,6 +4,8 @@
 #include <QEvent>
 #include <QMessageBox>
 #include <QLineEdit>
+#include <QRegularExpression>
+#include <QRegularExpressionValidator>
 
 SearchDialog::SearchDialog(QHexEdit *hexEdit, QWidget *parent) :
     QDialog(parent),
@@ -139,13 +141,19 @@ qint64 SearchDialog::replaceOccurrence(qint64 idx, const QByteArray &replaceBa)
 
 void SearchDialog::on_cbFindFormat_currentIndexChanged(int index)
 {
-    ui->cbFind->lineEdit()->setInputMask(index ? ">hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh" : "");
+    auto *le = ui->cbFind->lineEdit();
+    le->setInputMask("");
+    le->setValidator(index ? new QRegularExpressionValidator(
+        QRegularExpression("[0-9A-Fa-f ]*"), le) : nullptr);
 }
 
 
 void SearchDialog::on_cbReplaceFormat_currentIndexChanged(int index)
 {
-    ui->cbReplace->lineEdit()->setInputMask(index ? ">hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh" : "");
+    auto *le = ui->cbReplace->lineEdit();
+    le->setInputMask("");
+    le->setValidator(index ? new QRegularExpressionValidator(
+        QRegularExpression("[0-9A-Fa-f ]*"), le) : nullptr);
 }
 
 void SearchDialog::changeEvent(QEvent *event)

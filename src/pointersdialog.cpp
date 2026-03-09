@@ -15,6 +15,8 @@
 #include "ui_pointersdialog.h"
 #include "PointerListModel.h"
 #include <QtConcurrent/QtConcurrentRun>
+#include <QRegularExpression>
+#include <QRegularExpressionValidator>
 
 PointersDialog::PointersDialog(QHexEdit *hexEdit, QWidget *parent) :
     QDialog(parent),
@@ -38,10 +40,14 @@ PointersDialog::PointersDialog(QHexEdit *hexEdit, QWidget *parent) :
     ui->tvPointers->setColumnWidth(0, 78);
     ui->tvPointers->setColumnWidth(1, 78);
 
-    ui->leRangeBegin->setInputMask(QString());
-    ui->leRangeEnd->setInputMask(QString());
+    ui->leRangeBegin->setInputMask("");
+    ui->leRangeEnd->setInputMask("");
     ui->leRangeBegin->setMaxLength(16);
     ui->leRangeEnd->setMaxLength(16);
+    ui->leRangeBegin->setValidator(new QRegularExpressionValidator(
+        QRegularExpression("[0-9A-Fa-f]*"), this));
+    ui->leRangeEnd->setValidator(new QRegularExpressionValidator(
+        QRegularExpression("[0-9A-Fa-f]*"), this));
 
     const int fieldWidth = fontMetrics().horizontalAdvance(QLatin1Char('0')) * 10 + 16;
     ui->leRangeBegin->setFixedWidth(fieldWidth);
