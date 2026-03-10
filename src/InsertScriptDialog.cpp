@@ -1,6 +1,7 @@
 #include "InsertScriptDialog.h"
 #include "ui_InsertScriptDialog.h"
 #include "Datas.h"
+#include <QtEndian>
 #include <QEvent>
 #include <QFile>
 #include <QMessageBox>
@@ -41,6 +42,12 @@ void InsertScriptDialog::on_bbControls_accepted()
 void InsertScriptDialog::updateText()
 {
 
+}
+
+void InsertScriptDialog::setRomProfile(int pointerSize, qint64 pointerOffset)
+{
+    _pointerSize = pointerSize;
+    _pointerOffset = pointerOffset;
 }
 
 void InsertScriptDialog::on_bbControls_clicked(QAbstractButton *button)
@@ -120,25 +127,41 @@ void InsertScriptDialog::on_bbControls_clicked(QAbstractButton *button)
                      {
                          auto ptrOffset = i.toUInt(nullptr, 16);
 
-                         QByteArray data(4, 0);
-                         const quint32 pointerValue = static_cast<quint32>(offset);
+                         // Reverse the offset: raw_pointer = file_offset - pointerOffset
+                         const qint64 rawPointerValue = static_cast<qint64>(offset) - _pointerOffset;
+
+                         QByteArray data(_pointerSize, 0);
                          uchar *raw = reinterpret_cast<uchar *>(data.data());
 
-                         if (hexEdit->byteOrder == ByteOrder::BigEndian)
+                         if (_pointerSize == 2)
                          {
-                             qToBigEndian<quint32>(pointerValue, raw);
+                             const quint16 val16 = static_cast<quint16>(rawPointerValue);
+                             if (hexEdit->byteOrder == ByteOrder::BigEndian)
+                                 qToBigEndian<quint16>(val16, raw);
+                             else
+                             {
+                                 qToLittleEndian<quint16>(val16, raw);
+                                 if (hexEdit->byteOrder == ByteOrder::SwappedBytes)
+                                     std::swap(data[0], data[1]);
+                             }
                          }
                          else
                          {
-                             qToLittleEndian<quint32>(pointerValue, raw);
-                             if (hexEdit->byteOrder == ByteOrder::SwappedBytes)
+                             const quint32 val32 = static_cast<quint32>(rawPointerValue);
+                             if (hexEdit->byteOrder == ByteOrder::BigEndian)
+                                 qToBigEndian<quint32>(val32, raw);
+                             else
                              {
-                                 std::swap(data[0], data[1]);
-                                 std::swap(data[2], data[3]);
+                                 qToLittleEndian<quint32>(val32, raw);
+                                 if (hexEdit->byteOrder == ByteOrder::SwappedBytes)
+                                 {
+                                     std::swap(data[0], data[1]);
+                                     std::swap(data[2], data[3]);
+                                 }
                              }
                          }
 
-                         hexEdit->replace(ptrOffset, 4, data); // TODO: store offset size in dump and use endiannes
+                         hexEdit->replace(ptrOffset, _pointerSize, data);
                      }
 
 

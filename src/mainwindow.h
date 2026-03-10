@@ -8,6 +8,7 @@
 #include "langtranslator.h"
 #include "translationtable.h"
 #include "qhexedit/qhexedit.h"
+#include "romdetect.h"
 #include "optionsdialog.h"
 #include "searchdialog.h"
 #include "pointersdialog.h"
@@ -22,6 +23,7 @@ class QAction;
 class QActionGroup;
 class QMenu;
 class QUndoStack;
+class QComboBox;
 class QLabel;
 class QPushButton;
 class QDragEnterEvent;
@@ -86,6 +88,7 @@ private slots:
     void insertScript();
     void updateEndiannes();
     void toggleOverwriteMode();
+    void onRomTypeChanged(int index);
     void setLanguage();
     void openRecentFile();
     void openRecentTable();
@@ -94,6 +97,9 @@ public:
     void loadFile(const QString &fileName);
     void updateHexEditorSettings();
     void applyShortcutsFromSettings();
+    RomType currentRomType() const { return m_detectedRomType; }
+    int currentPointerSize() const { return defaultPointerSize(m_detectedRomType); }
+    qint64 currentPointerOffset() const { return defaultPointerOffset(m_detectedRomType); }
 
 private:
     void init();
@@ -118,6 +124,7 @@ private:
     void updateStatusBarVisibility();
     void updateValuePanels();
     void updateEndiannesLabel();
+    void repopulateRomTypeCombo();
     void pushNavigationPosition(qint64 position);
     void resetNavigationHistory();
     void navigateToHistoryIndex(int index);
@@ -151,6 +158,7 @@ private:
     QToolBar *searchToolBar;
     QToolBar *navigationToolBar = nullptr;
     QToolBar *scriptToolBar = nullptr;
+    QToolBar *profileToolBar = nullptr;
     QByteArray defaultWindowState;
 
     QAction *openAct;
@@ -216,6 +224,7 @@ private:
     QAction *toFileBeginningAct = nullptr;
     QAction *toFileEndAct = nullptr;
     QAction *resetToolbarsAct;
+    QAction *showStatusBarAct = nullptr;
     QAction *showStatusEndianAct;
     QAction *showStatusByteAct;
     QAction *showStatusWordAct;
@@ -241,6 +250,7 @@ private:
     DumpScriptDialog *dumpScriptDialog;
     InsertScriptDialog *insertScriptDialog;
 
+    QComboBox *cbRomType;
     QPushButton *lbEndiannes;
     QLabel *lbValueByte;
     QLabel *lbValueWord;
@@ -251,6 +261,8 @@ private:
     QLabel *lbOverwriteModeName;
     QLabel *lbSize, *lbSizeName;
 
+    RomType m_detectedRomType = RomType::Unknown;
+    QString m_readyText;
     QVector<qint64> navigationHistory;
     int navigationHistoryIndex = -1;
     bool navigationJumpInProgress = false;

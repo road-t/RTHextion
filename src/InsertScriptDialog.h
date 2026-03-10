@@ -8,6 +8,7 @@
 #include "qhexedit/qhexedit.h"
 #include "QtWidgets/qabstractbutton.h"
 #include "translationtable.h"
+#include "romdetect.h"
 
 namespace Ui {
 class InsertScriptDialog;
@@ -21,6 +22,7 @@ public:
     explicit InsertScriptDialog(QHexEdit *hexEdit, QWidget *parent = nullptr);
     ~InsertScriptDialog();
     void updateText();
+    void setRomProfile(int pointerSize, qint64 pointerOffset);
 
 protected:
     void showEvent(QShowEvent *ev) override;
@@ -37,6 +39,8 @@ private:
     Ui::InsertScriptDialog *ui;
     QHexEdit *hexEdit;
     TranslationTable* tb;
+    int _pointerSize = 4;
+    qint64 _pointerOffset = 0;
 
 };
 

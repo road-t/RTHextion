@@ -14,9 +14,14 @@
 #include "pointersdialog.h"
 #include "ui_pointersdialog.h"
 #include "PointerListModel.h"
+#include "romdetect.h"
+#include "mainwindow.h"
 #include <QtConcurrent/QtConcurrentRun>
 #include <QRegularExpression>
 #include <QRegularExpressionValidator>
+#include <QComboBox>
+#include <QGroupBox>
+#include <QHBoxLayout>
 
 PointersDialog::PointersDialog(QHexEdit *hexEdit, QWidget *parent) :
     QDialog(parent),
@@ -53,7 +58,61 @@ PointersDialog::PointersDialog(QHexEdit *hexEdit, QWidget *parent) :
     ui->leRangeBegin->setFixedWidth(fieldWidth);
     ui->leRangeEnd->setFixedWidth(fieldWidth);
     ui->rb4Byte->setChecked(true);
-    ui->gbPointerSize->setEnabled(false);
+    ui->gbPointerSize->setEnabled(true);
+
+    // --- Profile group box (below pointer buttons, above Range) ---
+    _gbProfile = new QGroupBox(tr("Profile"));
+    auto *profileLayout = new QHBoxLayout(_gbProfile);
+
+    auto *lblRomType = new QLabel(tr("ROM type") + ":");
+    _cbProfileRomType = new QComboBox();
+    _cbProfileRomType->addItem(tr("Unknown"), static_cast<int>(RomType::Unknown));
+    for (int i = 1; i < kRomTypeCount; ++i)
+        _cbProfileRomType->addItem(QString::fromLatin1(romTypeName(static_cast<RomType>(i))), i);
+    _cbProfileRomType->setCurrentIndex(0);
+
+    auto *lblOffset = new QLabel(tr("Pointer offset") + ":");
+    _leProfileOffset = new QLineEdit("0");
+    _leProfileOffset->setMaximumWidth(120);
+    _leProfileOffset->setValidator(new QRegularExpressionValidator(
+        QRegularExpression("[+-]?[0-9A-Fa-f]*"), this));
+    _leProfileOffset->setToolTip(tr("Signed hex offset added to decoded pointer to get file offset"));
+
+    profileLayout->addWidget(lblRomType);
+    profileLayout->addWidget(_cbProfileRomType);
+    profileLayout->addWidget(lblOffset);
+    profileLayout->addWidget(_leProfileOffset);
+    profileLayout->addStretch();
+
+    // Insert into the main layout, after pointerEditLayout (index 1), before rangeWhereLayout (index 2)
+    ui->verticalLayout->insertWidget(2, _gbProfile);
+
+    connect(_cbProfileRomType, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int idx) {
+        const RomType rt = static_cast<RomType>(_cbProfileRomType->itemData(idx).toInt());
+
+        // Update pointer size radio buttons
+        const int ptrSize = defaultPointerSize(rt);
+        if (ptrSize == 2)
+            ui->rb2Byte->setChecked(true);
+        else
+            ui->rb4Byte->setChecked(true);
+
+        // Update byte order radio buttons
+        const ByteOrder bo = defaultByteOrder(rt);
+        switch (bo) {
+        case ByteOrder::BigEndian:    ui->rbBE->setChecked(true); break;
+        case ByteOrder::SwappedBytes: ui->rbSW->setChecked(true); break;
+        default:                      ui->rbLE->setChecked(true); break;
+        }
+
+        // Update offset field
+        const qint64 offset = defaultPointerOffset(rt);
+        if (offset < 0)
+            _leProfileOffset->setText("-" + QString::number(-offset, 16).toUpper());
+        else
+            _leProfileOffset->setText(QString::number(offset, 16).toUpper());
+    });
 
     ui->bbControls->button(QDialogButtonBox::Ok)->setText(tr("Find"));
 
@@ -107,10 +166,40 @@ void PointersDialog::refreshFromTable()
     ui->tvPointers->resizeColumnsToContents();
 }
 
+void PointersDialog::setRomProfile(RomType type, qint64 offset)
+{
+    const QSignalBlocker blocker(_cbProfileRomType);
+    _cbProfileRomType->setCurrentIndex(static_cast<int>(type));
+
+    if (offset < 0)
+        _leProfileOffset->setText("-" + QString::number(-offset, 16).toUpper());
+    else
+        _leProfileOffset->setText(QString::number(offset, 16).toUpper());
+
+    // Sync pointer size and byte order
+    const int ptrSize = defaultPointerSize(type);
+    if (ptrSize == 2)
+        ui->rb2Byte->setChecked(true);
+    else
+        ui->rb4Byte->setChecked(true);
+
+    const ByteOrder bo = defaultByteOrder(type);
+    switch (bo) {
+    case ByteOrder::BigEndian:    ui->rbBE->setChecked(true); break;
+    case ByteOrder::SwappedBytes: ui->rbSW->setChecked(true); break;
+    default:                      ui->rbLE->setChecked(true); break;
+    }
+}
+
 void PointersDialog::quickSearch(qint64 clickBytePos)
 {
     if (searchActive)
         return;
+
+    // Sync ROM profile from MainWindow
+    auto *mw = qobject_cast<MainWindow *>(parent());
+    if (mw)
+        setRomProfile(mw->currentRomType(), mw->currentPointerOffset());
 
     // If combo boxes are not yet populated (dialog was never shown), initialize the UI first.
     if (ui->cbRangeStart->count() == 0)
@@ -220,6 +309,11 @@ void PointersDialog::showEvent(QShowEvent *ev)
 {
     Q_UNUSED(ev);
 
+    // Sync ROM profile from MainWindow
+    auto *mw = qobject_cast<MainWindow *>(parent());
+    if (mw)
+        setRomProfile(mw->currentRomType(), mw->currentPointerOffset());
+
     ui->btnCleanAll->setEnabled(!_hexEdit->pointers()->empty());
     //ui->bbControls->button(QDialogButtonBox::Ok)->setEnabled(_hexEdit->hasSelection());
 
@@ -290,10 +384,7 @@ void PointersDialog::showEvent(QShowEvent *ev)
     ui->leRangeEnd->setText(QString::number(selEnd, 16).toUpper());
     validateRangeInputs();
 
-    ui->rbLE->setChecked(_hexEdit->byteOrder == ByteOrder::LittleEndian);
-    ui->rbBE->setChecked(_hexEdit->byteOrder == ByteOrder::BigEndian);
-    ui->rbSW->setChecked(_hexEdit->byteOrder == ByteOrder::SwappedBytes);
-    ui->rb4Byte->setChecked(true);
+    // Byte order and pointer size are set by setRomProfile() above
 
     ui->progressBar->setValue(0);
     ui->progressBar->setFormat(tr("Ready"));
@@ -322,7 +413,23 @@ void PointersDialog::on_bbControls_accepted()
     if (!validateRangeInputs())
         return;
 
-    const int pointerSize = 4;
+    const int pointerSize = ui->rb2Byte->isChecked() ? 2 : 4;
+
+    // Parse pointer offset from the profile field
+    qint64 pointerOffset = 0;
+    {
+        QString offText = _leProfileOffset->text().trimmed();
+        if (!offText.isEmpty())
+        {
+            bool negative = false;
+            if (offText.startsWith('-')) { negative = true; offText.remove(0, 1); }
+            else if (offText.startsWith('+')) { offText.remove(0, 1); }
+            bool ok = false;
+            const qint64 absVal = offText.toLongLong(&ok, 16);
+            if (ok)
+                pointerOffset = negative ? -absVal : absVal;
+        }
+    }
 
     bool before = ui->rbBefore->isChecked();
     bool after = ui->rbAfter->isChecked();
@@ -430,7 +537,8 @@ void PointersDialog::on_bbControls_accepted()
         const char *buf = fileData.constData();
         auto isCandidateOffset = [&](quint64 value) -> bool
         {
-            const qint64 targetOffset = static_cast<qint64>(value);
+            // Apply pointer offset:  file_offset = decoded_pointer + pointerOffset
+            const qint64 targetOffset = static_cast<qint64>(value) + pointerOffset;
 
             if (targetOffset < selBegin || targetOffset >= selEnd)
                 return false;
@@ -502,7 +610,8 @@ void PointersDialog::on_bbControls_accepted()
 
                 if (isCandidateOffset(value))
                 {
-                    batch.append(qMakePair(j, static_cast<qint64>(value)));
+                    const qint64 fileTarget = static_cast<qint64>(value) + pointerOffset;
+                    batch.append(qMakePair(j, fileTarget));
                     ++found;
                 }
 

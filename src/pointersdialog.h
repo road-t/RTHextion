@@ -10,6 +10,11 @@
 #include <atomic>
 #include "qhexedit/qhexedit.h"
 #include "PointerListModel.h"
+#include "romdetect.h"
+
+class QComboBox;
+class QLineEdit;
+class QGroupBox;
 
 namespace Ui {
 class PointersDialog;
@@ -24,6 +29,7 @@ public:
     ~PointersDialog();
     void refreshFromTable();
     void quickSearch(qint64 clickBytePos = -1);
+    void setRomProfile(RomType type, qint64 offset);
 
 signals:
     void searchCompleted(int found);
@@ -77,6 +83,11 @@ private:
     QTimer *_uiUpdateTimer = nullptr;
     QFutureWatcher<void> _futureWatcher;
     bool _searchFinishPending = false;
+
+    // ROM profile widgets
+    QGroupBox  *_gbProfile = nullptr;
+    QComboBox  *_cbProfileRomType = nullptr;
+    QLineEdit  *_leProfileOffset = nullptr;
 };
 
 #endif // POINTERSDIALOG_H

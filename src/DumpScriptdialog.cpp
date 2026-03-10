@@ -71,6 +71,12 @@ DumpScriptDialog::~DumpScriptDialog()
     delete ui;
 }
 
+void DumpScriptDialog::setRomProfile(int pointerSize, qint64 pointerOffset)
+{
+    _pointerSize = pointerSize;
+    _pointerOffset = pointerOffset;
+}
+
 void DumpScriptDialog::on_cbSplitByCharacter_stateChanged(int arg1)
 {
     ui->cmbSplitCharacter->setDisabled(!arg1);

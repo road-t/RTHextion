@@ -17,6 +17,7 @@ public:
     explicit DumpScriptDialog(QHexEdit *hexEdit, QWidget *parent = nullptr);
     ~DumpScriptDialog();
     void updateText();
+    void setRomProfile(int pointerSize, qint64 pointerOffset);
 
 protected:
     void showEvent(QShowEvent *ev) override;
@@ -40,6 +41,8 @@ private:
     Ui::DumpScriptDialog *ui;
     QHexEdit *hexEdit;
     TranslationTable* tb;
+    int _pointerSize = 4;
+    qint64 _pointerOffset = 0;
 };
 
 #endif // DUMPSCRIPTDIALOG_H

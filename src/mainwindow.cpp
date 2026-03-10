@@ -18,6 +18,7 @@
 #include <QSettings>
 #include <QScrollBar>
 #include <QDir>
+#include <QComboBox>
 #include <algorithm>
 
 #include "QtWidgets/qpushbutton.h"
@@ -387,9 +388,6 @@ void MainWindow::setSize(qint64 size)
 
 void MainWindow::updateStatusBarVisibility()
 {
-    if (lbEndiannes)
-        lbEndiannes->setVisible(showStatusEndianAct->isChecked());
-
     if (lbValueByte)
         lbValueByte->setVisible(showStatusByteAct->isChecked());
     if (lbValueWord)
@@ -450,7 +448,7 @@ void MainWindow::showPointersDialog()
 void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
 {
     PointerListModel *model = hexEdit->pointers();
-    const qint64 pointerStart = hexEdit->pointerStartAt(bytePos, 4);
+    const qint64 pointerStart = hexEdit->pointerStartAt(bytePos, currentPointerSize());
     const qint64 fileSize = hexEdit->data().size();
 
     const bool hasSelection  = hexEdit->getSelectionEnd() - hexEdit->getSelectionBegin() > 1;
@@ -461,16 +459,20 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
     bool canAddAsPointer = false;
     qint64 addAsPointerTarget = -1;
 
-    if (bytePos >= 0 && bytePos + 4 <= fileSize)
+    const int ptrSize = currentPointerSize();
+    const qint64 ptrOffset = currentPointerOffset();
+
+    if (bytePos >= 0 && bytePos + ptrSize <= fileSize)
     {
-        const QByteArray rawPointer = hexEdit->dataAt(bytePos, 4);
-        if (rawPointer.size() == 4)
+        const QByteArray rawPointer = hexEdit->dataAt(bytePos, ptrSize);
+        if (rawPointer.size() == ptrSize)
         {
-            const quint64 decodedPointer = decodePointer(reinterpret_cast<const uchar *>(rawPointer.constData()), 4, hexEdit->byteOrder);
-            if (decodedPointer <= static_cast<quint64>(fileSize))
+            const quint64 decodedPointer = decodePointer(reinterpret_cast<const uchar *>(rawPointer.constData()), ptrSize, hexEdit->byteOrder);
+            const qint64 fileTarget = static_cast<qint64>(decodedPointer) + ptrOffset;
+            if (fileTarget >= 0 && fileTarget <= fileSize)
             {
                 canAddAsPointer = true;
-                addAsPointerTarget = static_cast<qint64>(decodedPointer);
+                addAsPointerTarget = fileTarget;
             }
         }
     }
@@ -1055,10 +1057,12 @@ void MainWindow::retranslateUi()
     showStatusAddressAct->setText(tr("Address"));
     showStatusSizeAct->setText(tr("Size"));
     showStatusModeAct->setText(tr("Mode"));
-    showSignedValuesAct->setText(tr("Signed"));
+    showSignedValuesAct->setText(tr("Show signed values"));
     showAddressAreaAct->setText(tr("Address area"));
     showAsciiAreaAct->setText(tr("ASCII area"));
     showAddressGridAct->setText(tr("Show grid"));
+    if (showStatusBarAct)
+        showStatusBarAct->setText(tr("Status bar"));
 
     showMapPointersAct->setText(tr("Pointer map"));
     showMapPointersAct->setStatusTip(tr("Show pointer locations on the side map"));
@@ -1073,12 +1077,23 @@ void MainWindow::retranslateUi()
     searchToolBar->setWindowTitle(tr("Search"));
     navigationToolBar->setWindowTitle(tr("Navigation"));
     scriptToolBar->setWindowTitle(tr("Script"));
+    profileToolBar->setWindowTitle(tr("Profile"));
     fileToolBar->toggleViewAction()->setText(tr("File"));
     editToolBar->toggleViewAction()->setText(tr("Actions"));
     searchToolBar->toggleViewAction()->setText(tr("Search"));
     navigationToolBar->toggleViewAction()->setText(tr("Navigation"));
     scriptToolBar->toggleViewAction()->setText(tr("Script"));
+    profileToolBar->toggleViewAction()->setText(tr("Profile"));
     resetToolbarsAct->setText(tr("Reset"));
+
+    // Repopulate ROM type combo to translate "Unknown" entry
+    repopulateRomTypeCombo();
+
+    // Refresh "Ready" message if status bar is currently in idle state
+    const bool wasIdle = statusBar()->currentMessage() == m_readyText;
+    m_readyText = tr("Ready");
+    if (wasIdle)
+        statusBar()->showMessage(m_readyText);
 
     // Toolbar navigation actions
     toolbarFirstPositionAct->setToolTip(tr("First position"));
@@ -1218,6 +1233,8 @@ void MainWindow::dumpScript()
 {
     if (!dumpScriptDialog)
         dumpScriptDialog = new DumpScriptDialog(hexEdit, this);
+
+    dumpScriptDialog->setRomProfile(currentPointerSize(), currentPointerOffset());
     dumpScriptDialog->show();
 }
 
@@ -1225,6 +1242,8 @@ void MainWindow::insertScript()
 {
     if (!insertScriptDialog)
         insertScriptDialog = new InsertScriptDialog(hexEdit, this);
+
+    insertScriptDialog->setRomProfile(currentPointerSize(), currentPointerOffset());
     insertScriptDialog->show();
 }
 
@@ -1636,7 +1655,7 @@ void MainWindow::createActions()
     showStatusModeAct->setCheckable(true);
     showStatusModeAct->setChecked(true);
 
-    showSignedValuesAct = new QAction(tr("Signed"), this);
+    showSignedValuesAct = new QAction(tr("Show signed values"), this);
     showSignedValuesAct->setCheckable(true);
     showSignedValuesAct->setChecked(false);
 
@@ -1770,6 +1789,11 @@ void MainWindow::createMenus()
     panelsMenu->addAction(showAddressAreaAct);
     panelsMenu->addAction(showAsciiAreaAct);
     panelsMenu->addAction(showAddressGridAct);
+    panelsMenu->addSeparator();
+    showStatusBarAct = panelsMenu->addAction(tr("Status bar"));
+    showStatusBarAct->setCheckable(true);
+    showStatusBarAct->setChecked(true);
+    connect(showStatusBarAct, &QAction::toggled, statusBar(), &QStatusBar::setVisible);
 
     mapsMenu = viewMenu->addMenu(tr("Maps"));
     mapsMenu->addAction(showMapPointersAct);
@@ -1782,16 +1806,19 @@ void MainWindow::createMenus()
     QAction *searchToolbarAct = searchToolBar->toggleViewAction();
     QAction *navigationToolbarAct = navigationToolBar->toggleViewAction();
     QAction *scriptToolbarAct = scriptToolBar->toggleViewAction();
+    QAction *profileToolbarAct = profileToolBar->toggleViewAction();
     fileToolbarAct->setText(tr("File"));
     actionsToolbarAct->setText(tr("Actions"));
     searchToolbarAct->setText(tr("Search"));
     navigationToolbarAct->setText(tr("Navigation"));
     scriptToolbarAct->setText(tr("Script"));
+    profileToolbarAct->setText(tr("Profile"));
     toolbarMenu->addAction(fileToolbarAct);
     toolbarMenu->addAction(actionsToolbarAct);
     toolbarMenu->addAction(searchToolbarAct);
     toolbarMenu->addAction(navigationToolbarAct);
     toolbarMenu->addAction(scriptToolbarAct);
+    toolbarMenu->addAction(profileToolbarAct);
     toolbarMenu->addSeparator();
     resetToolbarsAct = toolbarMenu->addAction(tr("Reset"));
 
@@ -1803,10 +1830,10 @@ void MainWindow::createMenus()
         editToolBar->show();
         searchToolBar->show();
         navigationToolBar->show();
-        scriptToolBar->show(); });
+        scriptToolBar->show();
+        profileToolBar->show(); });
 
     statusBarMenu = viewMenu->addMenu(tr("Status bar"));
-    statusBarMenu->addAction(showStatusEndianAct);
     statusBarMenu->addAction(showStatusByteAct);
     statusBarMenu->addAction(showStatusWordAct);
     statusBarMenu->addAction(showStatusDwordAct);
@@ -1835,17 +1862,6 @@ void MainWindow::createMenus()
 
 void MainWindow::createStatusBar()
 {
- //   QGridLayout *myGridLayout = new QGridLayout();
- //   statusBar()->setLayout(myGridLayout);
-
-    // Endiannes label
-    lbEndiannes = new QPushButton();
-    lbEndiannes->setFlat(true);
-    lbEndiannes->setText(tr("Little-endian"));
-    lbEndiannes->setMaximumSize(QSize(120, 24));
-    connect(lbEndiannes, SIGNAL(clicked()), this, SLOT(updateEndiannes()));
-    statusBar()->addWidget(lbEndiannes);
-
     // Value labels (separate panels)
     lbValueByte = new QLabel();
     lbValueByte->setFrameShape(QFrame::Panel);
@@ -1913,7 +1929,12 @@ void MainWindow::createStatusBar()
     updateValuePanels();
     updateStatusBarVisibility();
 
-    statusBar()->showMessage(tr("Ready"), 2000);
+    m_readyText = tr("Ready");
+    statusBar()->showMessage(m_readyText);
+    connect(statusBar(), &QStatusBar::messageChanged, this, [this](const QString &msg) {
+        if (msg.isEmpty())
+            statusBar()->showMessage(m_readyText);
+    });
 }
 
 void MainWindow::createToolBars()
@@ -1970,6 +1991,31 @@ void MainWindow::createToolBars()
     toolbarInsertScriptAct->setStatusTip(tr("Insert text script"));
     toolbarInsertScriptAct->setEnabled(true);
     connect(toolbarInsertScriptAct, &QAction::triggered, this, &MainWindow::insertScript);
+
+    // Profile toolbar: byte order + ROM type
+    profileToolBar = addToolBar(tr("Profile"));
+    profileToolBar->setObjectName("profileToolBar");
+
+    lbEndiannes = new QPushButton();
+    lbEndiannes->setFlat(true);
+    lbEndiannes->setMaximumSize(QSize(120, 24));
+    connect(lbEndiannes, SIGNAL(clicked()), this, SLOT(updateEndiannes()));
+    profileToolBar->addWidget(lbEndiannes);
+
+    profileToolBar->addSeparator();
+
+    auto *lblRom = new QLabel(tr("ROM:"));
+    lblRom->setMargin(4);
+    profileToolBar->addWidget(lblRom);
+
+    cbRomType = new QComboBox();
+    repopulateRomTypeCombo();
+    cbRomType->setCurrentIndex(0);
+    connect(cbRomType, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &MainWindow::onRomTypeChanged);
+    profileToolBar->addWidget(cbRomType);
+
+    updateEndiannesLabel();
 }
 
 void MainWindow::loadFile(const QString &fileName)
@@ -2015,6 +2061,12 @@ void MainWindow::loadFile(const QString &fileName)
     {
         const QByteArray header = hexEdit->dataAt(0, 512);
         const RomType rom = detectRomType(fileName, header);
+        m_detectedRomType = rom;
+
+        // Update status bar combo without re-triggering onRomTypeChanged
+        const QSignalBlocker blocker(cbRomType);
+        cbRomType->setCurrentIndex(static_cast<int>(rom));
+
         if (rom != RomType::Unknown)
         {
             hexEdit->byteOrder = defaultByteOrder(rom);
@@ -2023,11 +2075,6 @@ void MainWindow::loadFile(const QString &fileName)
     }
 
     settings.setValue("RecentFile0", fileName);
-
-    /*    auto pos = settings.value("offset").toLongLong();
-        hexEdit->setCursorPosition(pos);
-        hexEdit->ensureVisible();
-    */
 }
 
 void MainWindow::readSettings()
@@ -2575,4 +2622,26 @@ void MainWindow::updateEndiannesLabel()
         lbEndiannes->setText(tr("Little-endian"));
         break;
     }
+}
+
+void MainWindow::onRomTypeChanged(int index)
+{
+    m_detectedRomType = static_cast<RomType>(cbRomType->itemData(index).toInt());
+
+    // Update byte order to match the new ROM type
+    hexEdit->byteOrder = defaultByteOrder(m_detectedRomType);
+    updateEndiannesLabel();
+    setAddress(hexEdit->getCurrentOffset());
+}
+
+void MainWindow::repopulateRomTypeCombo()
+{
+    if (!cbRomType) return;
+    const int savedIndex = cbRomType->currentIndex();
+    const QSignalBlocker blocker(cbRomType);
+    cbRomType->clear();
+    cbRomType->addItem(tr("Unknown"), 0);
+    for (int i = 1; i < kRomTypeCount; ++i)
+        cbRomType->addItem(QString::fromLatin1(romTypeName(static_cast<RomType>(i))), i);
+    cbRomType->setCurrentIndex(savedIndex >= 0 ? savedIndex : 0);
 }
