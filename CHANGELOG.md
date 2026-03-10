@@ -26,6 +26,7 @@ All notable changes to this project will be documented in this file.
 - All 7 UI language files (ru, fr, de, es, pt, ja, zh_CN) updated with new/renamed strings.
 
 ### Fixed
+- Blank address and ASCII areas without configuration at the first run fixed.
 - 2-byte pointer search now correctly records and renders 2-byte-wide pointer spans.
 - Insert script uses per-pointer byte width when writing back pointer values.
 - Undo/redo correctly restores per-pointer byte size.
