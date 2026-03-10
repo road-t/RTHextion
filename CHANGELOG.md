@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.1.3] - 2026-03-10
+
+### Added
+- ROM-type dependent pointer offset calculation with 2 and 4-bytes pointer support
+- Multi-byte character encodings in translation tables support
+- Standard encodings (UTF-8, Shift-JIS, Windows-1251 etc.) support without translation tables
+- New "General" preferences tab (first tab) consolidating global settings: "Auto-load last opened file at startup" and "Detect ROM type".
+- Customizable keyboard shortcuts for all major actions.
+- Active nibble highlighting in the hex area — the nibble under the cursor is now visually distinct.
+- Pointer value hint displayed on mouse hover (previously required a mouse button press).
+
+### Changed
+- Cursor position is included in the selection extent.
+- New pointer script format: `{|offset:size|}` (e.g. `{|0ff5e1:2|}`) — size field embedded directly in dump/insert scripts.
+- Pointer rendering now highlights the exact number of bytes per pointer (2 or 4) rather than always 4.
+- Pointer value hint on mouse hover (previously required mouse button press).
+- Renamed "Fonts and colors" preferences tab to "Appearance".
+- Renamed "Detect endianness" option to "Detect ROM type".
+- Copy/paste in the ASCII area now uses active translation table encoding/decoding when available, preserving multi-byte sequences.
+- Dump and insert scripts now respect translation table multi-byte entries, preventing byte-level splitting of multi-byte characters.
+- Character ranges in find pointers and stop character lists now include all translation table entries (single-byte and multi-byte).
+- All 7 UI language files (ru, fr, de, es, pt, ja, zh_CN) updated with new/renamed strings.
+
+### Fixed
+- 2-byte pointer search now correctly records and renders 2-byte-wide pointer spans.
+- Insert script uses per-pointer byte width when writing back pointer values.
+- Undo/redo correctly restores per-pointer byte size.
+- Long token names (e.g. `<TOKEN_NAME>`) no longer clipped in the ASCII area.
+- Wide characters (kanji and other CJK glyphs) no longer overlap: column slot widths are now measured using actual font metrics (`horizontalAdvance`) instead of a fixed monospace estimate.
+- Increased spacing between wide/multi-byte characters in the ASCII area (`kAsciiColumnGapWidePx` raised to 15).
+- Erratic hex-input behavior (spurious cursor jumps on certain key sequences) fixed.
+
+---
+
 ## [v1.0] - 2026-03-06
 
 ### Added
