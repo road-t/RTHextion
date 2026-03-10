@@ -64,6 +64,7 @@ OptionsDialog::OptionsDialog(QWidget *parent) : QDialog(parent), ui(new Ui::Opti
     connect(ui->cbHighlighting, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
     connect(ui->cbDynamicSize, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
     connect(ui->cbShowHexGrid, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
+    connect(ui->cbShowMultibyteFrame, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
     connect(ui->cbAutoLoadRecentFile, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
     connect(ui->cbDetectEndianness, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
     connect(ui->sbAddressAreaWidth, QOverload<int>::of(&QSpinBox::valueChanged), this, &OptionsDialog::on_spinBoxValueChanged);
@@ -107,7 +108,6 @@ OptionsDialog::OptionsDialog(QWidget *parent) : QDialog(parent), ui(new Ui::Opti
 
     ui->cbAddressArea->hide();
     ui->cbAsciiArea->hide();
-    ui->cbShowHexGrid->hide();
 
     applyPlaceholderFieldFont(ui->leNonPrintableNoTableChar, ui->leNotInTableChar, ui->pbWidgetFont->font());
 
@@ -171,8 +171,11 @@ void OptionsDialog::saveCurrentSettings()
     m_originalSettings.hexFontColor = ui->lbHexFontColor->palette().color(ui->lbHexFontColor->backgroundRole());
     m_originalSettings.hexAreaBgColor = ui->lbHexAreaBackground->palette().color(ui->lbHexAreaBackground->backgroundRole());
     m_originalSettings.hexAreaGridColor = ui->lbHexAreaGrid->palette().color(ui->lbHexAreaGrid->backgroundRole());
+    m_originalSettings.multibyteFrameColor = ui->lbMultibyteFrameColor->palette().color(ui->lbMultibyteFrameColor->backgroundRole());
+    m_originalSettings.showMultibyteFrame = ui->cbShowMultibyteFrame->isChecked();
     m_originalSettings.cursorCharColor = ui->lbCursorCharColor->palette().color(ui->lbCursorCharColor->backgroundRole());
     m_originalSettings.cursorFrameColor = ui->lbCursorFrameColor->palette().color(ui->lbCursorFrameColor->backgroundRole());
+    m_originalSettings.zeroByteFontColor = ui->lbZeroByteFontColor->palette().color(ui->lbZeroByteFontColor->backgroundRole());
     m_originalSettings.scrollMapPtrBgColor = ui->lbScrollMapPtrBgColor->palette().color(ui->lbScrollMapPtrBgColor->backgroundRole());
     m_originalSettings.scrollMapTargetBgColor = ui->lbScrollMapTargetBgColor->palette().color(ui->lbScrollMapTargetBgColor->backgroundRole());
     m_originalSettings.widgetFont = ui->pbWidgetFont->font();
@@ -212,8 +215,11 @@ void OptionsDialog::restoreSettings()
     setColor(ui->lbHexFontColor, m_originalSettings.hexFontColor);
     setColor(ui->lbHexAreaBackground, m_originalSettings.hexAreaBgColor);
     setColor(ui->lbHexAreaGrid, m_originalSettings.hexAreaGridColor);
+    setColor(ui->lbMultibyteFrameColor, m_originalSettings.multibyteFrameColor);
+    ui->cbShowMultibyteFrame->setChecked(m_originalSettings.showMultibyteFrame);
     setColor(ui->lbCursorCharColor, m_originalSettings.cursorCharColor);
     setColor(ui->lbCursorFrameColor, m_originalSettings.cursorFrameColor);
+    setColor(ui->lbZeroByteFontColor, m_originalSettings.zeroByteFontColor);
     setColor(ui->lbScrollMapPtrBgColor, m_originalSettings.scrollMapPtrBgColor);
     setColor(ui->lbScrollMapTargetBgColor, m_originalSettings.scrollMapTargetBgColor);
     ui->pbWidgetFont->setFont(m_originalSettings.widgetFont);
@@ -266,6 +272,7 @@ void OptionsDialog::readSettings()
     ui->cbHighlighting->setChecked(settings.value("Highlighting", true).toBool());
     ui->cbDynamicSize->setChecked(settings.value("Autosize", true).toBool());
     ui->cbShowHexGrid->setChecked(settings.value("ShowHexGrid", true).toBool());
+    ui->cbShowMultibyteFrame->setChecked(settings.value("ShowMultibyteFrame", true).toBool());
     ui->cbAutoLoadRecentFile->setChecked(settings.value("AutoLoadRecentFile", true).toBool());
     ui->cbDetectEndianness->setChecked(settings.value("DetectEndianness", true).toBool());
 
@@ -283,8 +290,10 @@ void OptionsDialog::readSettings()
     setColor(ui->lbHexFontColor, settings.value("HexFontColor", QPalette::WindowText).value<QColor>());
     setColor(ui->lbHexAreaBackground, settings.value("HexAreaBackgroundColor", QColor(Qt::white)).value<QColor>());
     setColor(ui->lbHexAreaGrid, settings.value("HexAreaGridColor", QColor(0x99, 0x99, 0x99)).value<QColor>());
+    setColor(ui->lbMultibyteFrameColor, settings.value("MultibyteFrameColor", QColor(0x20, 0x20, 0x20)).value<QColor>());
     setColor(ui->lbCursorCharColor, settings.value("CursorCharColor", QColor(0x00, 0x60, 0xFF, 0x80)).value<QColor>());
     setColor(ui->lbCursorFrameColor, settings.value("CursorFrameColor", QColor(Qt::black)).value<QColor>());
+    setColor(ui->lbZeroByteFontColor, settings.value("ZeroByteFontColor", QColor(0xCC, 0xCC, 0xCC)).value<QColor>());
     setColor(ui->lbScrollMapPtrBgColor, settings.value("ScrollMapPtrBgColor", QColor(0xd0, 0xd0, 0xd0)).value<QColor>());
     setColor(ui->lbScrollMapTargetBgColor, settings.value("ScrollMapTargetBgColor", QColor(0xd0, 0xd0, 0xd0)).value<QColor>());
 
@@ -315,6 +324,7 @@ void OptionsDialog::writeSettings()
     settings.setValue("Highlighting", ui->cbHighlighting->isChecked());
     settings.setValue("Autosize", ui->cbDynamicSize->isChecked());
     settings.setValue("ShowHexGrid", ui->cbShowHexGrid->isChecked());
+    settings.setValue("ShowMultibyteFrame", ui->cbShowMultibyteFrame->isChecked());
     settings.setValue("AutoLoadRecentFile", ui->cbAutoLoadRecentFile->isChecked());
     settings.setValue("DetectEndianness", ui->cbDetectEndianness->isChecked());
 
@@ -333,8 +343,10 @@ void OptionsDialog::writeSettings()
     settings.setValue("HexFontColor", ui->lbHexFontColor->palette().color(ui->lbHexFontColor->backgroundRole()));
     settings.setValue("HexAreaBackgroundColor", ui->lbHexAreaBackground->palette().color(ui->lbHexAreaBackground->backgroundRole()));
     settings.setValue("HexAreaGridColor", ui->lbHexAreaGrid->palette().color(ui->lbHexAreaGrid->backgroundRole()));
+    settings.setValue("MultibyteFrameColor", ui->lbMultibyteFrameColor->palette().color(ui->lbMultibyteFrameColor->backgroundRole()));
     settings.setValue("CursorCharColor", ui->lbCursorCharColor->palette().color(ui->lbCursorCharColor->backgroundRole()));
     settings.setValue("CursorFrameColor", ui->lbCursorFrameColor->palette().color(ui->lbCursorFrameColor->backgroundRole()));
+    settings.setValue("ZeroByteFontColor", ui->lbZeroByteFontColor->palette().color(ui->lbZeroByteFontColor->backgroundRole()));
     settings.setValue("ScrollMapPtrBgColor", ui->lbScrollMapPtrBgColor->palette().color(ui->lbScrollMapPtrBgColor->backgroundRole()));
     settings.setValue("ScrollMapTargetBgColor", ui->lbScrollMapTargetBgColor->palette().color(ui->lbScrollMapTargetBgColor->backgroundRole()));
     
@@ -534,6 +546,28 @@ void OptionsDialog::on_pbHexAreaGrid_clicked()
     }
 }
 
+void OptionsDialog::on_pbMultibyteFrameColor_clicked()
+{
+    QColor color = QColorDialog::getColor(currentSwatchColor(ui->lbMultibyteFrameColor), this);
+
+    if (color.isValid())
+    {
+        setColor(ui->lbMultibyteFrameColor, color);
+        updateSettings();
+    }
+}
+
+void OptionsDialog::on_pbZeroByteFontColor_clicked()
+{
+    QColor color = QColorDialog::getColor(currentSwatchColor(ui->lbZeroByteFontColor), this);
+
+    if (color.isValid())
+    {
+        setColor(ui->lbZeroByteFontColor, color);
+        updateSettings();
+    }
+}
+
 void OptionsDialog::on_pbScrollMapPtrBgColor_clicked()
 {
     QColor color = QColorDialog::getColor(currentSwatchColor(ui->lbScrollMapPtrBgColor), this);
@@ -580,6 +614,13 @@ void OptionsDialog::on_pbCursorFrameColor_clicked()
 
 void OptionsDialog::on_cbShowHexGrid_stateChanged(int)
 {
+    updateAreaControls();
+    updateSettings();
+}
+
+void OptionsDialog::on_cbShowMultibyteFrame_stateChanged(int)
+{
+    updateAreaControls();
     updateSettings();
 }
 
@@ -615,6 +656,16 @@ void OptionsDialog::updateAreaControls()
     ui->pbAsciiAreaColor->setEnabled(asciiEnabled);
     ui->pbAsciiFontColor->setEnabled(asciiEnabled);
 
+    // Enable/disable hex grid color based on checkbox
+    bool gridEnabled = ui->cbShowHexGrid->isChecked();
+    ui->pbHexAreaGrid->setEnabled(gridEnabled);
+    ui->lbHexAreaGrid->setEnabled(gridEnabled);
+
+    // Enable/disable multibyte frame color based on checkbox
+    bool frameEnabled = ui->cbShowMultibyteFrame->isChecked();
+    ui->pbMultibyteFrameColor->setEnabled(frameEnabled);
+    ui->lbMultibyteFrameColor->setEnabled(frameEnabled);
+
     // Disable Bytes per Line label if autosize is checked
     ui->lbBytesPerLine->setDisabled(ui->cbDynamicSize->isChecked());
 }
@@ -634,6 +685,7 @@ void OptionsDialog::resetToDefaults()
     ui->sbAddressAreaWidth->setValue(4);
     ui->cbAsciiArea->setChecked(true);
     ui->cbShowHexGrid->setChecked(true);
+    ui->cbShowMultibyteFrame->setChecked(true);
     ui->cbHighlighting->setChecked(true);
     ui->cbDynamicSize->setChecked(true);
     ui->cbAutoLoadRecentFile->setChecked(true);
@@ -653,8 +705,10 @@ void OptionsDialog::resetToDefaults()
     setColor(ui->lbHexFontColor, this->palette().color(QPalette::WindowText));
     setColor(ui->lbHexAreaBackground, QColor(Qt::white));
     setColor(ui->lbHexAreaGrid, QColor(0x99, 0x99, 0x99));
+    setColor(ui->lbMultibyteFrameColor, QColor(0x20, 0x20, 0x20));
     setColor(ui->lbCursorCharColor, QColor(0x00, 0x60, 0xFF, 0x80));
     setColor(ui->lbCursorFrameColor, QColor(Qt::black));
+    setColor(ui->lbZeroByteFontColor, QColor(0xCC, 0xCC, 0xCC));
     setColor(ui->lbScrollMapPtrBgColor, QColor(0xd0, 0xd0, 0xd0));
     setColor(ui->lbScrollMapTargetBgColor, QColor(0xd0, 0xd0, 0xd0));
 

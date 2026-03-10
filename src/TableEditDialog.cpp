@@ -6,6 +6,7 @@
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QEvent>
+#include <QRegularExpressionValidator>
 
 TableEditDialog::TableEditDialog(TranslationTable** tb, QWidget *parent) :
     QDialog(parent),
@@ -40,18 +41,32 @@ void TableEditDialog::showEvent(QShowEvent *ev)
         {
             addRow(static_cast<uint8_t>(it.key()), it.value());
         }
+
+        const auto &mbItems = tb->getMultiByteItems();
+        for (auto it = mbItems.cbegin(); it != mbItems.cend(); ++it)
+            addRow(it.key(), it.value());
     }
 }
 
 void TableEditDialog::addRow(uint8_t hex, const QString &value)
 {
+    addRow(QByteArray(1, static_cast<char>(hex)), value);
+}
+
+void TableEditDialog::addRow(const QByteArray &key, const QString &value)
+{
+    if (key.isEmpty())
+        return;
+
     int row = ui->twTable->rowCount();
     ui->twTable->insertRow(row);
 
-    auto *hexItem = new QTableWidgetItem(QString::number(hex, 16).toUpper().rightJustified(2, '0'));
+    QString hexText;
+    for (int i = 0; i < key.size(); ++i)
+        hexText += QString::number(static_cast<uint8_t>(key[i]), 16).toUpper().rightJustified(2, '0');
+
+    auto *hexItem = new QTableWidgetItem(hexText);
     hexItem->setTextAlignment(Qt::AlignCenter);
-    // HEX column: not editable
-    hexItem->setFlags(hexItem->flags() & ~Qt::ItemIsEditable);
     ui->twTable->setItem(row, 0, hexItem);
 
     auto *valItem = new QTableWidgetItem(value);
@@ -60,67 +75,94 @@ void TableEditDialog::addRow(uint8_t hex, const QString &value)
 
 void TableEditDialog::on_pbAdd_clicked()
 {
-    // Find first free byte not already in table
-    QSet<int> usedKeys;
+    // Suggest first free single-byte key, but allow multi-byte sequences too.
+    QSet<QString> usedKeys;
     for (int r = 0; r < ui->twTable->rowCount(); ++r)
     {
-        bool ok;
-        int key = ui->twTable->item(r, 0)->text().toInt(&ok, 16);
-        if (ok) usedKeys.insert(key);
+        auto *item = ui->twTable->item(r, 0);
+        if (!item)
+            continue;
+        const QString key = item->text().trimmed().toUpper();
+        if (!key.isEmpty())
+            usedKeys.insert(key);
     }
 
     // Suggest the first free byte
-    int suggestedByte = 0;
+    int suggestedByte = -1;
     for (int i = 0; i <= 0xFF; ++i)
     {
-        if (!usedKeys.contains(i))
+        const QString key = QString::number(i, 16).toUpper().rightJustified(2, '0');
+        if (!usedKeys.contains(key))
         {
             suggestedByte = i;
             break;
         }
     }
+    if (suggestedByte < 0)
+        suggestedByte = 0;
 
     bool ok;
     QInputDialog hexDialog(this);
     hexDialog.setWindowTitle(tr("Add entry"));
-    hexDialog.setLabelText(tr("Enter hex byte value (00-FF):"));
+    hexDialog.setLabelText(tr("Enter hex byte sequence (00-FF, even number of digits):"));
     hexDialog.setInputMode(QInputDialog::TextInput);
     hexDialog.setTextValue(QString::number(suggestedByte, 16).rightJustified(2, '0').toUpper());
 
-    if (auto lineEdit = hexDialog.findChild<QLineEdit*>())
-        lineEdit->setInputMask(">hh");
+    if (auto lineEdit = hexDialog.findChild<QLineEdit*>()) {
+        auto *validator = new QRegularExpressionValidator(QRegularExpression(QStringLiteral("^[0-9A-Fa-f]{2,}$")), lineEdit);
+        lineEdit->setValidator(validator);
+    }
 
     ok = hexDialog.exec() == QDialog::Accepted;
     QString input = hexDialog.textValue();
     if (!ok || input.isEmpty())
         return;
 
-    bool hexOk;
-    int byteVal = input.toInt(&hexOk, 16);
-    if (!hexOk || byteVal < 0 || byteVal > 0xFF)
+    input = input.trimmed().toUpper();
+    if (input.size() % 2 != 0)
     {
         QMessageBox::warning(this, tr("Invalid Input"),
-                           tr("Please enter a valid hex byte value (0x00-0xFF)"));
+                           tr("Please enter an even number of hex digits (e.g. 12 or 00E8)."));
         return;
     }
 
-    if (usedKeys.contains(byteVal))
+    bool parseOk = true;
+    QByteArray key;
+    for (int i = 0; i < input.size(); i += 2)
+    {
+        bool okPart = false;
+        const int v = input.mid(i, 2).toInt(&okPart, 16);
+        if (!okPart)
+        {
+            parseOk = false;
+            break;
+        }
+        key.append(static_cast<char>(v));
+    }
+    if (!parseOk || key.isEmpty())
+    {
+        QMessageBox::warning(this, tr("Invalid Input"),
+                             tr("Please enter a valid hex byte sequence."));
+        return;
+    }
+
+    if (usedKeys.contains(input))
     {
         QMessageBox::warning(this, tr("Duplicate"),
-                           tr("This byte value is already in the table"));
+                           tr("This key is already in the table"));
         return;
     }
 
     // Now prompt for the translation value
     QString valueStr = QInputDialog::getText(this, tr("Add entry"),
-                                             tr("Enter translation text for byte 0x%1:").arg(QString::number(byteVal, 16).toUpper().rightJustified(2, '0')),
+                                             tr("Enter translation text for key 0x%1:").arg(input),
                                              QLineEdit::Normal,
                                              QString(),
                                              &ok);
     if (!ok)
         return;
 
-    addRow(static_cast<uint8_t>(byteVal), valueStr);
+    addRow(key, valueStr);
     ui->twTable->scrollToBottom();
 }
 
@@ -163,15 +205,34 @@ void TableEditDialog::accept()
         auto *valItem = ui->twTable->item(r, 1);
         if (!hexItem || !valItem) continue;
 
-        bool ok;
-        uint8_t key = static_cast<uint8_t>(hexItem->text().toInt(&ok, 16));
-        if (!ok) continue;
+        const QString hexText = hexItem->text().trimmed();
+        if (hexText.isEmpty() || (hexText.size() % 2) != 0)
+            continue;
+
+        QByteArray key;
+        bool ok = true;
+        for (int i = 0; i < hexText.size(); i += 2)
+        {
+            bool okPart = false;
+            const int v = hexText.mid(i, 2).toInt(&okPart, 16);
+            if (!okPart)
+            {
+                ok = false;
+                break;
+            }
+            key.append(static_cast<char>(v));
+        }
+        if (!ok || key.isEmpty())
+            continue;
 
         const QString value = valItem->text();
         // Skip empty values
         if (value.isEmpty()) continue;
 
-        tb->setItem(key, value);
+        if (key.size() == 1)
+            tb->setItem(static_cast<uint8_t>(key[0]), value);
+        else
+            tb->setMultiByteItem(key, value);
     }
 
     emit tableChanged();

@@ -22,9 +22,74 @@
   <layout class="QVBoxLayout" name="verticalLayout">
    <item>
     <widget class="QTabWidget" name="tabWidget">
+     <widget class="QWidget" name="pageGeneral">
+      <attribute name="title">
+       <string>General</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="vl_general">
+       <item>
+        <widget class="QGroupBox" name="gbGeneralSettings">
+         <property name="title">
+          <string>Settings</string>
+         </property>
+         <layout class="QVBoxLayout" name="vl_general_settings">
+          <item>
+           <widget class="QCheckBox" name="cbAutoLoadRecentFile">
+            <property name="text">
+             <string>Load last opened file at startup</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QCheckBox" name="cbDetectEndianness">
+            <property name="toolTip">
+             <string>Auto-detect byte order (experimental)</string>
+            </property>
+            <property name="text">
+             <string>Detect ROM type</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="verticalSpacer_general">
+            <property name="orientation">
+             <enum>Qt::Vertical</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>20</width>
+              <height>40</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <spacer name="verticalSpacer_general_bottom">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>20</width>
+           <height>40</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
      <widget class="QWidget" name="pageFontsColors">
       <attribute name="title">
-       <string>Fonts and colors</string>
+       <string>Appearance</string>
       </attribute>
       <layout class="QHBoxLayout" name="hl_fontscolors">
      <item>
@@ -162,16 +227,6 @@
           <string>Hex area</string>
          </property>
          <layout class="QGridLayout" name="gridLayout_hex">
-          <item row="0" column="0">
-           <widget class="QCheckBox" name="cbShowHexGrid">
-            <property name="text">
-             <string>Show grid</string>
-            </property>
-            <property name="checked">
-             <bool>true</bool>
-            </property>
-           </widget>
-          </item>
           <item row="1" column="0">
            <widget class="QPushButton" name="pbHexAreaBackground">
             <property name="text">
@@ -211,14 +266,14 @@
            </widget>
           </item>
           <item row="2" column="0">
-           <widget class="QPushButton" name="pbHexAreaGrid">
+           <widget class="QPushButton" name="pbHexFontColor">
             <property name="text">
-             <string>Grid color</string>
+             <string>Font color</string>
             </property>
            </widget>
           </item>
           <item row="2" column="1">
-           <widget class="QLabel" name="lbHexAreaGrid">
+           <widget class="QLabel" name="lbHexFontColor">
             <property name="sizePolicy">
              <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
               <horstretch>20</horstretch>
@@ -249,14 +304,110 @@
            </widget>
           </item>
           <item row="3" column="0">
-           <widget class="QPushButton" name="pbHexFontColor">
+           <widget class="QPushButton" name="pbZeroByteFontColor">
             <property name="text">
-             <string>Font color</string>
+             <string>Zero bytes color</string>
             </property>
            </widget>
           </item>
           <item row="3" column="1">
-           <widget class="QLabel" name="lbHexFontColor">
+           <widget class="QLabel" name="lbZeroByteFontColor">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+              <horstretch>20</horstretch>
+              <verstretch>20</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="minimumSize">
+             <size>
+              <width>20</width>
+              <height>20</height>
+             </size>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>20</width>
+              <height>20</height>
+             </size>
+            </property>
+            <property name="frameShape">
+             <enum>QFrame::Panel</enum>
+            </property>
+            <property name="frameShadow">
+             <enum>QFrame::Sunken</enum>
+            </property>
+            <property name="text">
+             <string/>
+            </property>
+           </widget>
+          </item>
+          <item row="4" column="0" colspan="2">
+           <widget class="QCheckBox" name="cbShowHexGrid">
+            <property name="text">
+             <string>Show grid</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item row="5" column="0">
+           <widget class="QPushButton" name="pbHexAreaGrid">
+            <property name="text">
+             <string>Grid color</string>
+            </property>
+           </widget>
+          </item>
+          <item row="5" column="1">
+           <widget class="QLabel" name="lbHexAreaGrid">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+              <horstretch>20</horstretch>
+              <verstretch>20</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="minimumSize">
+             <size>
+              <width>20</width>
+              <height>20</height>
+             </size>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>20</width>
+              <height>20</height>
+             </size>
+            </property>
+            <property name="frameShape">
+             <enum>QFrame::Panel</enum>
+            </property>
+            <property name="frameShadow">
+             <enum>QFrame::Sunken</enum>
+            </property>
+            <property name="text">
+             <string/>
+            </property>
+           </widget>
+          </item>
+          <item row="6" column="0" colspan="2">
+           <widget class="QCheckBox" name="cbShowMultibyteFrame">
+            <property name="text">
+             <string>Show multibyte frame</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item row="7" column="0">
+           <widget class="QPushButton" name="pbMultibyteFrameColor">
+            <property name="text">
+             <string>Frame color</string>
+            </property>
+           </widget>
+          </item>
+          <item row="7" column="1">
+           <widget class="QLabel" name="lbMultibyteFrameColor">
             <property name="sizePolicy">
              <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
               <horstretch>20</horstretch>
@@ -887,33 +1038,10 @@
             </property>
            </widget>
           </item>
-          <item row="12" column="0" colspan="5">
-           <widget class="QCheckBox" name="cbAutoLoadRecentFile">
-            <property name="text">
-             <string>Load last opened file at startup</string>
-            </property>
-            <property name="checked">
-             <bool>true</bool>
-            </property>
-           </widget>
-          </item>
           <item row="11" column="2">
            <widget class="QLineEdit" name="leNotInTableChar">
             <property name="maxLength">
              <number>1</number>
-            </property>
-           </widget>
-          </item>
-          <item row="13" column="0" colspan="5">
-           <widget class="QCheckBox" name="cbDetectEndianness">
-            <property name="toolTip">
-             <string>Auto-detect byte order (experimental)</string>
-            </property>
-            <property name="text">
-             <string>Detect endianness</string>
-            </property>
-            <property name="checked">
-             <bool>true</bool>
             </property>
            </widget>
           </item>

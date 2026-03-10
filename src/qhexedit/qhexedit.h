@@ -187,6 +187,10 @@ class QHEXEDIT_API QHexEdit : public QAbstractScrollArea
     */
     Q_PROPERTY(QColor hexAreaGridColor READ hexAreaGridColor WRITE setHexAreaGridColor)
 
+    /*! Property showMultibyteFrame toggles drawing of multi-byte table entry frames.
+     */
+    Q_PROPERTY(bool showMultibyteFrame READ showMultibyteFrame WRITE setShowMultibyteFrame)
+
     /*! Property cursor char color is used to highlight the byte/character currently
     under the cursor. You can set it (setCursorCharColor()) and read it (cursorCharColor()).
     */
@@ -196,6 +200,12 @@ class QHEXEDIT_API QHexEdit : public QAbstractScrollArea
     currently under the cursor.
     */
     Q_PROPERTY(QColor cursorFrameColor READ cursorFrameColor WRITE setCursorFrameColor)
+
+    /*! Color used to render zero (0x00) bytes in the hex area. */
+    Q_PROPERTY(QColor zeroByteFontColor READ zeroByteFontColor WRITE setZeroByteFontColor)
+
+    /*! Color used for dashed frame of currently active multi-byte table entry in hex area. */
+    Q_PROPERTY(QColor multibyteFrameColor READ multibyteFrameColor WRITE setMultibyteFrameColor)
 
     /*! Set the font of the widget. Please use fixed width fonts like Mono or Courier.*/
     Q_PROPERTY(QFont font READ font WRITE setFont)
@@ -399,6 +409,15 @@ public:
     QColor hexFontColor();
     void setHexFontColor(const QColor &color);
 
+    QColor zeroByteFontColor();
+    void setZeroByteFontColor(const QColor &color);
+
+    QColor multibyteFrameColor();
+    void setMultibyteFrameColor(const QColor &color);
+
+    bool showMultibyteFrame() const;
+    void setShowMultibyteFrame(bool show);
+
     qint64 addressOffset();
     void setAddressOffset(qint64 addressArea);
 
@@ -427,7 +446,7 @@ public:
     qint64 getPointerOfsset(qint64 dataOffset);
     qint64 pointerStartAt(qint64 bytePos, int pointerSize = 4);
     qint64 pointerTargetAt(qint64 bytePos, int pointerSize = 4);
-    bool addPointerUndoable(qint64 pointerOffset, qint64 targetOffset);
+    bool addPointerUndoable(qint64 pointerOffset, qint64 targetOffset, int ptrSize = 4);
     bool removePointerUndoable(qint64 pointerOffset);
     int removePointersUndoable(const QVector<qint64> &pointerOffsets);
     int removePointersToOffsetUndoable(qint64 targetOffset);
@@ -482,6 +501,9 @@ public:
     TranslationTable* getTranslationTable();
     void setTranslationTable(TranslationTable* tb = nullptr);
     void removeTranslationTable();
+
+    QString currentEncoding() const;
+    void setCurrentEncoding(const QString &encoding);
 
     bool overwriteMode();
     void setOverwriteMode(bool overwriteMode);
@@ -540,6 +562,8 @@ private:
     void updateAsciiAreaMaxWidth();
     void invalidateAsciiAreaWidthCache();
     void ensureAsciiAreaWidthCache();
+    void ensureEncodingDisplayCache();
+    void ensureTableDisplayCache();
     void restoreTopVisibleByte(qint64 topByte);
 
 private slots:
@@ -584,6 +608,9 @@ private:
     QColor _hexAreaGridColor;
     QColor _cursorCharColor;
     QColor _cursorFrameColor;
+    QColor _zeroByteFontColor;
+    QColor _multibyteFrameColor;
+    bool _showMultibyteFrame = true;
     int _addressWidth;
     bool _asciiArea;
     qint64 _addressOffset;
@@ -637,6 +664,12 @@ private:
     int _rowsShown;                             // lines of text shown
     UndoStack * _undoStack;                     // Stack to store edit actions for undo/redo
     TranslationTable* _tb = nullptr;            // Translation table
+    QString _currentEncoding = QStringLiteral("ASCII");  // Current text encoding for ASCII area
+    QVector<QString> _encodingChars;            // decoded symbols for each byte in _dataShown; null = continuation
+    bool _encodingCacheValid = false;           // true when _encodingChars matches current _dataShown + encoding
+    QVector<QString> _tbDisplayChars;           // decoded table symbols per byte in _dataShown; null = continuation
+    QVector<int> _tbDisplaySpan;                // bytes consumed at lead byte; 0 for continuation/unmapped
+    bool _tbDisplayCacheValid = false;          // true when _tbDisplayChars/_tbDisplaySpan match _dataShown
     QVector<int> _tbSymbolWidthPxCache;         // cached rendered width for byte values 0x00..0xFF
     QVector<uint32_t> _asciiAreaMaxWidthByBpl;  // cached max ASCII row width by bytes-per-line
     int _tbMaxSymbolWidthPx = 0;

@@ -68,7 +68,7 @@ PointersDialog::PointersDialog(QHexEdit *hexEdit, QWidget *parent) :
     _cbProfileRomType = new QComboBox();
     _cbProfileRomType->addItem(tr("Unknown"), static_cast<int>(RomType::Unknown));
     for (int i = 1; i < kRomTypeCount; ++i)
-        _cbProfileRomType->addItem(QString::fromLatin1(romTypeName(static_cast<RomType>(i))), i);
+        _cbProfileRomType->addItem(tr(romTypeName(static_cast<RomType>(i))), i);
     _cbProfileRomType->setCurrentIndex(0);
 
     auto *lblOffset = new QLabel(tr("Pointer offset") + ":");
@@ -247,6 +247,9 @@ void PointersDialog::quickSearch(qint64 clickBytePos)
     ui->cbOptimize->setChecked(false);      // no text optimization
     ui->cbExcludeSelection->setChecked(false);
 
+    // Force 4-byte pointers for quick search (override any ROM-type defaults)
+    ui->rb4Byte->setChecked(true);
+
     _quickSearchMode = true;
     if (!_quickSearchBusyCursor)
     {
@@ -313,6 +316,8 @@ void PointersDialog::showEvent(QShowEvent *ev)
     auto *mw = qobject_cast<MainWindow *>(parent());
     if (mw)
         setRomProfile(mw->currentRomType(), mw->currentPointerOffset());
+    // Always default to 4-byte pointer size regardless of ROM-type default
+    ui->rb4Byte->setChecked(true);
 
     ui->btnCleanAll->setEnabled(!_hexEdit->pointers()->empty());
     //ui->bbControls->button(QDialogButtonBox::Ok)->setEnabled(_hexEdit->hasSelection());
@@ -331,20 +336,27 @@ void PointersDialog::showEvent(QShowEvent *ev)
         // populate range comboboxes with translation table values...
         if (tb)
         {
-            size_t i = 0;
-            tb->reset();
-
-            while (i++ < tb->size())
+            int count = 0;
+            const auto *items = tb->getItems();
+            for (auto it = items->cbegin(); it != items->cend(); ++it)
             {
-                auto el = tb->next();
-
-                ui->cbRangeStart->addItem(el.second, el.first);
-                ui->cbRangeEnd->addItem(el.second, el.first);
-                ui->cbStopChar->addItem(el.second, el.first);
+                const QByteArray key(1, it.key());
+                ui->cbRangeStart->addItem(it.value(), key);
+                ui->cbRangeEnd->addItem(it.value(), key);
+                ui->cbStopChar->addItem(it.value(), key);
+                ++count;
+            }
+            const auto &mbItems = tb->getMultiByteItems();
+            for (auto it = mbItems.cbegin(); it != mbItems.cend(); ++it)
+            {
+                ui->cbRangeStart->addItem(it.value(), it.key());
+                ui->cbRangeEnd->addItem(it.value(), it.key());
+                ui->cbStopChar->addItem(it.value(), it.key());
+                ++count;
             }
 
             ui->cbRangeStart->setCurrentIndex(0);
-            ui->cbRangeEnd->setCurrentIndex(i - 1);
+            ui->cbRangeEnd->setCurrentIndex(count - 1);
             ui->cbStopChar->setCurrentIndex(0);
 
             ui->cbStopChar->setDisabled(false);
@@ -460,9 +472,12 @@ void PointersDialog::on_bbControls_accepted()
 
     // Get search parameters
     const bool optimizeForText = ui->cbOptimize->isChecked();
-    const char firstPrintable = ui->cbRangeStart->currentData().toChar().toLatin1();
-    const char lastPrintable = ui->cbRangeEnd->currentData().toChar().toLatin1();
-    auto stopChar = ui->cbStopChar->isEnabled() ? ui->cbStopChar->currentData().toChar().toLatin1() : 0;
+    const QByteArray startBytes = ui->cbRangeStart->currentData().toByteArray();
+    const QByteArray endBytes   = ui->cbRangeEnd->currentData().toByteArray();
+    const char firstPrintable = startBytes.isEmpty() ? '\x20' : startBytes[0];
+    const char lastPrintable  = endBytes.isEmpty()   ? '\x7E' : endBytes[endBytes.size() - 1];
+    const QByteArray stopBytes = ui->cbStopChar->isEnabled() ? ui->cbStopChar->currentData().toByteArray() : QByteArray();
+    const char stopChar = stopBytes.isEmpty() ? char(0) : stopBytes[0];
     const ByteOrder searchOrder = ui->rbBE->isChecked() ? ByteOrder::BigEndian
                                 : ui->rbSW->isChecked() ? ByteOrder::SwappedBytes
                                                         : ByteOrder::LittleEndian;
@@ -611,7 +626,7 @@ void PointersDialog::on_bbControls_accepted()
                 if (isCandidateOffset(value))
                 {
                     const qint64 fileTarget = static_cast<qint64>(value) + pointerOffset;
-                    batch.append(qMakePair(j, fileTarget));
+                    batch.append(qMakePair(j, PointerListModel::encodePtrValue(fileTarget, pointerSize)));
                     ++found;
                 }
 
@@ -828,7 +843,7 @@ void PointersDialog::on_btnAddPointer_clicked()
         return;
     }
 
-    _hexEdit->addPointerUndoable(pointerOffset, pointedOffset);
+    _hexEdit->addPointerUndoable(pointerOffset, pointedOffset, ui->rb2Byte->isChecked() ? 2 : 4);
     ui->tvPointers->resizeColumnsToContents();
     ui->btnCleanAll->setEnabled(!plModel->empty());
 }

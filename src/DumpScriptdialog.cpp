@@ -89,22 +89,23 @@ void DumpScriptDialog::updateText()
     const bool usePointers = ui->cbUsePointers->isChecked();
     auto data = hexEdit->getRawSelection();
 
-    QChar stopChar;
+    QByteArray stopBytes;
     bool stopCharActive = false;
 
     if (ui->cbSplitByCharacter->isChecked())
     {
-        stopChar = ui->cmbSplitCharacter->itemData(ui->cmbSplitCharacter->currentIndex()).toChar();
-        stopCharActive = true;
+        stopBytes = ui->cmbSplitCharacter->currentData().toByteArray();
+        stopCharActive = !stopBytes.isEmpty();
     }
 
     QString dump;
 
     auto selectionOffset = hexEdit->getSelectionBegin();
 
-    for (auto i = 0; i < data.size(); i++)
+    int i = 0;
+    while (i < data.size())
     {
-        auto offset = i + selectionOffset;
+        const auto offset = i + selectionOffset;
 
         if (usePointers && hexEdit->pointers()->hasOffset(offset))
         {
@@ -115,33 +116,36 @@ void DumpScriptDialog::updateText()
             auto ptrs = hexEdit->pointers()->getPointers(offset);
             QString ptrsString;
 
-            if (ptrs.size() > 1)
             {
                 QStringList ptrsList;
-
-                for (auto it = ptrs.begin(); it != ptrs.end(); ++it)
+                for (const qint64 ptrKey : ptrs)
                 {
-                    ptrsList.push_back(QString::number(*it, 16));
+                    const int sz = hexEdit->pointers()->getPointerSize(ptrKey);
+                    ptrsList.push_back(QString::number(ptrKey, 16) + ":" + QString::number(sz));
                 }
-
                 ptrsString = ptrsList.join(',');
             }
-            else
-                ptrsString = QString::number(ptrs[0], 16);
 
             // add pointer to dump
             dump += QString("{|%1|}:\n").arg(ptrsString);
         }
 
-        QChar ch = QChar::fromLatin1(data[i]);
-
         if (useTable)
-            dump += tb->encodeSymbol(ch.toLatin1(), true);
+        {
+            int consumed = 0;
+            dump += tb->encodeBytes(data, i, consumed, true);
+            if (stopCharActive && data.mid(i, stopBytes.size()) == stopBytes)
+                dump += '\n';
+            i += consumed;
+        }
         else
+        {
+            QChar ch = QChar::fromLatin1(data[i]);
             dump += ch.isPrint() ? ch : TranslationTable::charToHex(ch.toLatin1());
-
-        if (stopCharActive && ch == stopChar)
-            dump += '\n';
+            if (stopCharActive && data.mid(i, stopBytes.size()) == stopBytes)
+                dump += '\n';
+            ++i;
+        }
     }
 
     ui->pteScript->setPlainText(dump);
@@ -171,15 +175,12 @@ void DumpScriptDialog::populateStopCharCmb()
     // populate range comboboxes with translation table values...
     if (ui->cbUseTable->isChecked() && tb)
     {
-        size_t i = 0;
-        tb->reset();
-
-        while (i++ < tb->size())
-        {
-            auto el = tb->next();
-
-            ui->cmbSplitCharacter->addItem(el.second, el.first);
-        }
+        const auto *items = tb->getItems();
+        for (auto it = items->cbegin(); it != items->cend(); ++it)
+            ui->cmbSplitCharacter->addItem(it.value(), QByteArray(1, it.key()));
+        const auto &mbItems = tb->getMultiByteItems();
+        for (auto it = mbItems.cbegin(); it != mbItems.cend(); ++it)
+            ui->cmbSplitCharacter->addItem(it.value(), it.key());
     }
     else // ...or with standard ASCII printable characters
     {

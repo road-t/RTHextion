@@ -552,8 +552,12 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
 
             if (clickedAscii)
             {
-                // ASCII area: copy raw bytes as Latin-1 text
-                QApplication::clipboard()->setText(QString::fromLatin1(raw.constData(), raw.size()));
+                // ASCII area: use TBL encoding if available, otherwise Latin-1
+                TranslationTable *clipTb = hexEdit->getTranslationTable();
+                if (clipTb)
+                    QApplication::clipboard()->setText(clipTb->encode(raw, true));
+                else
+                    QApplication::clipboard()->setText(QString::fromLatin1(raw.constData(), raw.size()));
             }
             else
             {
@@ -584,8 +588,12 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
 
             if (clickedAscii)
             {
-                // ASCII area: copy raw bytes as Latin-1 text
-                QApplication::clipboard()->setText(QString::fromLatin1(raw.constData(), raw.size()));
+                // ASCII area: use TBL encoding if available, otherwise Latin-1
+                TranslationTable *clipTb = hexEdit->getTranslationTable();
+                if (clipTb)
+                    QApplication::clipboard()->setText(clipTb->encode(raw, true));
+                else
+                    QApplication::clipboard()->setText(QString::fromLatin1(raw.constData(), raw.size()));
             }
             else
             {
@@ -601,8 +609,12 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
             QByteArray ba;
             if (clickedAscii)
             {
-                // ASCII area: paste raw bytes (Latin-1 encoding)
-                ba = QApplication::clipboard()->text().toLatin1();
+                // ASCII area: use TBL decoding if available, otherwise Latin-1
+                TranslationTable *clipTb = hexEdit->getTranslationTable();
+                if (clipTb)
+                    ba = clipTb->decode(QApplication::clipboard()->text().toUtf8());
+                else
+                    ba = QApplication::clipboard()->text().toLatin1();
             }
             else
             {
@@ -679,7 +691,7 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
 
         if (chosen == addAsPointerAct)
         {
-            if (canAddAsPointer && hexEdit->addPointerUndoable(bytePos, addAsPointerTarget))
+            if (canAddAsPointer && hexEdit->addPointerUndoable(bytePos, addAsPointerTarget, ptrSize))
                 refreshPointersUi();
         }
         else if (chosen == jumpAct)
@@ -732,7 +744,7 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
 
         if (chosen == addAsPointerAct)
         {
-            if (canAddAsPointer && hexEdit->addPointerUndoable(bytePos, addAsPointerTarget))
+            if (canAddAsPointer && hexEdit->addPointerUndoable(bytePos, addAsPointerTarget, ptrSize))
                 refreshPointersUi();
             return;
         }
@@ -767,9 +779,15 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
 
     QAction *quickSearchAct = menu.addAction(tr("Quick pointer search"));
     QAction *findPtrAct     = menu.addAction(tr("Find pointers") + QString("..."));
-    menu.addSeparator();
     QAction *addAsPointerAct = menu.addAction(tr("Add as pointer"));
     addAsPointerAct->setEnabled(canAddAsPointer);
+
+    QAction *saveAsDumpAct = nullptr;
+    if (clickedAscii)
+    {
+        menu.addSeparator();
+        saveAsDumpAct = menu.addAction(tr("Save as dump"));
+    }
 
     auto clipActs = addClipboardActions(menu, !clickedAscii);  // Show hex labels only in hex area
 
@@ -779,8 +797,12 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
 
     if (chosen == addAsPointerAct)
     {
-        if (canAddAsPointer && hexEdit->addPointerUndoable(bytePos, addAsPointerTarget))
+        if (canAddAsPointer && hexEdit->addPointerUndoable(bytePos, addAsPointerTarget, ptrSize))
             refreshPointersUi();
+    }
+    else if (saveAsDumpAct && chosen == saveAsDumpAct)
+    {
+        dumpScript();
     }
     else if (chosen == quickSearchAct)
     {
@@ -1036,6 +1058,8 @@ void MainWindow::retranslateUi()
     // Menu titles
     fileMenu->setTitle(tr("File"));
     recentFileMenu->setTitle(tr("Recent"));
+    romTypeMenu->setTitle(tr("ROM type"));
+    encodingMenu->setTitle(tr("Encoding"));
     editMenu->setTitle(tr("Edit"));
     tableMenu->setTitle(tr("Table"));
     recentTableMenu->setTitle(tr("Recent"));
@@ -1088,6 +1112,13 @@ void MainWindow::retranslateUi()
 
     // Repopulate ROM type combo to translate "Unknown" entry
     repopulateRomTypeCombo();
+
+    // Retranslate ROM type menu "Unknown" entry
+    if (romTypeMenuGroup) {
+        const auto actions = romTypeMenuGroup->actions();
+        if (!actions.isEmpty())
+            actions[0]->setText(tr("Unknown"));
+    }
 
     // Refresh "Ready" message if status bar is currently in idle state
     const bool wasIdle = statusBar()->currentMessage() == m_readyText;
@@ -1728,6 +1759,50 @@ void MainWindow::createMenus()
     fileMenu->addAction(saveAsAct);
     fileMenu->addAction(saveReadable);
     fileMenu->addSeparator();
+    // ROM type submenu
+    romTypeMenu = fileMenu->addMenu(tr("ROM type"));
+    romTypeMenuGroup = new QActionGroup(this);
+    romTypeMenuGroup->setExclusive(true);
+    {
+        QAction *act = romTypeMenu->addAction(tr("Unknown"));
+        act->setCheckable(true);
+        act->setChecked(true);
+        act->setData(0);
+        romTypeMenuGroup->addAction(act);
+        for (int i = 1; i < kRomTypeCount; ++i) {
+            act = romTypeMenu->addAction(tr(romTypeName(static_cast<RomType>(i))));
+            act->setCheckable(true);
+            act->setData(i);
+            romTypeMenuGroup->addAction(act);
+        }
+    }
+    connect(romTypeMenuGroup, &QActionGroup::triggered, this, &MainWindow::onMenuRomTypeTriggered);
+
+    // Encoding submenu
+    encodingMenu = fileMenu->addMenu(tr("Encoding"));
+    encodingGroup = new QActionGroup(this);
+    encodingGroup->setExclusive(true);
+    {
+        static const char *encodings[] = {
+            "ASCII", "UTF-8", "UTF-16 LE", "UTF-16 BE",
+            "Shift-JIS", "EUC-JP", "ISO-2022-JP",
+            "ISO-8859-1", "Windows-1252",
+            "KOI8-R", "Windows-1251", "CP-866",
+            "GB2312", "GBK", "GB18030",
+            "EUC-KR",
+            nullptr
+        };
+        for (int i = 0; encodings[i]; ++i) {
+            QAction *act = encodingMenu->addAction(QString::fromLatin1(encodings[i]));
+            act->setCheckable(true);
+            act->setData(QString::fromLatin1(encodings[i]));
+            if (i == 0) act->setChecked(true);
+            encodingGroup->addAction(act);
+        }
+    }
+    connect(encodingGroup, &QActionGroup::triggered, this, &MainWindow::onEncodingTriggered);
+
+    fileMenu->addSeparator();
     fileMenu->addAction(revertAct);
     fileMenu->addAction(closeAct);
     fileMenu->addSeparator();
@@ -1788,7 +1863,6 @@ void MainWindow::createMenus()
     panelsMenu = viewMenu->addMenu(tr("Panels"));
     panelsMenu->addAction(showAddressAreaAct);
     panelsMenu->addAction(showAsciiAreaAct);
-    panelsMenu->addAction(showAddressGridAct);
     panelsMenu->addSeparator();
     showStatusBarAct = panelsMenu->addAction(tr("Status bar"));
     showStatusBarAct->setCheckable(true);
@@ -2066,6 +2140,7 @@ void MainWindow::loadFile(const QString &fileName)
         // Update status bar combo without re-triggering onRomTypeChanged
         const QSignalBlocker blocker(cbRomType);
         cbRomType->setCurrentIndex(static_cast<int>(rom));
+        syncRomTypeMenu(static_cast<int>(rom));
 
         if (rom != RomType::Unknown)
         {
@@ -2115,10 +2190,13 @@ void MainWindow::readSettings()
     hexEdit->setDynamicBytesPerLine(settings.value("Autosize", true).toBool());
     hexEdit->setHexCaps(settings.value("HexCaps", true).toBool());
     hexEdit->setShowHexGrid(settings.value("ShowHexGrid", true).toBool());
+    hexEdit->setShowMultibyteFrame(settings.value("ShowMultibyteFrame", true).toBool());
     hexEdit->setHexAreaBackgroundColor(settings.value("HexAreaBackgroundColor", QColor(Qt::white)).value<QColor>());
     hexEdit->setHexAreaGridColor(settings.value("HexAreaGridColor", QColor(0x99, 0x99, 0x99)).value<QColor>());
+    hexEdit->setMultibyteFrameColor(settings.value("MultibyteFrameColor", QColor(0x20, 0x20, 0x20)).value<QColor>());
     hexEdit->setCursorCharColor(settings.value("CursorCharColor", QColor(0x00, 0x60, 0xFF, 0x80)).value<QColor>());
     hexEdit->setCursorFrameColor(settings.value("CursorFrameColor", QColor(Qt::black)).value<QColor>());
+    hexEdit->setZeroByteFontColor(settings.value("ZeroByteFontColor", QColor(0xCC, 0xCC, 0xCC)).value<QColor>());
 
     if (showAddressAreaAct)
         showAddressAreaAct->setChecked(hexEdit->addressArea());
@@ -2285,10 +2363,13 @@ void MainWindow::updateHexEditorSettings()
     hexEdit->setBytesPerLine(settings.value("BytesPerLine", 32).toInt());
     hexEdit->setDynamicBytesPerLine(settings.value("Autosize", true).toBool());
     hexEdit->setShowHexGrid(settings.value("ShowHexGrid", true).toBool());
+    hexEdit->setShowMultibyteFrame(settings.value("ShowMultibyteFrame", true).toBool());
     hexEdit->setHexAreaBackgroundColor(settings.value("HexAreaBackgroundColor", QColor(Qt::white)).value<QColor>());
     hexEdit->setHexAreaGridColor(settings.value("HexAreaGridColor", QColor(0x99, 0x99, 0x99)).value<QColor>());
+    hexEdit->setMultibyteFrameColor(settings.value("MultibyteFrameColor", QColor(0x20, 0x20, 0x20)).value<QColor>());
     hexEdit->setCursorCharColor(settings.value("CursorCharColor", QColor(0x00, 0x60, 0xFF, 0x80)).value<QColor>());
     hexEdit->setCursorFrameColor(settings.value("CursorFrameColor", QColor(Qt::black)).value<QColor>());
+    hexEdit->setZeroByteFontColor(settings.value("ZeroByteFontColor", QColor(0xCC, 0xCC, 0xCC)).value<QColor>());
     hexEdit->setScrollMapPtrBgColor(settings.value("ScrollMapPtrBgColor", QColor(0xd0, 0xd0, 0xd0)).value<QColor>());
     hexEdit->setScrollMapTargetBgColor(settings.value("ScrollMapTargetBgColor", QColor(0xd0, 0xd0, 0xd0)).value<QColor>());
 
@@ -2632,6 +2713,7 @@ void MainWindow::onRomTypeChanged(int index)
     hexEdit->byteOrder = defaultByteOrder(m_detectedRomType);
     updateEndiannesLabel();
     setAddress(hexEdit->getCurrentOffset());
+    syncRomTypeMenu(index);
 }
 
 void MainWindow::repopulateRomTypeCombo()
@@ -2642,6 +2724,42 @@ void MainWindow::repopulateRomTypeCombo()
     cbRomType->clear();
     cbRomType->addItem(tr("Unknown"), 0);
     for (int i = 1; i < kRomTypeCount; ++i)
-        cbRomType->addItem(QString::fromLatin1(romTypeName(static_cast<RomType>(i))), i);
+        cbRomType->addItem(tr(romTypeName(static_cast<RomType>(i))), i);
     cbRomType->setCurrentIndex(savedIndex >= 0 ? savedIndex : 0);
+}
+
+void MainWindow::onMenuRomTypeTriggered(QAction *action)
+{
+    int index = action->data().toInt();
+    const QSignalBlocker blocker(cbRomType);
+    cbRomType->setCurrentIndex(index);
+    m_detectedRomType = static_cast<RomType>(index);
+    hexEdit->byteOrder = defaultByteOrder(m_detectedRomType);
+    updateEndiannesLabel();
+    setAddress(hexEdit->getCurrentOffset());
+}
+
+void MainWindow::syncRomTypeMenu(int index)
+{
+    if (!romTypeMenuGroup) return;
+    const auto actions = romTypeMenuGroup->actions();
+    if (index >= 0 && index < actions.size())
+        actions[index]->setChecked(true);
+}
+
+void MainWindow::onEncodingTriggered(QAction *action)
+{
+    m_currentEncoding = action->data().toString();
+    hexEdit->setCurrentEncoding(m_currentEncoding);
+}
+
+void MainWindow::syncEncodingMenu()
+{
+    if (!encodingGroup) return;
+    for (QAction *a : encodingGroup->actions()) {
+        if (a->data().toString() == m_currentEncoding) {
+            a->setChecked(true);
+            break;
+        }
+    }
 }

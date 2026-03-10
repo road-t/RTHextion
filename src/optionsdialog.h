@@ -50,6 +50,9 @@ private slots:
     void on_cbDynamicSize_stateChanged(int);
     void on_pbHexAreaBackground_clicked();
     void on_pbHexAreaGrid_clicked();
+    void on_cbShowMultibyteFrame_stateChanged(int);
+    void on_pbMultibyteFrameColor_clicked();
+    void on_pbZeroByteFontColor_clicked();
     void on_pbScrollMapPtrBgColor_clicked();
     void on_pbScrollMapTargetBgColor_clicked();
     void on_cbShowHexGrid_stateChanged(int);
@@ -113,8 +116,11 @@ private:
         QColor hexFontColor;
         QColor hexAreaBgColor;
         QColor hexAreaGridColor;
+        bool showMultibyteFrame;
+        QColor multibyteFrameColor;
         QColor cursorCharColor;
         QColor cursorFrameColor;
+        QColor zeroByteFontColor;
         QColor scrollMapPtrBgColor;
         QColor scrollMapTargetBgColor;
         QFont widgetFont;

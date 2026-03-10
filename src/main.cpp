@@ -69,6 +69,8 @@ namespace
             settings.setValue("HexAreaBackgroundColor", QColor(Qt::white));
         if (!settings.contains("HexAreaGridColor"))
             settings.setValue("HexAreaGridColor", QColor(0x99, 0x99, 0x99));
+        if (!settings.contains("MultibyteFrameColor"))
+            settings.setValue("MultibyteFrameColor", QColor(0x20, 0x20, 0x20));
         if (!settings.contains("CursorCharColor"))
             settings.setValue("CursorCharColor", QColor(0x00, 0x60, 0xFF, 0x80));
         if (!settings.contains("CursorFrameColor"))

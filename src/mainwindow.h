@@ -89,6 +89,8 @@ private slots:
     void updateEndiannes();
     void toggleOverwriteMode();
     void onRomTypeChanged(int index);
+    void onMenuRomTypeTriggered(QAction *action);
+    void onEncodingTriggered(QAction *action);
     void setLanguage();
     void openRecentFile();
     void openRecentTable();
@@ -125,6 +127,8 @@ private:
     void updateValuePanels();
     void updateEndiannesLabel();
     void repopulateRomTypeCombo();
+    void syncRomTypeMenu(int index);
+    void syncEncodingMenu();
     void pushNavigationPosition(qint64 position);
     void resetNavigationHistory();
     void navigateToHistoryIndex(int index);
@@ -152,6 +156,10 @@ private:
     QMenu *mapsMenu;
     QMenu *recentFileMenu;
     QMenu *recentTableMenu;
+    QMenu *romTypeMenu;
+    QMenu *encodingMenu;
+    QActionGroup *romTypeMenuGroup = nullptr;
+    QActionGroup *encodingGroup = nullptr;
 
     QToolBar *fileToolBar;
     QToolBar *editToolBar;
@@ -262,6 +270,7 @@ private:
     QLabel *lbSize, *lbSizeName;
 
     RomType m_detectedRomType = RomType::Unknown;
+    QString m_currentEncoding = QStringLiteral("ASCII");
     QString m_readyText;
     QVector<qint64> navigationHistory;
     int navigationHistoryIndex = -1;

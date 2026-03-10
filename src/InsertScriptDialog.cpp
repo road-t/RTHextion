@@ -88,7 +88,7 @@ void InsertScriptDialog::on_bbControls_clicked(QAbstractButton *button)
 
         */
         static QRegularExpression re(
-                    "\\{\\|([a-f0-9,]+)\\|\\}:\\s*(.*)(?=(?:\\{\\|)|$)\\s*",
+                    "\\{\\|([a-f0-9:,]+)\\|\\}:\\s*(.*)(?=(?:\\{\\|)|$)\\s*",
                     QRegularExpression::CaseInsensitiveOption |
                     QRegularExpression::DotMatchesEverythingOption |
                     QRegularExpression::InvertedGreedinessOption
@@ -125,15 +125,19 @@ void InsertScriptDialog::on_bbControls_clicked(QAbstractButton *button)
 
                      for (const auto& i : pointers)
                      {
-                         auto ptrOffset = i.toUInt(nullptr, 16);
+                         const QStringList parts = i.trimmed().split(':');
+                         const quint64 ptrOffset = parts[0].trimmed().toULongLong(nullptr, 16);
+                         const int perPtrSize = (parts.size() > 1) ? parts[1].trimmed().toInt() : _pointerSize;
+                         const int effectivePtrSize = (perPtrSize == 2 || perPtrSize == 3 || perPtrSize == 4)
+                                                          ? perPtrSize : _pointerSize;
 
                          // Reverse the offset: raw_pointer = file_offset - pointerOffset
                          const qint64 rawPointerValue = static_cast<qint64>(offset) - _pointerOffset;
 
-                         QByteArray data(_pointerSize, 0);
+                         QByteArray data(effectivePtrSize, 0);
                          uchar *raw = reinterpret_cast<uchar *>(data.data());
 
-                         if (_pointerSize == 2)
+                         if (effectivePtrSize == 2)
                          {
                              const quint16 val16 = static_cast<quint16>(rawPointerValue);
                              if (hexEdit->byteOrder == ByteOrder::BigEndian)
@@ -161,7 +165,7 @@ void InsertScriptDialog::on_bbControls_clicked(QAbstractButton *button)
                              }
                          }
 
-                         hexEdit->replace(ptrOffset, _pointerSize, data);
+                         hexEdit->replace(ptrOffset, effectivePtrSize, data);
                      }
 
 

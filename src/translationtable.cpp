@@ -3,6 +3,7 @@
 #include <QTextStream>
 #include <QRegularExpression>
 #include <QDebug>
+#include <algorithm>
 
 #include "translationtable.h"
 
@@ -28,20 +29,52 @@ TranslationTable::TranslationTable(QString fileName) : TranslationTable()
             if (eqPos <= 0)
                 continue;
 
-            bool success;
-            auto val = rawLine.left(eqPos).toUInt(&success, 16);
+            QString hexPart = rawLine.left(eqPos);
+            auto value = rawLine.mid(eqPos + 1);
 
-            if (success)
-            {
-                auto value = rawLine.mid(eqPos + 1);
-                encodeTable.insert(val, value);
-                decodeTable[value] = val;
+            // Validate: all hex chars
+            bool allHex = true;
+            for (int i = 0; i < hexPart.size(); ++i) {
+                QChar ch = hexPart[i];
+                if (!ch.isDigit() && !(ch >= 'A' && ch <= 'F') && !(ch >= 'a' && ch <= 'f')) {
+                    allHex = false;
+                    break;
+                }
+            }
+            if (!allHex || hexPart.isEmpty())
+                continue;
+
+            if (hexPart.size() <= 2) {
+                // Single-byte entry: XX=text
+                bool success;
+                auto val = hexPart.toUInt(&success, 16);
+                if (success) {
+                    encodeTable.insert(val, value);
+                    decodeTable[value] = val;
+                }
+            } else {
+                // Multi-byte entry: XXYY...=text (must be even number of hex digits)
+                if (hexPart.size() % 2 != 0)
+                    continue;
+                QByteArray key;
+                bool ok = true;
+                for (int i = 0; i < hexPart.size(); i += 2) {
+                    uint val = hexPart.mid(i, 2).toUInt(&ok, 16);
+                    if (!ok) break;
+                    key.append(static_cast<char>(val));
+                }
+                if (ok && !key.isEmpty()) {
+                    multiByteEncodeTable.insert(key, value);
+                    multiByteDecodeTable[value] = key;
+                    if (key.size() > _maxKeyLen)
+                        _maxKeyLen = key.size();
+                }
             }
         }
 
         inputFile.close();
 
-        // fill empty bytes in decode table with precompiled byte sequences
+        // fill empty single bytes in decode table with precompiled byte sequences
         for (uint16_t i = 0; i < 0x100; i++)
         {
             if (!encodeTable.contains(i))
@@ -60,7 +93,7 @@ TranslationTable::TranslationTable(QString fileName) : TranslationTable()
 
 uint32_t TranslationTable::size()
 {
-    return encodeTable.size();
+    return encodeTable.size() + multiByteEncodeTable.size();
 }
 
 QByteArray TranslationTable::decode(QByteArray src)
@@ -68,6 +101,17 @@ QByteArray TranslationTable::decode(QByteArray src)
     auto result = QByteArray();
     auto text = QString(src);
 
+    // Replace multi-byte entries first (longer values first for greedy matching)
+    QList<QString> mbKeys = multiByteDecodeTable.keys();
+    // Sort by length descending so longer text tokens match first
+    std::sort(mbKeys.begin(), mbKeys.end(), [](const QString &a, const QString &b) {
+        return a.size() > b.size();
+    });
+    for (const auto &key : mbKeys) {
+        text.replace(key, QString::fromLatin1(multiByteDecodeTable[key]));
+    }
+
+    // Then single-byte entries
     for (auto i = decodeTable.begin(); i != decodeTable.end(); i++)
     {
         text.replace(i.key(), QChar(i.value()));
@@ -84,19 +128,57 @@ char TranslationTable::decodeSymbol(QString src) const
     return encodeTable.key(src, -1);
 }
 
+QByteArray TranslationTable::decodeToBytes(const QString &text) const
+{
+    // Check multi-byte decode table first
+    auto it = multiByteDecodeTable.constFind(text);
+    if (it != multiByteDecodeTable.constEnd())
+        return it.value();
+
+    // Fall back to single-byte
+    uint16_t b = encodeTable.key(text, 0xFFFF);
+    if (b != 0xFFFF)
+        return QByteArray(1, static_cast<char>(b));
+
+    return QByteArray(); // not found
+}
+
 QString TranslationTable::encode(QByteArray src, bool keepCodes)
 {
     auto result = QString();
 
-    for (auto i = 0; i < src.size(); i++)
+    int i = 0;
+    while (i < src.size())
     {
-        result += encodeSymbol(src[i], keepCodes);
+        int consumed = 0;
+        QString sym = encodeBytes(src, i, consumed, keepCodes);
+        result += sym;
+        i += consumed;
     }
 
     return result;
 }
 
-QString TranslationTable::encodeSymbol(const char symbol, bool keepCode)
+QString TranslationTable::encodeBytes(const QByteArray &src, int pos, int &bytesConsumed, bool keepCode) const
+{
+    // Try multi-byte sequences first (longest match)
+    if (!multiByteEncodeTable.isEmpty()) {
+        for (int len = qMin(_maxKeyLen, (int)(src.size() - pos)); len >= 2; --len) {
+            QByteArray key = src.mid(pos, len);
+            auto it = multiByteEncodeTable.find(key);
+            if (it != multiByteEncodeTable.end()) {
+                bytesConsumed = len;
+                return it.value();
+            }
+        }
+    }
+
+    // Fall back to single-byte lookup
+    bytesConsumed = 1;
+    return encodeSymbol(src[pos], keepCode);
+}
+
+QString TranslationTable::encodeSymbol(const char symbol, bool keepCode) const
 {
     if (encodeTable.contains(static_cast<uint8_t>(symbol)))
     {
@@ -179,6 +261,17 @@ void TranslationTable::setItem(uint8_t key, const QString &value)
     decodeTable[value] = key;
 }
 
+void TranslationTable::setMultiByteItem(const QByteArray &key, const QString &value)
+{
+    if (multiByteEncodeTable.contains(key))
+        multiByteDecodeTable.remove(multiByteEncodeTable.value(key));
+
+    multiByteEncodeTable[key] = value;
+    multiByteDecodeTable[value] = key;
+    if (key.size() > _maxKeyLen)
+        _maxKeyLen = key.size();
+}
+
 void TranslationTable::removeItem(uint8_t key)
 {
     if (encodeTable.contains(key))
@@ -188,10 +281,22 @@ void TranslationTable::removeItem(uint8_t key)
     }
 }
 
+void TranslationTable::removeMultiByteItem(const QByteArray &key)
+{
+    if (multiByteEncodeTable.contains(key))
+    {
+        multiByteDecodeTable.remove(multiByteEncodeTable.value(key));
+        multiByteEncodeTable.remove(key);
+    }
+}
+
 void TranslationTable::clearItems()
 {
     encodeTable.clear();
     decodeTable.clear();
+    multiByteEncodeTable.clear();
+    multiByteDecodeTable.clear();
+    _maxKeyLen = 1;
 }
 
 bool TranslationTable::save(const QString &fileName) const
@@ -202,11 +307,21 @@ bool TranslationTable::save(const QString &fileName) const
 
     QTextStream out(&file);
 
+    // Save single-byte entries
     for (auto it = encodeTable.cbegin(); it != encodeTable.cend(); ++it)
     {
         out << QString("%1=%2").arg(
             QString::number(static_cast<uint8_t>(it.key()), 16).toUpper().rightJustified(2, '0'),
             it.value()) << "\n";
+    }
+
+    // Save multi-byte entries
+    for (auto it = multiByteEncodeTable.cbegin(); it != multiByteEncodeTable.cend(); ++it)
+    {
+        QString hexKey;
+        for (int i = 0; i < it.key().size(); ++i)
+            hexKey += QString::number(static_cast<uint8_t>(it.key()[i]), 16).toUpper().rightJustified(2, '0');
+        out << QString("%1=%2").arg(hexKey, it.value()) << "\n";
     }
 
     file.close();

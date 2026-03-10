@@ -30,6 +30,7 @@ private:
     void showEvent(QShowEvent *ev) override;
     void changeEvent(QEvent *event) override;
     void addRow(uint8_t hex, const QString &value);
+    void addRow(const QByteArray &key, const QString &value);
 
     Ui::TableEditDialog *ui;
     TranslationTable** _tb = nullptr;
