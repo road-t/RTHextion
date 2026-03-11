@@ -542,6 +542,7 @@ protected:
     void keyPressEvent(QKeyEvent *event);
     void mouseMoveEvent(QMouseEvent * event);
     void mousePressEvent(QMouseEvent * event);
+    void mouseReleaseEvent(QMouseEvent * event);
     void mouseDoubleClickEvent(QMouseEvent * event);
     void paintEvent(QPaintEvent *event);
     void resizeEvent(QResizeEvent *);
@@ -635,6 +636,8 @@ private:
     bool _showPointers;
     bool _hexCaps;
     bool _dynamicBytesPerLine;
+    bool _separatorDragging = false;            // true while dragging hex/ascii separator
+    int _separatorDragStartX = 0;               // x position when separator drag started
 
     // other variables
     bool _editAreaIsAscii;                      // flag about the ascii mode edited

@@ -2008,6 +2008,58 @@ void QHexEdit::mouseMoveEvent(QMouseEvent *event)
 {
     _blink = false;
     viewport()->update();
+
+    // Handle separator dragging
+    if (_separatorDragging && !_dynamicBytesPerLine && _asciiArea)
+    {
+        int pixelDelta = event->x() - _separatorDragStartX;
+        
+        // Convert pixel delta to bytes per line delta.
+        // Each byte takes 3 characters in hex area (2 hex digits + 1 space),
+        // plus extra gaps between columns.
+        int pixelsPerByte = 3 * _pxCharWidth + kHexColumnExtraGapPx;
+        
+        // Subtract the gap for the last column to get realistic byte changes
+        pixelsPerByte = 3 * _pxCharWidth + kHexColumnExtraGapPx - kHexColumnExtraGapPx / _bytesPerLine;
+        
+        // Use 3 chars width + gap as the primary measure
+        int byteDelta = pixelDelta / (3 * _pxCharWidth);
+        
+        // Calculate new bytes per line
+        int newBytesPerLine = _bytesPerLine + byteDelta;
+        
+        // Clamp to reasonable range: 4-64 bytes per line
+        if (newBytesPerLine < 4)
+            newBytesPerLine = 4;
+        else if (newBytesPerLine > 64)
+            newBytesPerLine = 64;
+        
+        if (newBytesPerLine != _bytesPerLine)
+        {
+            _separatorDragStartX = event->x();
+            setBytesPerLine(newBytesPerLine);
+        }
+        
+        viewport()->setCursor(Qt::SizeHorCursor);
+        return;
+    }
+
+    // Check if hovering over separator
+    if (!_dynamicBytesPerLine && _asciiArea)
+    {
+        int pxOfsX = horizontalScrollBar()->value();
+        int separatorScreenX = _pxPosAsciiX - (_pxGapHexAscii / 2) - pxOfsX;
+        
+        if (abs(event->x() - separatorScreenX) < 4)
+        {
+            viewport()->setCursor(Qt::SizeHorCursor);
+            return;
+        }
+    }
+
+    // Reset cursor if not hovering over separator
+    viewport()->setCursor(Qt::ArrowCursor);
+
     qint64 actPos = cursorPosition(event->pos());
 
     if (actPos >= 0)
@@ -2055,6 +2107,22 @@ void QHexEdit::mousePressEvent(QMouseEvent *event)
     _blink = false;
     viewport()->update();
 
+    // Check if separator drag is starting (only if not in dynamic/autosize mode)
+    if (!_dynamicBytesPerLine && _asciiArea)
+    {
+        int pxOfsX = horizontalScrollBar()->value();
+        int separatorScreenX = _pxPosAsciiX - (_pxGapHexAscii / 2) - pxOfsX;
+        
+        // If click is within 4 pixels of separator, start drag
+        if (abs(event->x() - separatorScreenX) < 4)
+        {
+            _separatorDragging = true;
+            _separatorDragStartX = event->x();
+            viewport()->setCursor(Qt::SizeHorCursor);
+            return;
+        }
+    }
+
     qint64 cPos = cursorPosition(event->pos());
 
     if (cPos >= 0)
@@ -2097,6 +2165,20 @@ void QHexEdit::mousePressEvent(QMouseEvent *event)
             }
         }
     }
+}
+
+void QHexEdit::mouseReleaseEvent(QMouseEvent *event)
+{
+    // End separator dragging
+    if (_separatorDragging)
+    {
+        _separatorDragging = false;
+        viewport()->setCursor(Qt::ArrowCursor);
+        event->accept();
+        return;
+    }
+    
+    QAbstractScrollArea::mouseReleaseEvent(event);
 }
 
 void QHexEdit::mouseDoubleClickEvent(QMouseEvent *event)
