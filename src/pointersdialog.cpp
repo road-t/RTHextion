@@ -332,6 +332,7 @@ void PointersDialog::showEvent(QShowEvent *ev)
         tb = _tb;
         ui->cbRangeStart->clear();
         ui->cbRangeEnd->clear();
+        ui->cbStopChar->clear();
 
         // populate range comboboxes with translation table values...
         if (tb)
