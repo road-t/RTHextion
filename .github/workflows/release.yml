@@ -168,6 +168,10 @@ jobs:
           arch: 'win64_msvc2022_64'
           cache: true
 
+      - name: Install libiconv (vcpkg)
+        run: vcpkg install libiconv:x64-windows-static
+        shell: cmd
+
       - name: Setup MSVC environment
         uses: ilammy/msvc-dev-cmd@v1
         with:
@@ -178,7 +182,9 @@ jobs:
         run: |
           mkdir build_ci
           cd build_ci
-          "%QT_ROOT_DIR%\bin\qmake" ..\src\rthextion.pro CONFIG+=release
+          "%QT_ROOT_DIR%\bin\qmake" ..\src\rthextion.pro CONFIG+=release ^
+            "INCLUDEPATH+=C:/vcpkg/installed/x64-windows-static/include" ^
+            "LIBS+=C:/vcpkg/installed/x64-windows-static/lib/iconv.lib"
           nmake
 
       - name: Deploy Qt dependencies

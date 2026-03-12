@@ -4,13 +4,15 @@ CONFIG += c++17
 TEMPLATE = app
 TARGET = RTHextion
 
-LIBS += -liconv
-
 macx {
     ICON = images/tj.icns
     QMAKE_BUNDLE = RTHextion
     QMAKE_INFO_PLIST = Info.plist
+    LIBS += -liconv
 }
+
+# Windows: iconv path is passed via CI qmake arguments (INCLUDEPATH/LIBS)
+# Linux:   iconv is part of glibc — no link flag needed
 
 HEADERS = \
     appinfo.h \
@@ -31,7 +33,8 @@ HEADERS = \
     pointersdialog.h \
     romdetect.h \
     searchdialog.h \
-    translationtable.h
+    translationtable.h \
+    encodingdetect.h
 
 
 SOURCES = \
