@@ -2,27 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
-## [v1.1.5] - 2026-03-12
+## [v1.1.5] - 2026-03-13
 
 ### Added
-- Auto-detection of system language on first launch
+- Auto-detection of system language on first launch (Russian, German, French, Spanish, Portuguese, Japanese, Chinese Simplified)
 - Improved ASCII area background rendering (solid fill, flush with separator)
-- Manually resizable hex area
-– More standart encodings support
-– Automatic encoding detection
+- Manually resizable hex area with hover cursor feedback (8px detection radius)
+- Multi-encoding support with automatic detection (CJK, ISO-2022-JP, Shift-JIS, EUC-JP, Windows-1251, UTF-8, etc.)
 
 ### Fixed
-- Fixed Shift-JIS, EUC-JP display
-- Fixed ASCII area re-appearing when toggling in View menu → fixed translator not being applied during UI construction (now deferred to post-construction)
+- **Cross-platform iconv compatibility**: Fixed build failures on Windows and Linux by adding conditional iconv compilation with Qt fallback
+  - Added `#ifdef __has_include` checks for iconv.h availability
+  - Provided stub implementations when iconv.h is not found
+  - Platform-specific linking in .pro file (macOS/Windows: explicit -liconv link; Linux: pkg-config detection with glibc fallback)
+- Fixed ASCII area re-appearing when toggling in View menu
 - Fixed ASCII area background rendering (gap visible between hex and ASCII sections)
 - Fixed hex area not expanding to right edge when ASCII area disabled + autosize mode
 - Fixed autosize not recalculating bytes per line when toggling Address/ASCII area visibility
 - Fixed stop character combobox not clearing when translation table changes
-- Fixed separator drag cursor detection (now visible on hover, not just on click) — threshold increased to 8px
+- Fixed separator drag cursor detection (now visible on hover, not just on click)
 
 ### Changed
 - Language detection system now uses QLocale::system() for automatic startup language selection
 - Improved cursor affordance on separator line for better UX visibility
+- iconv is now safely optional — application falls back to Qt's QStringDecoder when iconv is unavailable
+- Hex area is now resizable during runtime (drag separator when autosize is disabled)
 
 ## [v1.1.3] - 2026-03-10
 
