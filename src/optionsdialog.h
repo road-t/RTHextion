@@ -127,6 +127,10 @@ private:
         QString nonPrintableNoTableChar;
         QString notInTableChar;
         bool detectEndianness = true;
+        bool detectEncoding = true;
+        bool resetTableOnClose = false;
+        bool resetEncodingOnClose = false;
+        QString defaultEncoding = QStringLiteral("ASCII");
     };
     SettingsSnapshot m_originalSettings, m_currentSettings;
     bool m_suppressUpdate = false;

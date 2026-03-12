@@ -67,6 +67,25 @@ OptionsDialog::OptionsDialog(QWidget *parent) : QDialog(parent), ui(new Ui::Opti
     connect(ui->cbShowMultibyteFrame, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
     connect(ui->cbAutoLoadRecentFile, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
     connect(ui->cbDetectEndianness, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
+    connect(ui->cbDetectEncoding, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
+    connect(ui->cbResetTableOnClose, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
+    connect(ui->cbResetEncodingOnClose, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
+    connect(ui->cbDefaultEncoding, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int){ updateSettings(); });
+    // Populate default encoding combo
+    {
+        const QStringList encs = {
+            "ASCII", "UTF-8", "UTF-16 LE", "UTF-16 BE", "UTF-32 LE", "UTF-32 BE",
+            "Shift-JIS", "EUC-JP", "ISO-2022-JP", "GB2312", "GBK", "GB18030", "EUC-KR",
+            "Windows-1251", "KOI8-R", "KOI8-U", "CP-866", "Mac Cyrillic", "ISO-8859-5",
+            "ISO-8859-1", "ISO-8859-2", "ISO-8859-3", "ISO-8859-4", "ISO-8859-7",
+            "ISO-8859-9", "ISO-8859-10", "ISO-8859-13", "ISO-8859-14", "ISO-8859-15",
+            "ISO-8859-16", "Windows-1252",
+            "ISO-8859-6", "ISO-8859-8", "ISO-8859-11"
+        };
+        for (const QString &e : encs)
+            ui->cbDefaultEncoding->addItem(e);
+    }
     connect(ui->sbAddressAreaWidth, QOverload<int>::of(&QSpinBox::valueChanged), this, &OptionsDialog::on_spinBoxValueChanged);
     connect(ui->sbBytesPerLine, QOverload<int>::of(&QSpinBox::valueChanged), this, &OptionsDialog::on_spinBoxValueChanged);
     connect(ui->leNonPrintableNoTableChar, &QLineEdit::textChanged, this, [this]()
@@ -182,6 +201,10 @@ void OptionsDialog::saveCurrentSettings()
     m_originalSettings.nonPrintableNoTableChar = sanitizeSingleChar(ui->leNonPrintableNoTableChar->text(), kDefaultNonPrintableNoTableChar);
     m_originalSettings.notInTableChar = sanitizeSingleChar(ui->leNotInTableChar->text(), kDefaultNotInTableChar);
     m_originalSettings.detectEndianness = ui->cbDetectEndianness->isChecked();
+    m_originalSettings.detectEncoding = ui->cbDetectEncoding->isChecked();
+    m_originalSettings.resetTableOnClose = ui->cbResetTableOnClose->isChecked();
+    m_originalSettings.resetEncodingOnClose = ui->cbResetEncodingOnClose->isChecked();
+    m_originalSettings.defaultEncoding = ui->cbDefaultEncoding->currentText();
 
     m_originalHotkeys.clear();
     for (const auto &e : m_hotkeys) {
@@ -227,6 +250,10 @@ void OptionsDialog::restoreSettings()
     ui->leNonPrintableNoTableChar->setText(sanitizeSingleChar(m_originalSettings.nonPrintableNoTableChar, kDefaultNonPrintableNoTableChar));
     ui->leNotInTableChar->setText(sanitizeSingleChar(m_originalSettings.notInTableChar, kDefaultNotInTableChar));
     ui->cbDetectEndianness->setChecked(m_originalSettings.detectEndianness);
+    ui->cbDetectEncoding->setChecked(m_originalSettings.detectEncoding);
+    ui->cbResetTableOnClose->setChecked(m_originalSettings.resetTableOnClose);
+    ui->cbResetEncodingOnClose->setChecked(m_originalSettings.resetEncodingOnClose);
+    ui->cbDefaultEncoding->setCurrentText(m_originalSettings.defaultEncoding);
 
     QSettings s;
     for (auto &e : m_hotkeys) {
@@ -275,6 +302,10 @@ void OptionsDialog::readSettings()
     ui->cbShowMultibyteFrame->setChecked(settings.value("ShowMultibyteFrame", true).toBool());
     ui->cbAutoLoadRecentFile->setChecked(settings.value("AutoLoadRecentFile", true).toBool());
     ui->cbDetectEndianness->setChecked(settings.value("DetectEndianness", true).toBool());
+    ui->cbDetectEncoding->setChecked(settings.value("DetectEncoding", true).toBool());
+    ui->cbResetTableOnClose->setChecked(settings.value("ResetTableOnClose", false).toBool());
+    ui->cbResetEncodingOnClose->setChecked(settings.value("ResetEncodingOnClose", false).toBool());
+    ui->cbDefaultEncoding->setCurrentText(settings.value("DefaultEncoding", QStringLiteral("ASCII")).toString());
 
     setColor(ui->lbHighlightingColor, settings.value("HighlightingColor", QColor(0xff, 0xff, 0x99, 0xff)).value<QColor>());
     setColor(ui->lbAddressAreaColor, settings.value("AddressAreaColor", this->palette().alternateBase().color()).value<QColor>());
@@ -327,6 +358,10 @@ void OptionsDialog::writeSettings()
     settings.setValue("ShowMultibyteFrame", ui->cbShowMultibyteFrame->isChecked());
     settings.setValue("AutoLoadRecentFile", ui->cbAutoLoadRecentFile->isChecked());
     settings.setValue("DetectEndianness", ui->cbDetectEndianness->isChecked());
+    settings.setValue("DetectEncoding", ui->cbDetectEncoding->isChecked());
+    settings.setValue("ResetTableOnClose", ui->cbResetTableOnClose->isChecked());
+    settings.setValue("ResetEncodingOnClose", ui->cbResetEncodingOnClose->isChecked());
+    settings.setValue("DefaultEncoding", ui->cbDefaultEncoding->currentText());
 
     // Write all color settings
     settings.setValue("HighlightingColor", ui->lbHighlightingColor->palette().color(ui->lbHighlightingColor->backgroundRole()));
@@ -723,6 +758,10 @@ void OptionsDialog::resetToDefaults()
     ui->leNonPrintableNoTableChar->setText(QString(kDefaultNonPrintableNoTableChar));
     ui->leNotInTableChar->setText(QString(kDefaultNotInTableChar));
     ui->cbDetectEndianness->setChecked(true);
+    ui->cbDetectEncoding->setChecked(true);
+    ui->cbResetTableOnClose->setChecked(false);
+    ui->cbResetEncodingOnClose->setChecked(false);
+    ui->cbDefaultEncoding->setCurrentText(QStringLiteral("ASCII"));
 
     updateAreaControls();
     m_suppressUpdate = false;
