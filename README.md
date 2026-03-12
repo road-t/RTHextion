@@ -1,4 +1,4 @@
-# RTHextion v1.0
+# RTHextion v1.1
 
 A hex editor for retrogames translation and ROMHacking, a tribute to 00's Translhextion16c by Januschan. 
 
@@ -10,13 +10,18 @@ A hex editor for retrogames translation and ROMHacking, a tribute to 00's Transl
 - Advanced data pointers search and navigation
 - Script dump and import with insertion to offset and automatic pointers update
 - Byte order switch (big-endian/little-endian/byte-swapped)
-- Auto-detect ROM type and default byte order 
+- Auto-detect ROM type, default byte order and required pointer arithmetics
+- Customizable user interface with 7 languages (English, Russian, French, German, Spanish, Portuguese, Japanese, Chinese)
+- Cross-platform support (Windows, macOS, Linux)
 
 ## Screenshots
 
 <img src="assets/main_window.png" alt="General view" width="600" />
-<img src="assets/minimap.png" alt="Minimap" width="600" />
+<img src="assets/pointer_quick_search.png" alt="Pointer quick search" width="600" />
 <img src="assets/pointers.png" alt="Pointers search window" width="600" />
+<img src="assets/pointer_hint.png" alt="Pointer hint" width="600" />
+<img src="assets/pointers_view.png" alt="Pointers highlighting" width="600" />
+<img src="assets/pointed_data.png" alt="Data with found pointers" width="600" />
 <img src="assets/script_dump.png" alt="Script dump window" width="600" />
 
 ## Supported ROM Formats

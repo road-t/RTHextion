@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.1.5] - 2026-03-12
+
+### Added
+- Auto-detection of system language on first launch
+- Improved ASCII area background rendering (solid fill, flush with separator)
+- Manually resizable hex area
+– More standart encodings support
+– Automatic encoding detection
+
+### Fixed
+- Fixed Shift-JIS, EUC-JP display
+- Fixed ASCII area re-appearing when toggling in View menu → fixed translator not being applied during UI construction (now deferred to post-construction)
+- Fixed ASCII area background rendering (gap visible between hex and ASCII sections)
+- Fixed hex area not expanding to right edge when ASCII area disabled + autosize mode
+- Fixed autosize not recalculating bytes per line when toggling Address/ASCII area visibility
+- Fixed stop character combobox not clearing when translation table changes
+- Fixed separator drag cursor detection (now visible on hover, not just on click) — threshold increased to 8px
+
+### Changed
+- Language detection system now uses QLocale::system() for automatic startup language selection
+- Improved cursor affordance on separator line for better UX visibility
+
 ## [v1.1.3] - 2026-03-10
 
 ### Added
