@@ -4,6 +4,8 @@ CONFIG += c++17
 TEMPLATE = app
 TARGET = RTHextion
 
+LIBS += -liconv
+
 macx {
     ICON = images/tj.icns
     QMAKE_BUNDLE = RTHextion

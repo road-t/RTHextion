@@ -133,6 +133,8 @@ private:
     void resetNavigationHistory();
     void navigateToHistoryIndex(int index);
     void updateNavigationActions();
+    QString detectSystemLanguage();
+    void applyLanguage(const QString &language);
 
     QString curFile;
     QString tableFilePath;
@@ -241,6 +243,7 @@ private:
     QAction *showStatusAddressAct;
     QAction *showStatusSizeAct;
     QAction *showStatusModeAct;
+    QAction *showStatusEncodingAct = nullptr;
     QAction *showSignedValuesAct;
     QAction *showAddressAreaAct;
     QAction *showAsciiAreaAct;
@@ -264,10 +267,10 @@ private:
     QLabel *lbValueWord;
     QLabel *lbValueDword;
     QLabel *lbSelection;
-    QLabel *lbAddress, *lbAddressName;
+    QLabel *lbAddress;
     QPushButton *lbOverwriteMode;
-    QLabel *lbOverwriteModeName;
     QLabel *lbSize, *lbSizeName;
+    QLabel *lbEncoding = nullptr;
 
     RomType m_detectedRomType = RomType::Unknown;
     QString m_currentEncoding = QStringLiteral("ASCII");

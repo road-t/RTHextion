@@ -102,6 +102,11 @@ void DumpScriptDialog::updateText()
 
     auto selectionOffset = hexEdit->getSelectionBegin();
 
+    // Pre-decode per-byte character mapping for non-table mode
+    QVector<QString> chars;
+    if (!useTable)
+        chars = hexEdit->decodeBufferForCurrentEncoding(data);
+
     int i = 0;
     while (i < data.size())
     {
@@ -140,8 +145,18 @@ void DumpScriptDialog::updateText()
         }
         else
         {
-            QChar ch = QChar::fromLatin1(data[i]);
-            dump += ch.isPrint() ? ch : TranslationTable::charToHex(ch.toLatin1());
+            // Use per-byte decoded buffer from hex editor (encoding-aware)
+            if (chars[i].isNull()) {
+                // Continuation byte of a multi-byte character — skip
+                ++i;
+                continue;
+            }
+            if (chars[i].isEmpty()) {
+                // Non-printable byte
+                dump += TranslationTable::charToHex(data[i]);
+            } else {
+                dump += chars[i];
+            }
             if (stopCharActive && data.mid(i, stopBytes.size()) == stopBytes)
                 dump += '\n';
             ++i;

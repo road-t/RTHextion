@@ -35,6 +35,8 @@ namespace
             settings.setValue("AutoLoadRecentFile", true);
         if (!settings.contains("DetectEndianness"))
             settings.setValue("DetectEndianness", true);
+        if (!settings.contains("DetectEncoding"))
+            settings.setValue("DetectEncoding", true);
         if (!settings.contains("HexCaps"))
             settings.setValue("HexCaps", true);
         if (!settings.contains("OverwriteMode"))

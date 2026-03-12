@@ -23,6 +23,8 @@ struct Chunk
 {
     QByteArray data;
     QByteArray dataChanged;
+    QByteArray originalData;   // original bytes from disk (same size as data)
+    QByteArray hasOriginal;    // char(1) = byte from disk, char(0) = inserted byte
     qint64 absPos;
 };
 

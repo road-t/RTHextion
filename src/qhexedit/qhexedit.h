@@ -504,6 +504,9 @@ public:
 
     QString currentEncoding() const;
     void setCurrentEncoding(const QString &encoding);
+    QString decodeTextForCurrentEncoding(const QByteArray &bytes) const;
+    QByteArray encodeTextForCurrentEncoding(const QString &text) const;
+    QVector<QString> decodeBufferForCurrentEncoding(const QByteArray &data) const;
 
     bool overwriteMode();
     void setOverwriteMode(bool overwriteMode);
@@ -669,7 +672,8 @@ private:
     TranslationTable* _tb = nullptr;            // Translation table
     QString _currentEncoding = QStringLiteral("ASCII");  // Current text encoding for ASCII area
     QVector<QString> _encodingChars;            // decoded symbols for each byte in _dataShown; null = continuation
-    bool _encodingCacheValid = false;           // true when _encodingChars matches current _dataShown + encoding
+    QVector<int> _encodingSpan;                 // bytes in sequence at lead byte; 0 for continuation bytes
+    bool _encodingCacheValid = false;           // true when _encodingChars/_encodingSpan match current _dataShown + encoding
     QVector<QString> _tbDisplayChars;           // decoded table symbols per byte in _dataShown; null = continuation
     QVector<int> _tbDisplaySpan;                // bytes consumed at lead byte; 0 for continuation/unmapped
     bool _tbDisplayCacheValid = false;          // true when _tbDisplayChars/_tbDisplaySpan match _dataShown

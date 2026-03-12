@@ -19,6 +19,7 @@
 #include <QScrollBar>
 #include <QDir>
 #include <QComboBox>
+#include <QLocale>
 #include <algorithm>
 
 #include "QtWidgets/qpushbutton.h"
@@ -26,6 +27,7 @@
 #include "langtranslator.h"
 #include "mainwindow.h"
 #include "romdetect.h"
+#include "encodingdetect.h"
 
 namespace
 {
@@ -153,6 +155,24 @@ void MainWindow::closeFile()
     resetNavigationHistory();
     showPointersAct->setEnabled(false);
     setCurrentFile("");
+
+    // Apply preferences: reset table / encoding on file close
+    {
+        QSettings s;
+        if (s.value("ResetTableOnClose", false).toBool()) {
+            hexEdit->removeTranslationTable();
+            useTableAct->setChecked(false);
+        }
+        if (s.value("ResetEncodingOnClose", false).toBool()) {
+            const QString defEnc = s.value("DefaultEncoding", QStringLiteral("ASCII")).toString();
+            m_currentEncoding = defEnc;
+            hexEdit->setCurrentEncoding(defEnc);
+            if (lbEncoding)
+                lbEncoding->setText(defEnc);
+            syncEncodingMenu();
+        }
+    }
+
     statusBar()->showMessage(tr("File closed"), 2000);
 }
 
@@ -166,6 +186,24 @@ void MainWindow::newFile()
     resetNavigationHistory();
     showPointersAct->setEnabled(false);
     setCurrentFile("");
+
+    // Apply preferences: reset table / encoding on file close
+    {
+        QSettings s;
+        if (s.value("ResetTableOnClose", false).toBool()) {
+            hexEdit->removeTranslationTable();
+            useTableAct->setChecked(false);
+        }
+        if (s.value("ResetEncodingOnClose", false).toBool()) {
+            const QString defEnc = s.value("DefaultEncoding", QStringLiteral("ASCII")).toString();
+            m_currentEncoding = defEnc;
+            hexEdit->setCurrentEncoding(defEnc);
+            if (lbEncoding)
+                lbEncoding->setText(defEnc);
+            syncEncodingMenu();
+        }
+    }
+
     statusBar()->showMessage(tr("New file created"), 2000);
 }
 
@@ -282,8 +320,7 @@ void MainWindow::saveSelectionToReadableFile()
 
         QApplication::setOverrideCursor(Qt::WaitCursor);
 
-        auto data = tb ? tb->encode(hexEdit->getRawSelection(), true) : hexEdit->data();
-
+        const QString data = hexEdit->decodeTextForCurrentEncoding(hexEdit->getRawSelection());
         file.write(data.toUtf8());
 
          //file.write(hexEdit->selectionToReadableString().toLatin1());
@@ -310,7 +347,7 @@ void MainWindow::saveToReadableFile()
         }
 
         QApplication::setOverrideCursor(Qt::WaitCursor);
-        file.write(hexEdit->toReadableString().toLatin1());
+        file.write(hexEdit->toReadableString().toUtf8());
         QApplication::restoreOverrideCursor();
 
         statusBar()->showMessage(tr("File saved"), 2000);
@@ -388,6 +425,8 @@ void MainWindow::setSize(qint64 size)
 
 void MainWindow::updateStatusBarVisibility()
 {
+    if (lbEncoding)
+        lbEncoding->setVisible(showStatusEncodingAct->isChecked());
     if (lbValueByte)
         lbValueByte->setVisible(showStatusByteAct->isChecked());
     if (lbValueWord)
@@ -399,8 +438,6 @@ void MainWindow::updateStatusBarVisibility()
         lbSelection->setVisible(showStatusSelectionAct->isChecked());
 
     const bool showAddress = showStatusAddressAct->isChecked();
-    if (lbAddressName)
-        lbAddressName->setVisible(showAddress);
     if (lbAddress)
         lbAddress->setVisible(showAddress);
 
@@ -411,8 +448,7 @@ void MainWindow::updateStatusBarVisibility()
         lbSize->setVisible(showSize);
 
     const bool showMode = showStatusModeAct->isChecked();
-    if (lbOverwriteModeName)
-        lbOverwriteModeName->setVisible(showMode);
+
     if (lbOverwriteMode)
         lbOverwriteMode->setVisible(showMode);
 }
@@ -552,12 +588,8 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
 
             if (clickedAscii)
             {
-                // ASCII area: use TBL encoding if available, otherwise Latin-1
-                TranslationTable *clipTb = hexEdit->getTranslationTable();
-                if (clipTb)
-                    QApplication::clipboard()->setText(clipTb->encode(raw, true));
-                else
-                    QApplication::clipboard()->setText(QString::fromLatin1(raw.constData(), raw.size()));
+                // ASCII area: use active table, otherwise current text encoding
+                QApplication::clipboard()->setText(hexEdit->decodeTextForCurrentEncoding(raw));
             }
             else
             {
@@ -588,12 +620,8 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
 
             if (clickedAscii)
             {
-                // ASCII area: use TBL encoding if available, otherwise Latin-1
-                TranslationTable *clipTb = hexEdit->getTranslationTable();
-                if (clipTb)
-                    QApplication::clipboard()->setText(clipTb->encode(raw, true));
-                else
-                    QApplication::clipboard()->setText(QString::fromLatin1(raw.constData(), raw.size()));
+                // ASCII area: use active table, otherwise current text encoding
+                QApplication::clipboard()->setText(hexEdit->decodeTextForCurrentEncoding(raw));
             }
             else
             {
@@ -609,12 +637,8 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
             QByteArray ba;
             if (clickedAscii)
             {
-                // ASCII area: use TBL decoding if available, otherwise Latin-1
-                TranslationTable *clipTb = hexEdit->getTranslationTable();
-                if (clipTb)
-                    ba = clipTb->decode(QApplication::clipboard()->text().toUtf8());
-                else
-                    ba = QApplication::clipboard()->text().toLatin1();
+                // ASCII area: use active table, otherwise current text encoding
+                ba = hexEdit->encodeTextForCurrentEncoding(QApplication::clipboard()->text());
             }
             else
             {
@@ -912,8 +936,46 @@ void MainWindow::setLanguage()
         return;
 
     const QString language = action->data().toString();
-    const QString languageShort = language.left(2);
+    
+    // Apply language
+    applyLanguage(language);
 
+    // Save language preference
+    QSettings settings;
+    settings.setValue("Language", language);
+}
+
+QString MainWindow::detectSystemLanguage()
+{
+    // Get system locale
+    const QLocale systemLocale = QLocale::system();
+    const QString uiLanguage = systemLocale.uiLanguages().isEmpty() ? 
+        systemLocale.name() : systemLocale.uiLanguages().first();
+
+    // Map system language to our supported languages
+    const QString langLower = uiLanguage.toLower();
+    
+    if (langLower.startsWith("ru"))
+        return QStringLiteral("ru");
+    else if (langLower.startsWith("de"))
+        return QStringLiteral("de");
+    else if (langLower.startsWith("fr"))
+        return QStringLiteral("fr");
+    else if (langLower.startsWith("es"))
+        return QStringLiteral("es");
+    else if (langLower.startsWith("pt"))
+        return QStringLiteral("pt");
+    else if (langLower.startsWith("ja"))
+        return QStringLiteral("ja");
+    else if (langLower.startsWith("zh"))
+        return QStringLiteral("zh_CN");
+    
+    // Default to English if no match
+    return QStringLiteral("en");
+}
+
+void MainWindow::applyLanguage(const QString &language)
+{
     // Remove previous custom translator (if any)
     const auto translators = qApp->findChildren<LangTranslator *>();
     for (auto *t : translators)
@@ -926,6 +988,8 @@ void MainWindow::setLanguage()
     LangTranslator *translator = new LangTranslator(qApp);
     QStringList candidates;
     candidates << language;
+    
+    const QString languageShort = language.left(2);
     if (!languageShort.isEmpty() && languageShort != language)
         candidates << languageShort;
 
@@ -953,10 +1017,6 @@ void MainWindow::setLanguage()
 
     LangTranslator::setCurrentLanguage(language);
 
-    // Save language preference
-    QSettings settings;
-    settings.setValue("Language", language);
-
     // Retranslate everything immediately
     retranslateUi();
 }
@@ -981,7 +1041,7 @@ void MainWindow::retranslateUi()
     closeAct->setStatusTip(tr("Close the current file"));
     saveAsAct->setText(tr("Save As..."));
     saveAsAct->setStatusTip(tr("Save the file under a new name"));
-    saveReadable->setText(tr("Save Dump..."));
+    saveReadable->setText(tr("Save dump..."));
     saveReadable->setStatusTip(tr("Save the file as dump"));
     revertAct->setText(tr("Revert"));
     revertAct->setStatusTip(tr("Revert file to last saved version"));
@@ -1081,6 +1141,8 @@ void MainWindow::retranslateUi()
     showStatusAddressAct->setText(tr("Address"));
     showStatusSizeAct->setText(tr("Size"));
     showStatusModeAct->setText(tr("Mode"));
+    if (showStatusEncodingAct)
+        showStatusEncodingAct->setText(tr("Encoding"));
     showSignedValuesAct->setText(tr("Show signed values"));
     showAddressAreaAct->setText(tr("Address area"));
     showAsciiAreaAct->setText(tr("ASCII area"));
@@ -1145,9 +1207,7 @@ void MainWindow::retranslateUi()
     toolbarInsertScriptAct->setStatusTip(tr("Insert text script"));
 
     // Status bar labels
-    lbAddressName->setText(tr("Address") + QString(":"));
     lbSizeName->setText(tr("Size") + QString(":"));
-    lbOverwriteModeName->setText(tr("Mode") + QString(":"));
     updateEndiannesLabel();
     setOverwriteMode(hexEdit->overwriteMode());
     updateValuePanels();
@@ -1335,7 +1395,7 @@ void MainWindow::createActions()
     saveAsAct->setStatusTip(tr("Save file under a new name"));
     connect(saveAsAct, SIGNAL(triggered()), this, SLOT(saveAs()));
 
-    saveReadable = new QAction(tr("Save Dump..."), this);
+    saveReadable = new QAction(tr("Save dump..."), this);
     saveReadable->setStatusTip(tr("Save file as dump"));
     connect(saveReadable, SIGNAL(triggered()), this, SLOT(saveToReadableFile()));
 
@@ -1375,7 +1435,7 @@ void MainWindow::createActions()
         const QByteArray raw = hexEdit->dataAt(selBegin, selEnd - selBegin);
         
         if (hexEdit->editAreaIsAscii())
-            QApplication::clipboard()->setText(QString::fromLatin1(raw.constData(), raw.size()));
+            QApplication::clipboard()->setText(hexEdit->decodeTextForCurrentEncoding(raw));
         else
             QApplication::clipboard()->setText(QString::fromLatin1(raw.toHex(' ')).toUpper());
         
@@ -1395,7 +1455,7 @@ void MainWindow::createActions()
         const QByteArray raw = hexEdit->dataAt(selBegin, selEnd - selBegin);
         
         if (hexEdit->editAreaIsAscii())
-            QApplication::clipboard()->setText(QString::fromLatin1(raw.constData(), raw.size()));
+            QApplication::clipboard()->setText(hexEdit->decodeTextForCurrentEncoding(raw));
         else
             QApplication::clipboard()->setText(QString::fromLatin1(raw.toHex(' ')).toUpper());
     });
@@ -1410,7 +1470,7 @@ void MainWindow::createActions()
 
         QByteArray ba;
         if (hexEdit->editAreaIsAscii())
-            ba = clipText.toLatin1();
+            ba = hexEdit->encodeTextForCurrentEncoding(clipText);
         else
         {
             QString stripped = clipText;
@@ -1634,7 +1694,21 @@ void MainWindow::createActions()
     languageGroup->addAction(langChineseSimplifiedAct);
 
     QSettings settings;
-    const QString language = settings.value("Language", QStringLiteral("en")).toString();
+    
+    // Detect system language on first run if Language setting doesn't exist
+    QString language;
+    if (!settings.contains("Language"))
+    {
+        // First-time launch: detect system language
+        language = detectSystemLanguage();
+        settings.setValue("Language", language);
+    }
+    else
+    {
+        // Use saved language preference
+        language = settings.value("Language", QStringLiteral("en")).toString();
+    }
+    
     const QString languageShort = language.left(2);
 
     if (language == "de" || languageShort == "de")
@@ -1686,6 +1760,10 @@ void MainWindow::createActions()
     showStatusModeAct->setCheckable(true);
     showStatusModeAct->setChecked(true);
 
+    showStatusEncodingAct = new QAction(tr("Encoding"), this);
+    showStatusEncodingAct->setCheckable(true);
+    showStatusEncodingAct->setChecked(true);
+
     showSignedValuesAct = new QAction(tr("Show signed values"), this);
     showSignedValuesAct->setCheckable(true);
     showSignedValuesAct->setChecked(false);
@@ -1718,12 +1796,18 @@ void MainWindow::createActions()
             { updateStatusBarVisibility(); });
     connect(showStatusModeAct, &QAction::toggled, this, [this](bool)
             { updateStatusBarVisibility(); });
+    connect(showStatusEncodingAct, &QAction::toggled, this, [this](bool)
+            { updateStatusBarVisibility(); });
     connect(showSignedValuesAct, &QAction::toggled, this, [this](bool)
             { updateValuePanels(); });
     connect(showAddressAreaAct, &QAction::toggled, this, [this](bool checked)
             { hexEdit->setAddressArea(checked); });
     connect(showAsciiAreaAct, &QAction::toggled, this, [this](bool checked)
-            { hexEdit->setAsciiArea(checked); });
+            {
+                hexEdit->setAsciiArea(checked);
+                QSettings s;
+                s.setValue("AsciiArea", checked);
+            });
     connect(showAddressGridAct, &QAction::toggled, this, [this](bool checked)
             { hexEdit->setShowHexGrid(checked); });
 
@@ -1783,22 +1867,56 @@ void MainWindow::createMenus()
     encodingGroup = new QActionGroup(this);
     encodingGroup->setExclusive(true);
     {
-        static const char *encodings[] = {
-            "ASCII", "UTF-8", "UTF-16 LE", "UTF-16 BE",
-            "Shift-JIS", "EUC-JP", "ISO-2022-JP",
-            "ISO-8859-1", "Windows-1252",
-            "KOI8-R", "Windows-1251", "CP-866",
-            "GB2312", "GBK", "GB18030",
-            "EUC-KR",
-            nullptr
-        };
-        for (int i = 0; encodings[i]; ++i) {
-            QAction *act = encodingMenu->addAction(QString::fromLatin1(encodings[i]));
+        auto addEnc = [&](const char *name, bool isFirst = false) {
+            QAction *act = encodingMenu->addAction(QString::fromLatin1(name));
             act->setCheckable(true);
-            act->setData(QString::fromLatin1(encodings[i]));
-            if (i == 0) act->setChecked(true);
+            act->setData(QString::fromLatin1(name));
+            if (isFirst) act->setChecked(true);
             encodingGroup->addAction(act);
-        }
+        };
+        // Unicode
+        addEnc("ASCII", true);
+        addEnc("UTF-8");
+        addEnc("UTF-16 LE");
+        addEnc("UTF-16 BE");
+        addEnc("UTF-32 LE");
+        addEnc("UTF-32 BE");
+        // Asian
+        encodingMenu->addSeparator();
+        addEnc("Shift-JIS");
+        addEnc("EUC-JP");
+        addEnc("ISO-2022-JP");
+        addEnc("GB2312");
+        addEnc("GBK");
+        addEnc("GB18030");
+        addEnc("EUC-KR");
+        // Cyrillic
+        encodingMenu->addSeparator();
+        addEnc("Windows-1251");
+        addEnc("KOI8-R");
+        addEnc("KOI8-U");
+        addEnc("CP-866");
+        addEnc("Mac Cyrillic");
+        addEnc("ISO-8859-5");
+        // West/Central European
+        encodingMenu->addSeparator();
+        addEnc("ISO-8859-1");
+        addEnc("ISO-8859-2");
+        addEnc("ISO-8859-3");
+        addEnc("ISO-8859-4");
+        addEnc("ISO-8859-7");
+        addEnc("ISO-8859-9");
+        addEnc("ISO-8859-10");
+        addEnc("ISO-8859-13");
+        addEnc("ISO-8859-14");
+        addEnc("ISO-8859-15");
+        addEnc("ISO-8859-16");
+        addEnc("Windows-1252");
+        // Middle East / Other
+        encodingMenu->addSeparator();
+        addEnc("ISO-8859-6");
+        addEnc("ISO-8859-8");
+        addEnc("ISO-8859-11");
     }
     connect(encodingGroup, &QActionGroup::triggered, this, &MainWindow::onEncodingTriggered);
 
@@ -1915,6 +2033,7 @@ void MainWindow::createMenus()
     statusBarMenu->addAction(showStatusAddressAct);
     statusBarMenu->addAction(showStatusSizeAct);
     statusBarMenu->addAction(showStatusModeAct);
+    statusBarMenu->addAction(showStatusEncodingAct);
     statusBarMenu->addSeparator();
     statusBarMenu->addAction(showSignedValuesAct);
 
@@ -1936,6 +2055,15 @@ void MainWindow::createMenus()
 
 void MainWindow::createStatusBar()
 {
+    // Encoding label (leftmost permanent widget, left of value panels)
+    lbEncoding = new QLabel();
+    lbEncoding->setFrameShape(QFrame::Panel);
+    lbEncoding->setFrameShadow(QFrame::Sunken);
+    lbEncoding->setMinimumWidth(90);
+    lbEncoding->setAlignment(Qt::AlignCenter);
+    lbEncoding->setText(m_currentEncoding);
+    statusBar()->addPermanentWidget(lbEncoding);
+
     // Value labels (separate panels)
     lbValueByte = new QLabel();
     lbValueByte->setFrameShape(QFrame::Panel);
@@ -1965,9 +2093,6 @@ void MainWindow::createStatusBar()
     connect(hexEdit, SIGNAL(selectionChanged(qint64, qint64)), this, SLOT(setSelection(qint64, qint64)));
 
     // Address Label
-    lbAddressName = new QLabel();
-    lbAddressName->setText(tr("Address") + QString(":"));
-    statusBar()->addPermanentWidget(lbAddressName);
     lbAddress = new QLabel();
     lbAddress->setFrameShape(QFrame::Panel);
     lbAddress->setFrameShadow(QFrame::Sunken);
@@ -1989,13 +2114,10 @@ void MainWindow::createStatusBar()
     connect(hexEdit, SIGNAL(currentSizeChanged(qint64)), this, SLOT(setSize(qint64)));
 
     // Overwrite Mode Label
-    lbOverwriteModeName = new QLabel();
-    lbOverwriteModeName->setText(tr("Mode") + QString(":"));
-    statusBar()->addPermanentWidget(lbOverwriteModeName);
     lbOverwriteMode = new QPushButton();
     lbOverwriteMode->setFlat(true);
-    lbOverwriteMode->setMinimumWidth(70);
-    lbOverwriteMode->setMaximumSize(QSize(90, 24));
+    lbOverwriteMode->setMinimumWidth(80);
+    lbOverwriteMode->setMaximumSize(QSize(100, 24));
     statusBar()->addPermanentWidget(lbOverwriteMode);
     connect(lbOverwriteMode, SIGNAL(clicked()), this, SLOT(toggleOverwriteMode()));
     setOverwriteMode(hexEdit->overwriteMode());
@@ -2078,7 +2200,7 @@ void MainWindow::createToolBars()
 
     profileToolBar->addSeparator();
 
-    auto *lblRom = new QLabel(tr("ROM:"));
+    auto *lblRom = new QLabel(tr("Type:"));
     lblRom->setMargin(4);
     profileToolBar->addWidget(lblRom);
 
@@ -2129,24 +2251,76 @@ void MainWindow::loadFile(const QString &fileName)
     statusBar()->showMessage(tr("File loaded"), 2000);
     rememberDirectory(kLastFileDirKey, fileName);
 
-    // Auto-detect endianness based on ROM type
+    // Encoding detection order on open:
+    // 1. Detect ROM type (if enabled). If detected → force ASCII, done.
+    // 2. If ROM unknown, detect text encoding (if enabled). If non-ASCII found → apply it, done.
+    // 3. Otherwise: if ResetEncodingOnClose is set → apply DefaultEncoding; else keep current.
     QSettings settings;
-    if (settings.value("DetectEndianness", true).toBool())
+    const bool detectRomTypeEnabled = settings.value("DetectEndianness", true).toBool();
+    const bool detectEncodingEnabled = settings.value("DetectEncoding", true).toBool();
+    const QString defaultEncoding = settings.value("DefaultEncoding", QStringLiteral("ASCII")).toString();
+    const bool resetEncoding = settings.value("ResetEncodingOnClose", false).toBool();
+    const bool resetTable   = settings.value("ResetTableOnClose",    false).toBool();
+
+    // Apply "reset on file close" preferences to the outgoing file on every load.
+    if (resetTable) {
+        hexEdit->removeTranslationTable();
+        useTableAct->setChecked(false);
+    }
+
+    RomType rom = RomType::Unknown;
+    if (detectRomTypeEnabled)
     {
         const QByteArray header = hexEdit->dataAt(0, 512);
-        const RomType rom = detectRomType(fileName, header);
-        m_detectedRomType = rom;
+        rom = detectRomType(fileName, header);
+    }
+    m_detectedRomType = rom;
 
-        // Update status bar combo without re-triggering onRomTypeChanged
+    {
         const QSignalBlocker blocker(cbRomType);
         cbRomType->setCurrentIndex(static_cast<int>(rom));
         syncRomTypeMenu(static_cast<int>(rom));
+    }
 
-        if (rom != RomType::Unknown)
+    if (rom != RomType::Unknown)
+    {
+        hexEdit->byteOrder = defaultByteOrder(rom);
+        updateEndiannesLabel();
+    }
+
+    auto applyEncoding = [this](const QString &enc) {
+        m_currentEncoding = enc;
+        hexEdit->setCurrentEncoding(enc);
+        if (lbEncoding)
+            lbEncoding->setText(enc);
+        syncEncodingMenu();
+    };
+
+    if (rom != RomType::Unknown)
+    {
+        applyEncoding(QStringLiteral("ASCII")); // known ROM type always uses ASCII
+    }
+    else if (detectEncodingEnabled)
+    {
+        const QByteArray dataChunk = hexEdit->dataAt(0, 4096);
+        const QString detectedEncoding = detectEncoding(dataChunk);
+        if (detectedEncoding != QStringLiteral("ASCII"))
         {
-            hexEdit->byteOrder = defaultByteOrder(rom);
-            updateEndiannesLabel();
+            applyEncoding(detectedEncoding);
+            statusBar()->showMessage(tr("File loaded - Encoding: %1").arg(detectedEncoding), 3000);
         }
+        else
+        {
+            // Detection found nothing — step 3: reset if flag set, else keep current.
+            if (resetEncoding)
+                applyEncoding(defaultEncoding);
+        }
+    }
+    else
+    {
+        // Detection disabled — step 3: reset if flag set, else keep current.
+        if (resetEncoding)
+            applyEncoding(defaultEncoding);
     }
 
     settings.setValue("RecentFile0", fileName);
@@ -2226,6 +2400,11 @@ void MainWindow::readSettings()
     }
 
     applyShortcutsFromSettings();
+    
+    // Load and apply the language translator
+    QSettings settingsForLang;
+    const QString language = settingsForLang.value("Language", QStringLiteral("en")).toString();
+    applyLanguage(language);
 }
 
 void MainWindow::applyShortcutsFromSettings()
@@ -2751,6 +2930,8 @@ void MainWindow::onEncodingTriggered(QAction *action)
 {
     m_currentEncoding = action->data().toString();
     hexEdit->setCurrentEncoding(m_currentEncoding);
+    if (lbEncoding)
+        lbEncoding->setText(m_currentEncoding);
 }
 
 void MainWindow::syncEncodingMenu()

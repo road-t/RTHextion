@@ -228,6 +228,8 @@ bool Chunks::insert(qint64 pos, char b)
     qint64 posInBa = pos - _chunks[chunkIdx].absPos;
     _chunks[chunkIdx].data.insert(posInBa, b);
     _chunks[chunkIdx].dataChanged.insert(posInBa, char(1));
+    _chunks[chunkIdx].originalData.insert(posInBa, char(0));
+    _chunks[chunkIdx].hasOriginal.insert(posInBa, char(0));
     for (int idx=chunkIdx+1; idx < _chunks.size(); idx++)
         _chunks[idx].absPos += 1;
     _size += 1;
@@ -243,7 +245,12 @@ bool Chunks::overwrite(qint64 pos, char b)
     int chunkIdx = getChunkIndex(pos);
     qint64 posInBa = pos - _chunks[chunkIdx].absPos;
     _chunks[chunkIdx].data[(int)posInBa] = b;
-    _chunks[chunkIdx].dataChanged[(int)posInBa] = char(1);
+    // Only highlight if byte actually differs from original disk data;
+    // inserted bytes (no original) are always highlighted.
+    if (_chunks[chunkIdx].hasOriginal[(int)posInBa])
+        _chunks[chunkIdx].dataChanged[(int)posInBa] = (b != _chunks[chunkIdx].originalData[(int)posInBa]) ? char(1) : char(0);
+    else
+        _chunks[chunkIdx].dataChanged[(int)posInBa] = char(1);
     _pos = pos;
 
     return true;
@@ -259,6 +266,8 @@ bool Chunks::removeAt(qint64 pos)
     qint64 posInBa = pos - _chunks[chunkIdx].absPos;
     _chunks[chunkIdx].data.remove(posInBa, 1);
     _chunks[chunkIdx].dataChanged.remove(posInBa, 1);
+    _chunks[chunkIdx].originalData.remove(posInBa, 1);
+    _chunks[chunkIdx].hasOriginal.remove(posInBa, 1);
 
     for (int idx=chunkIdx+1; idx < _chunks.size(); idx++)
         _chunks[idx].absPos -= 1;
@@ -325,7 +334,9 @@ int Chunks::getChunkIndex(qint64 absPos)
         newChunk.data = _ioDevice->read(CHUNK_SIZE);
         _ioDevice->close();
         newChunk.absPos = absPos - (readAbsPos - readPos);
+        newChunk.originalData = newChunk.data;
         newChunk.dataChanged = QByteArray(newChunk.data.size(), char(0));
+        newChunk.hasOriginal = QByteArray(newChunk.data.size(), char(1));
         _chunks.insert(insertIdx, newChunk);
         foundIdx = insertIdx;
     }
