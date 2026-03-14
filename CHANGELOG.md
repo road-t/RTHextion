@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v1.1.6] - 2026-03-14
+
+### Added
+- Multi-byte cursor frame rendering in hex area with correct row-wrapping (proper open sides at row boundaries)
+
+### Fixed
+- ASCII area row alignment with hex area (corrected vertical offset)
+- ASCII cursor frame geometry (size, position, and fill coverage now match hex cursor exactly)
+- "Use table" checkbox not being set when loading a translation table file
+
 ## [v1.1.5] - 2026-03-13
 
 ### Added
