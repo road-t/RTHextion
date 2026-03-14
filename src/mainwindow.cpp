@@ -2835,6 +2835,7 @@ void MainWindow::openRecentTable()
         {
             tb = new TranslationTable(fileName);
             useTableAct->setEnabled(true);
+            useTableAct->setChecked(true);
             editTableAct->setEnabled(true);
             saveTableAct->setEnabled(true);
             saveTableAsAct->setEnabled(true);
