@@ -653,6 +653,7 @@ private:
     qint64 _cursorPosition;                     // absolute position of cursor, 1 Byte == 2 tics
     QRect _asciiCursorRect;                     // physical dimensions of cursor
     QRect _hexCursorRect;                       // physical dimensions of cursor
+    int   _cursorMultiByteSpan = 1;             // span of the cursor's multi-byte group (1 = single-byte)
     QByteArray _data;                           // QHexEdit's data, when setup with QByteArray
     QByteArray _dataShown;                      // data in the current View
     QByteArray _hexDataShown;                   // data in view, transformed to hex

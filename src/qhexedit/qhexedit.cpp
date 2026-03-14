@@ -1220,7 +1220,7 @@ void QHexEdit::setCursorPosition(qint64 position)
             return (baseWidth > _pxCharWidth) ? kAsciiColumnGapWidePx : kAsciiColumnGapSinglePx;
         };
 
-        asciiCursorWidthPx = _pxCharWidth + slotGapPx(_pxCharWidth);
+        asciiCursorWidthPx = _pxCharWidth + 2;
         asciiOffsetPx = 0;
 
         if (_tb && !_tbDisplayChars.isEmpty())
@@ -1228,7 +1228,7 @@ void QHexEdit::setCursorPosition(qint64 position)
             const QFontMetrics fm(font());
             const int bufRowStart = (int)((_bPosCurrent - _bPosFirst) / _bytesPerLine * _bytesPerLine);
             int lastLeadOffsetPx = 0;
-            int lastLeadWidth = _pxCharWidth + slotGapPx(_pxCharWidth);
+            int lastLeadWidth = _pxCharWidth + 2;
 
             for (int col = 0; col < byteInLine; ++col)
             {
@@ -1239,7 +1239,7 @@ void QHexEdit::setCursorPosition(qint64 position)
                 lastLeadOffsetPx = asciiOffsetPx;
                 const int baseW = qMax(_pxCharWidth, fm.horizontalAdvance(_tbDisplayChars[idx]));
                 const int w = baseW + slotGapPx(baseW);
-                lastLeadWidth = w;
+                lastLeadWidth = baseW + 2;
                 asciiOffsetPx += w;
             }
 
@@ -1254,7 +1254,7 @@ void QHexEdit::setCursorPosition(qint64 position)
                 else
                 {
                     const int baseW = qMax(_pxCharWidth, fm.horizontalAdvance(_tbDisplayChars[curIdx]));
-                    asciiCursorWidthPx = baseW + slotGapPx(baseW);
+                    asciiCursorWidthPx = baseW + 2;
                 }
             }
         }
@@ -1263,7 +1263,7 @@ void QHexEdit::setCursorPosition(qint64 position)
             const QFontMetrics fm(font());
             const int bufRowStart = (int)((_bPosCurrent - _bPosFirst) / _bytesPerLine * _bytesPerLine);
             int lastLeadOffsetPx = 0;
-            int lastLeadWidth = _pxCharWidth + slotGapPx(_pxCharWidth);
+            int lastLeadWidth = _pxCharWidth + 2;
 
             for (int col = 0; col < byteInLine; ++col)
             {
@@ -1273,7 +1273,7 @@ void QHexEdit::setCursorPosition(qint64 position)
                 lastLeadOffsetPx = asciiOffsetPx;
                 const int baseW = qMax(_pxCharWidth, fm.horizontalAdvance(_encodingChars[idx]));
                 const int w = baseW + slotGapPx(baseW);
-                lastLeadWidth = w;
+                lastLeadWidth = baseW + 2;
                 asciiOffsetPx += w;
             }
 
@@ -1288,7 +1288,7 @@ void QHexEdit::setCursorPosition(qint64 position)
                 else
                 {
                     const int baseW = qMax(_pxCharWidth, fm.horizontalAdvance(_encodingChars[curIdx]));
-                    asciiCursorWidthPx = baseW + slotGapPx(baseW);
+                    asciiCursorWidthPx = baseW + 2;
                 }
             }
         }
@@ -1309,23 +1309,80 @@ void QHexEdit::setCursorPosition(qint64 position)
                 ? static_cast<uint8_t>(_dataShown.at(curBytePos))
                 : 0;
             const int baseW = (_tb && !_tbSymbolWidthPxCache.isEmpty()) ? _tbSymbolWidthPxCache[curBv] : _pxCharWidth;
-            asciiCursorWidthPx = baseW + slotGapPx(baseW);
+            asciiCursorWidthPx = baseW + 2;
         }
     }
 
+    // Save old rects so both old and new positions get repainted (clears stale cursor artifacts)
+    const QRect oldAsciiCursorRect = _asciiCursorRect;
+    const QRect oldHexCursorRect   = _hexCursorRect;
+
     _pxCursorX = _pxPosAsciiX + kAsciiAreaLeftPaddingPx + asciiOffsetPx;
 
-    _asciiCursorRect = QRect(_pxCursorX - horizontalScrollBar()->value() - 2, _pxCursorY - _pxCharHeight + _pxSelectionSub - 6, asciiCursorWidthPx, _pxCharHeight);
+    _asciiCursorRect = QRect(_pxCursorX - horizontalScrollBar()->value() - 2, _pxCursorY - _pxCharHeight + _pxSelectionSub - 4, asciiCursorWidthPx, _pxCharHeight + 2);
 
     // hex area cursor
     const int hexStridePx = 3 * _pxCharWidth + kHexColumnExtraGapPx;
     _pxCursorX = (x / 2) * hexStridePx + _pxPosHexX;
 
-    _hexCursorRect = QRect(_pxCursorX - horizontalScrollBar()->value() - 2, _pxCursorY - _pxCharHeight + _pxSelectionSub - 4, _pxCharWidth * 2 + 4, _pxCharHeight + 2);
+    {
+        const int scrollX = horizontalScrollBar()->value();
+        const int bufIdx  = (int)(_bPosCurrent - _bPosFirst);
+        int leadBufIdx = bufIdx;
+        int span = 1;
+        if (!_tbDisplayChars.isEmpty() && bufIdx >= 0 && bufIdx < _tbDisplayChars.size()) {
+            int li = bufIdx;
+            while (li > 0 && _tbDisplayChars[li].isNull()) --li;
+            if (li >= 0 && li < _tbDisplaySpan.size() && _tbDisplaySpan[li] > 1)
+                { leadBufIdx = li; span = _tbDisplaySpan[li]; }
+        } else if (!_encodingChars.isEmpty() && bufIdx >= 0 && bufIdx < _encodingChars.size()) {
+            int li = bufIdx;
+            while (li > 0 && _encodingChars[li].isNull()) --li;
+            if (li >= 0 && li < _encodingSpan.size() && _encodingSpan[li] > 1)
+                { leadBufIdx = li; span = _encodingSpan[li]; }
+        }
+        int hexCursorWidthPx = _pxCharWidth * 2 + 4;
+        int hexCursorStartPx = _pxCursorX;
+        if (span > 1 && _bytesPerLine > 0) {
+            const int curRowStart = (bufIdx / _bytesPerLine) * _bytesPerLine;
+            const int segStart    = qMax(leadBufIdx, curRowStart);
+            const int segEnd      = qMin(leadBufIdx + span, curRowStart + _bytesPerLine);
+            const int bytesOnRow  = segEnd - segStart;
+            if (bytesOnRow > 0) {
+                hexCursorWidthPx = (bytesOnRow - 1) * hexStridePx + _pxCharWidth * 2 + 4;
+                hexCursorStartPx = (segStart % _bytesPerLine) * hexStridePx + _pxPosHexX;
+            }
+        }
+        _hexCursorRect = QRect(hexCursorStartPx - scrollX - 2,
+                               _pxCursorY - _pxCharHeight + _pxSelectionSub - 4,
+                               hexCursorWidthPx, _pxCharHeight + 2);
+        _cursorMultiByteSpan = span;
+    }
 
-    // 3. Immediately draw new cursor
+    // 3. Immediately draw new cursor (also repaint old positions to clear stale frames)
+    viewport()->update(oldAsciiCursorRect);
+    viewport()->update(oldHexCursorRect);
     viewport()->update(_asciiCursorRect);
     viewport()->update(_hexCursorRect);
+    // For multi-byte groups, the cursor spans multiple rows / slots; a full repaint
+    // is needed to correctly clear old highlights and fill both row segments.
+    {
+        const int bufIdx = (int)(_bPosCurrent - _bPosFirst);
+        bool isMultiByte = false;
+        if (!_tbDisplayChars.isEmpty() && bufIdx >= 0 && bufIdx < _tbDisplayChars.size()) {
+            int li = bufIdx;
+            while (li > 0 && _tbDisplayChars[li].isNull()) --li;
+            if (li >= 0 && li < _tbDisplaySpan.size() && _tbDisplaySpan[li] > 1)
+                isMultiByte = true;
+        } else if (!_encodingChars.isEmpty() && bufIdx >= 0 && bufIdx < _encodingChars.size()) {
+            int li = bufIdx;
+            while (li > 0 && _encodingChars[li].isNull()) --li;
+            if (li >= 0 && li < _encodingSpan.size() && _encodingSpan[li] > 1)
+                isMultiByte = true;
+        }
+        if (isMultiByte)
+            viewport()->update();
+    }
 
     emit currentAddressChanged(_bPosCurrent);
 }
@@ -2373,7 +2430,7 @@ void QHexEdit::keyPressEvent(QKeyEvent *event)
                         // Filter hex input
                         if ((((key >= '0' && key <= '9') || (key >= 'a' && key <= 'f')) && _editAreaIsAscii == false) || (key >= ' ' && _editAreaIsAscii))
                         {
-                            if (getSelectionBegin() != getSelectionEnd())
+                            if (hasSelection())
                             {
                                 if (_overwriteMode)
                                 {
@@ -2803,6 +2860,28 @@ void QHexEdit::paintEvent(QPaintEvent *event)
             return (baseWidth > _pxCharWidth) ? kAsciiColumnGapWidePx : kAsciiColumnGapSinglePx;
         };
 
+        // Pre-compute which buffer group the cursor belongs to (for multi-byte cursor highlight)
+        const qint64 cursorBufIdxGlobal = _cursorPosition / 2 - _bPosFirst;
+        qint64 cursorLeadBufIdx = cursorBufIdxGlobal;
+        int cursorMultiByteSpan = 1;
+        if (useTbDisplayCache && cursorBufIdxGlobal >= 0 && cursorBufIdxGlobal < _tbDisplayChars.size()) {
+            qint64 li = cursorBufIdxGlobal;
+            while (li > 0 && li < _tbDisplayChars.size() && _tbDisplayChars[(int)li].isNull())
+                --li;
+            if (li >= 0 && li < _tbDisplaySpan.size() && _tbDisplaySpan[(int)li] > 1) {
+                cursorLeadBufIdx = li;
+                cursorMultiByteSpan = _tbDisplaySpan[(int)li];
+            }
+        } else if (useEncodingDecoder && cursorBufIdxGlobal >= 0 && cursorBufIdxGlobal < _encodingChars.size()) {
+            qint64 li = cursorBufIdxGlobal;
+            while (li > 0 && li < _encodingChars.size() && _encodingChars[(int)li].isNull())
+                --li;
+            if (li >= 0 && li < _encodingSpan.size() && _encodingSpan[(int)li] > 1) {
+                cursorLeadBufIdx = li;
+                cursorMultiByteSpan = _encodingSpan[(int)li];
+            }
+        }
+
         for (int row = 0; row < _rowsShown; row++)
         {
             QByteArray hex;
@@ -2814,7 +2893,6 @@ void QHexEdit::paintEvent(QPaintEvent *event)
             const bool useTbMultiByte = useTbDisplayCache;
             const qint64 rowStart = bPosLine;
             const qint64 rowEnd = qMin(bPosLine + _bytesPerLine, (qint64)_dataShown.size());
-            const qint64 cursorByte = _cursorPosition / 2 - _bPosFirst;
 
             // can be slow here
             for (int colIdx = 0; ((bPosLine + colIdx) < _dataShown.size() && (colIdx < _bytesPerLine)); colIdx++)
@@ -2830,7 +2908,8 @@ void QHexEdit::paintEvent(QPaintEvent *event)
                 const bool isPointerByte = pointerStart >= 0;
                 const int actualPtrSize = isPointerByte ? _pointers.getPointerSize(pointerStart) : kPointerByteSize;
                 const bool isPointedByte = _showPointers && _pointers.hasOffset(posBa);
-                const bool isSelectedByte = (getSelectionBegin() <= posBa) && (getSelectionEnd() > posBa);
+                const bool isSelectedByte = (getSelectionEnd() - getSelectionBegin() > 1)
+                                         && (getSelectionBegin() <= posBa) && (getSelectionEnd() > posBa);
                 const bool isHighlightedByte = _highlighting && _markedShown.at((int)(posBa - _bPosFirst));
 
                 if (isSelectedByte)
@@ -2938,10 +3017,13 @@ void QHexEdit::paintEvent(QPaintEvent *event)
                 if (c != viewport()->palette().color(QPalette::Base))
                     painter.fillRect(r, c);
 
-                // Overlay cursor-char highlight on the byte under cursor
+                // Overlay cursor-char highlight: single-byte cursor fills here; multi-byte handled below.
                 const bool isCursorByte = (bPosLine + colIdx) == (_cursorPosition / 2 - _bPosFirst);
-                
-                if (isCursorByte && _cursorCharColor.alpha() > 0)
+                const qint64 byteInBuf = bPosLine + colIdx;
+                const bool isCursorGroupByte = (byteInBuf >= cursorLeadBufIdx)
+                                            && (byteInBuf < cursorLeadBufIdx + cursorMultiByteSpan);
+
+                if (cursorMultiByteSpan == 1 && isCursorByte && _cursorCharColor.alpha() > 0)
                     painter.fillRect(r, _cursorCharColor);
 
                 hex = _hexDataShown.mid((bPosLine + colIdx) * 2, 2);
@@ -3069,6 +3151,75 @@ void QHexEdit::paintEvent(QPaintEvent *event)
                     }
                 }
 
+                // Multi-byte cursor group: unconditional fill + frame for this row segment.
+                // Uses per-byte walkback identical to the TBL/encoding frame blocks above.
+                // Runs regardless of _showMultibyteFrame so the cursor is always visible.
+                if (cursorMultiByteSpan > 1)
+                {
+                    const qint64 globalIdx = bPosLine + colIdx;
+                    qint64 leadIdx = cursorLeadBufIdx; // already pre-computed
+                    const int entryEnd = (int)(leadIdx + cursorMultiByteSpan);
+                    if (globalIdx >= leadIdx && globalIdx < entryEnd)
+                    {
+                        const qint64 segmentStart = qMax(leadIdx, rowStart);
+                        const qint64 segmentEnd   = qMin((qint64)entryEnd, rowEnd);
+                        const int bytesOnThisRow   = (int)qMax<qint64>(0, segmentEnd - segmentStart);
+                        if (bytesOnThisRow > 0 && globalIdx == segmentStart)
+                        {
+                            const int fW = (bytesOnThisRow - 1) * hexStridePx + 2 * _pxCharWidth + 2;
+                            const int fx = pxPosX - 1;
+                            const int fy = pxPosY - _pxCharHeight + _pxSelectionSub;
+                            const int fh = _pxCharHeight + 1;
+                            const bool drawLeft  = (segmentStart == leadIdx);
+                            const bool drawRight = (segmentEnd == (qint64)entryEnd);
+
+                            // Wide fill covering all segment bytes on this row
+                            if (_cursorCharColor.alpha() > 0)
+                            {
+                                painter.fillRect(QRect(fx, fy, fW, fh), _cursorCharColor);
+                                // Redraw the hex text of all bytes in the segment (fill covered them)
+                                for (int k = 0; k < bytesOnThisRow; ++k)
+                                {
+                                    const qint64 kBufIdx = segmentStart + k;
+                                    const QByteArray kHex = _hexDataShown.mid((int)kBufIdx * 2, 2);
+                                    const int kX = pxPosX + k * hexStridePx;
+                                    if ((kBufIdx + _bPosFirst) == (qint64)_bPosCurrent && !_editAreaIsAscii)
+                                    {
+                                        const int activeNibble = _cursorPosition % 2;
+                                        const QString ch0 = hexCaps() ? kHex.mid(0,1).toUpper() : QString(kHex.mid(0,1));
+                                        const QString ch1 = hexCaps() ? kHex.mid(1,1).toUpper() : QString(kHex.mid(1,1));
+                                        QFont boldFont = painter.font(); boldFont.setBold(true);
+                                        const QFont normalFont = painter.font();
+                                        if (activeNibble == 0) {
+                                            painter.setFont(boldFont); painter.drawText(kX, pxPosY, ch0);
+                                            painter.setFont(normalFont); painter.drawText(kX + _pxCharWidth, pxPosY, ch1);
+                                        } else {
+                                            painter.drawText(kX, pxPosY, ch0);
+                                            painter.setFont(boldFont); painter.drawText(kX + _pxCharWidth, pxPosY, ch1);
+                                            painter.setFont(normalFont);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        painter.drawText(kX, pxPosY, hexCaps() ? kHex.toUpper() : QString(kHex));
+                                    }
+                                }
+                            }
+                            // Draw cursor-color solid frame around this segment (pen width 2 to match single-byte cursor)
+                            if (!_readOnly)
+                            {
+                                const QPen savedPen = painter.pen();
+                                painter.setPen(QPen(_cursorFrameColor, 2, Qt::SolidLine));
+                                painter.drawLine(fx, fy, fx + fW - 1, fy);
+                                painter.drawLine(fx, fy + fh, fx + fW - 1, fy + fh);
+                                if (drawLeft)  painter.drawLine(fx, fy, fx, fy + fh);
+                                if (drawRight) painter.drawLine(fx + fW - 1, fy, fx + fW - 1, fy + fh);
+                                painter.setPen(savedPen);
+                            }
+                        }
+                    }
+                }
+
                 pxPosX += hexStridePx;
 
                 // render ascii value
@@ -3134,15 +3285,15 @@ void QHexEdit::paintEvent(QPaintEvent *event)
                         baseSymWidthPx = _pxCharWidth;
                     const int symWidthPx = isContinuationByte ? 0 : (baseSymWidthPx + slotGapPx(baseSymWidthPx));
 
-                    r.setRect(pxPosAsciiX2 - 1, pxPosY - _pxCharHeight + _pxSelectionSub - 2,
+                    r.setRect(pxPosAsciiX2 - 1, pxPosY - _pxCharHeight + _pxSelectionSub + 2,
                               qMax(1, symWidthPx), _pxCharHeight);
 
                     if (!isContinuationByte) {
                         if (c != _asciiAreaColor)
                             painter.fillRect(r, c);
 
-                        if (isCursorByte && _cursorCharColor.alpha() > 0)
-                            painter.fillRect(r, _cursorCharColor);
+                        if (isCursorGroupByte && _cursorCharColor.alpha() > 0)
+                            painter.fillRect(QRect(r.x(), r.y() - 2, baseSymWidthPx, r.height() + 2), _cursorCharColor);
 
                         if (isSelectedByte)
                             painter.setPen(_penSelection);
@@ -3157,8 +3308,8 @@ void QHexEdit::paintEvent(QPaintEvent *event)
                         painter.drawText(r, Qt::AlignLeft | Qt::AlignVCenter, sym);
                     }
 
-                    if (_tb && (_cursorPosition - 2 * _bPosFirst) / 2 == (bPosLine + colIdx))
-                        _asciiCursorRect = r;
+                    if (!isContinuationByte && (bPosLine + colIdx) == cursorLeadBufIdx)
+                        _asciiCursorRect = QRect(r.x() - 1, r.y() - 2, baseSymWidthPx + 2, r.height() + 2);
 
                     pxPosAsciiX2 += symWidthPx;
                 }
@@ -3206,8 +3357,12 @@ void QHexEdit::paintEvent(QPaintEvent *event)
             pen.setWidth(2);
             painter.setPen(pen);
 
-            painter.drawRect(_hexCursorRect);
+            // For multi-byte cursor, the in-loop block already draws the per-row frame segments
+            // (with correct open sides at row-wrap points). Only use drawRect for single-byte cursor.
+            if (_cursorMultiByteSpan <= 1)
+                painter.drawRect(_hexCursorRect);
 
+            // draw cursor rect
             if (_asciiArea)
                 painter.drawRect(_asciiCursorRect);
 
