@@ -93,7 +93,7 @@ void SearchDialog::on_pbReplaceAll_clicked()
     }
 
     if (replaceCounter > 0)
-        QMessageBox::information(this, tr("QHexEdit"), QString(tr("%1 occurrences replaced")).arg(replaceCounter));
+        QMessageBox::information(this, tr("Replace"), QString(tr("%1 occurrences replaced")).arg(replaceCounter));
 }
 
 
@@ -121,7 +121,7 @@ qint64 SearchDialog::replaceOccurrence(qint64 idx, const QByteArray &replaceBa)
     {
         if (ui->cbPrompt->isChecked())
         {
-            result = QMessageBox::question(this, tr("QHexEdit"),
+            result = QMessageBox::question(this, tr("Replace"),
                      tr("Replace occurrence?"),
                      QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel);
 

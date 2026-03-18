@@ -1216,7 +1216,7 @@ void MainWindow::retranslateUi()
     findPointersAct->setText(tr("Find pointers"));
     findPointersAct->setStatusTip(tr("Find pointers for selected text"));
     showPointersAct->setText(tr("Show pointers"));
-    showPointersAct->setStatusTip(tr("Show the pointers dialog"));
+    showPointersAct->setStatusTip(tr("Show the pointers search dialog"));
 
     // Actions - Search
     findAct->setText(tr("Find/Replace"));
@@ -1616,7 +1616,7 @@ void MainWindow::createActions()
     exitAct->setStatusTip(tr("Exit the application"));
     connect(exitAct, SIGNAL(triggered()), qApp, SLOT(closeAllWindows()));
 
-    openProjectAct = new QAction(tr("Open Project..."), this);
+    openProjectAct = new QAction(tr("Open Project"), this);
     openProjectAct->setStatusTip(tr("Open an RTHextion project file"));
     connect(openProjectAct, &QAction::triggered, this, &MainWindow::openProject);
 
@@ -2512,7 +2512,7 @@ void MainWindow::openProjectFile(const QString &path)
     HexDocument doc;
     if (!doc.loadProject(path)) {
         QMessageBox::warning(this, QString::fromLatin1(AppInfo::Name),
-                             tr("Cannot read project file %1.").arg(path));
+                             tr("Cannot read project file from %1").arg(path));
         return;
     }
 
@@ -2746,7 +2746,7 @@ bool MainWindow::saveProjectImpl(const QString &path)
 
     if (!m_document->saveProject(path, docTables, activeIdx)) {
         QMessageBox::warning(this, QString::fromLatin1(AppInfo::Name),
-                             tr("Cannot write project file %1.").arg(path));
+                             tr("Cannot write project file to %1").arg(path));
         return false;
     }
 
@@ -2889,7 +2889,7 @@ void MainWindow::loadFile(const QString &fileName)
         if (detectedEncoding != QStringLiteral("ASCII"))
         {
             applyEncoding(detectedEncoding);
-            statusBar()->showMessage(tr("File loaded - Encoding: %1").arg(detectedEncoding), 3000);
+            statusBar()->showMessage(tr("File loaded. Encoding: %1").arg(detectedEncoding), 3000);
         }
         else
         {

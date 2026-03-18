@@ -80,7 +80,7 @@ TablesDockWidget::TablesDockWidget(QWidget *parent)
     m_redoAct->setShortcutContext(Qt::WidgetWithChildrenShortcut);
 
     m_addAct       = m_toolbar->addAction(QStringLiteral("+"),   this, [this]{ pushUndoSnapshot(tr("Add table")); addTable(); });
-    m_duplicateAct = m_toolbar->addAction(QStringLiteral("Dup"), this, [this]{ pushUndoSnapshot(tr("Duplicate table")); duplicateCurrentTable(); });
+    m_duplicateAct = m_toolbar->addAction(QStringLiteral("Copy"), this, [this]{ pushUndoSnapshot(tr("Duplicate table")); duplicateCurrentTable(); });
     m_importAct    = m_toolbar->addAction(QStringLiteral("Import"), this, [this]{ importTable(); });
     m_exportAct    = m_toolbar->addAction(QStringLiteral("Export"), this, [this]{ exportCurrentTable(); });
     m_toolbar->addSeparator();
@@ -157,7 +157,7 @@ void TablesDockWidget::duplicateCurrentTable()
     syncTableFromGrid(idx);
 
     const TableTab &src = m_tables[idx];
-    addTable(src.name + tr(" (copy)"), &src.table);
+    addTable(src.name + " " + tr("(copy)"), &src.table);
 }
 
 void TablesDockWidget::removeCurrentTable()
@@ -170,7 +170,7 @@ void TablesDockWidget::removeCurrentTable()
     const auto res = QMessageBox::question(
         this,
         tr("Remove table"),
-        tr("Remove table \"%1\"? This cannot be undone unless you use Undo.").arg(m_tables[idx].name),
+        tr("Remove table \"%1\"?").arg(m_tables[idx].name),
         QMessageBox::Yes | QMessageBox::Cancel);
     if (res != QMessageBox::Yes)
         return;
@@ -309,7 +309,7 @@ void TablesDockWidget::onTabDoubleClicked(int index)
     bool ok = false;
     const QString newName = QInputDialog::getText(
         this, tr("Rename table"),
-        tr("Table name:"),
+        tr("Table name") + ":",
         QLineEdit::Normal,
         m_tables[index].name,
         &ok);

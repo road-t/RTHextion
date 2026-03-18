@@ -104,7 +104,7 @@ void TableEditDialog::on_pbAdd_clicked()
     bool ok;
     QInputDialog hexDialog(this);
     hexDialog.setWindowTitle(tr("Add entry"));
-    hexDialog.setLabelText(tr("Enter hex byte sequence (00-FF, even number of digits):"));
+    hexDialog.setLabelText(tr("Enter hex byte sequence (00-FF, even number of digits)") + ":");
     hexDialog.setInputMode(QInputDialog::TextInput);
     hexDialog.setTextValue(QString::number(suggestedByte, 16).rightJustified(2, '0').toUpper());
 
@@ -122,7 +122,7 @@ void TableEditDialog::on_pbAdd_clicked()
     if (input.size() % 2 != 0)
     {
         QMessageBox::warning(this, tr("Invalid Input"),
-                           tr("Please enter an even number of hex digits (e.g. 12 or 00E8)."));
+                           tr("Please enter an even number of hex digits (e.g. 12 or 00E8)"));
         return;
     }
 
@@ -142,7 +142,7 @@ void TableEditDialog::on_pbAdd_clicked()
     if (!parseOk || key.isEmpty())
     {
         QMessageBox::warning(this, tr("Invalid Input"),
-                             tr("Please enter a valid hex byte sequence."));
+                             tr("Please enter a valid hex byte sequence"));
         return;
     }
 
@@ -155,7 +155,7 @@ void TableEditDialog::on_pbAdd_clicked()
 
     // Now prompt for the translation value
     QString valueStr = QInputDialog::getText(this, tr("Add entry"),
-                                             tr("Enter translation text for key 0x%1:").arg(input),
+                                             tr("Enter translation text for key 0x%1").arg(input) + ":",
                                              QLineEdit::Normal,
                                              QString(),
                                              &ok);
