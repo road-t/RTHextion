@@ -1,6 +1,9 @@
 #include "TablesDockWidget.h"
 #include "translationtable.h"
 
+#include <QPainter>
+#include <QPainterPath>
+
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -64,18 +67,23 @@ TablesDockWidget::TablesDockWidget(QWidget *parent)
     setObjectName(QStringLiteral("TablesDockWidget"));
     setFeatures(QDockWidget::DockWidgetFloatable | QDockWidget::DockWidgetMovable);
 
-    // Custom title bar with collapse button
+    // Custom compact title bar
     auto *titleBar = new QWidget(this);
     titleBar->setObjectName(QStringLiteral("dockTitleBar"));
+    titleBar->setFixedHeight(16);
     auto *titleLayout = new QHBoxLayout(titleBar);
-    titleLayout->setContentsMargins(6, 2, 2, 2);
-    titleLayout->setSpacing(2);
+    titleLayout->setContentsMargins(4, 0, 2, 0);
+    titleLayout->setSpacing(1);
     m_titleLabel = new QLabel(tr("Tables"), titleBar);
+    QFont smallFont = m_titleLabel->font();
+    smallFont.setPointSizeF(smallFont.pointSizeF() * 0.8);
+    m_titleLabel->setFont(smallFont);
     titleLayout->addWidget(m_titleLabel);
     titleLayout->addStretch();
     m_collapseBtn = new QToolButton(titleBar);
     m_collapseBtn->setArrowType(Qt::DownArrow);
     m_collapseBtn->setAutoRaise(true);
+    m_collapseBtn->setFixedSize(14, 14);
     m_collapseBtn->setToolTip(tr("Collapse / Expand"));
     titleLayout->addWidget(m_collapseBtn);
     setTitleBarWidget(titleBar);
@@ -97,6 +105,52 @@ TablesDockWidget::TablesDockWidget(QWidget *parent)
     m_redoAct->setShortcut(QKeySequence::Redo);
     m_undoAct->setShortcutContext(Qt::WidgetWithChildrenShortcut);
     m_redoAct->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+
+    // Eye (use-table) toggle button — inserted before "+"
+    m_useTableBtn = new QToolButton(this);
+    m_useTableBtn->setCheckable(true);
+    m_useTableBtn->setAutoRaise(true);
+    m_useTableBtn->setToolTip(tr("Use table"));
+    // Paint a simple 16x16 eye icon
+    auto makeEyeIcon = [](bool /*unused*/) -> QIcon {
+        auto paint = [](bool filled) -> QPixmap {
+            const int sz = 16;
+            QPixmap pm(sz, sz);
+            pm.fill(Qt::transparent);
+            QPainter p(&pm);
+            p.setRenderHint(QPainter::Antialiasing);
+            const QColor col(70, 70, 70);
+            p.setPen(QPen(col, 1.3));
+            // Lens (almond) outline
+            QPainterPath lens;
+            const float cx = sz * 0.5f, cy = sz * 0.5f;
+            const float rx = sz * 0.44f, ry = sz * 0.27f;
+            lens.moveTo(cx - rx, cy);
+            lens.cubicTo(cx - rx * 0.4f, cy - ry * 2.0f, cx + rx * 0.4f, cy - ry * 2.0f, cx + rx, cy);
+            lens.cubicTo(cx + rx * 0.4f, cy + ry * 2.0f, cx - rx * 0.4f, cy + ry * 2.0f, cx - rx, cy);
+            p.drawPath(lens);
+            // Pupil
+            const float pr = ry * 0.72f;
+            if (filled) {
+                p.setBrush(col);
+                p.setPen(Qt::NoPen);
+            }
+            p.drawEllipse(QPointF(cx, cy), pr, pr);
+            return pm;
+        };
+        QIcon icon;
+        icon.addPixmap(paint(true),  QIcon::Normal,  QIcon::On);
+        icon.addPixmap(paint(false), QIcon::Normal,  QIcon::Off);
+        icon.addPixmap(paint(false), QIcon::Disabled, QIcon::Off);
+        return icon;
+    };
+    m_useTableBtn->setIcon(makeEyeIcon(false));
+    m_useTableBtn->setIconSize(QSize(16, 16));
+    m_toolbar->insertWidget(m_toolbar->actions().isEmpty() ? nullptr : m_toolbar->actions().first(),
+                            m_useTableBtn);
+    connect(m_useTableBtn, &QToolButton::clicked, this, [this](bool checked) {
+        emit useTableToggled(checked);
+    });
 
     m_addAct       = m_toolbar->addAction(QStringLiteral("+"),   this, [this]{ pushUndoSnapshot(tr("Add table")); addTable(); });
     m_duplicateAct = m_toolbar->addAction(QStringLiteral("Copy"), this, [this]{ pushUndoSnapshot(tr("Duplicate table")); duplicateCurrentTable(); });
@@ -570,4 +624,16 @@ void TablesDockWidget::applySnapshot(const QVector<TableTab> &snapshot, int acti
     updateButtonStates();
     emit tableContentChanged();
     emit activeTableChanged(currentTable());
+}
+
+void TablesDockWidget::setUseTableChecked(bool checked)
+{
+    if (m_useTableBtn)
+        m_useTableBtn->setChecked(checked);
+}
+
+void TablesDockWidget::setUseTableEnabled(bool enabled)
+{
+    if (m_useTableBtn)
+        m_useTableBtn->setEnabled(enabled);
 }

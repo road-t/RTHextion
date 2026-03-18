@@ -75,12 +75,19 @@ public:
     /// Undo stack (exposed so main window can connect undo/redo actions).
     QUndoStack *undoStack() const { return m_undoStack; }
 
+    /// Sync the eye (use-table) button state from outside (e.g. from MainWindow).
+    void setUseTableChecked(bool checked);
+    void setUseTableEnabled(bool enabled);
+
 signals:
     /// Emitted when the currently selected table changes (switched tab or edited).
     void activeTableChanged(TranslationTable *table);
 
     /// Emitted when any table's content is modified (entry added/removed/edited).
     void tableContentChanged();
+
+    /// Emitted when the eye (use-table) toggle button is clicked.
+    void useTableToggled(bool checked);
 
 private slots:
     void onTabChanged(int index);
@@ -111,6 +118,7 @@ private:
     QString m_projectName;
     QLabel *m_titleLabel = nullptr;
     QToolButton *m_collapseBtn = nullptr;
+    QToolButton *m_useTableBtn = nullptr;
 
     QAction *m_addAct = nullptr;
     QAction *m_duplicateAct = nullptr;

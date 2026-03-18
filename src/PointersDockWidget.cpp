@@ -20,15 +20,20 @@ PointersDockWidget::PointersDockWidget(QWidget *parent)
     // Custom title bar with collapse button
     auto *titleBar = new QWidget(this);
     titleBar->setObjectName(QStringLiteral("dockTitleBar"));
+    titleBar->setFixedHeight(16);
     auto *titleLayout = new QHBoxLayout(titleBar);
-    titleLayout->setContentsMargins(6, 2, 2, 2);
-    titleLayout->setSpacing(2);
+    titleLayout->setContentsMargins(4, 0, 2, 0);
+    titleLayout->setSpacing(1);
     m_titleLabel = new QLabel(tr("Pointers"), titleBar);
+    QFont smallFont = m_titleLabel->font();
+    smallFont.setPointSizeF(smallFont.pointSizeF() * 0.8);
+    m_titleLabel->setFont(smallFont);
     titleLayout->addWidget(m_titleLabel);
     titleLayout->addStretch();
     m_collapseBtn = new QToolButton(titleBar);
     m_collapseBtn->setArrowType(Qt::DownArrow);
     m_collapseBtn->setAutoRaise(true);
+    m_collapseBtn->setFixedSize(14, 14);
     m_collapseBtn->setToolTip(tr("Collapse / Expand"));
     titleLayout->addWidget(m_collapseBtn);
     setTitleBarWidget(titleBar);
