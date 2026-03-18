@@ -2606,6 +2606,12 @@ void MainWindow::openProjectFile(const QString &path)
     navigationHistoryIndex = doc.navigationHistoryIndex;
     updateNavigationActions();
 
+    // 6.5. Cursor position
+    if (doc.cursorPosition > 0) {
+        hexEdit->setCursorPosition(doc.cursorPosition);
+        hexEdit->ensureVisible();
+    }
+
     // 7. Store project association
     *m_document = doc;
     m_document->translationTable = nullptr; // MainWindow owns tb
@@ -2677,6 +2683,7 @@ bool MainWindow::saveProjectImpl(const QString &path)
     m_document->byteOrder = hexEdit->byteOrder;
     m_document->navigationHistory = navigationHistory;
     m_document->navigationHistoryIndex = navigationHistoryIndex;
+    m_document->cursorPosition = hexEdit->cursorPosition();
     m_document->snapshotPointers(hexEdit->pointers());
 
     // Recompute grouped original bytes for all currently modified ranges.

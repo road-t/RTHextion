@@ -58,6 +58,9 @@ public:
     QVector<qint64> navigationHistory;
     int  navigationHistoryIndex = -1;
 
+    // --- Cursor position ---
+    qint64 cursorPosition = 0;              // last active cursor offset in the editor
+
     // --- Original bytes (pre-modification snapshots) ---
     /// Groups of original bytes before user modifications.
     /// Each entry: (offset, contiguousOriginalBytes).
