@@ -1176,6 +1176,8 @@ void MainWindow::retranslateUi()
     createIpsPatchAct->setStatusTip(tr("Save current changes as an IPS patch file"));
     loadIpsPatchAct->setText(tr("Load IPS patch..."));
     loadIpsPatchAct->setStatusTip(tr("Load an IPS patch and apply it as changes"));
+    loadOriginalAct->setText(tr("Load original..."));
+    loadOriginalAct->setStatusTip(tr("Load the original (unmodified) file to compute changes"));
 
     // Actions - Edit
     undoAct->setText(tr("Undo"));
@@ -1641,6 +1643,11 @@ void MainWindow::createActions()
     loadIpsPatchAct = new QAction(tr("Load IPS patch..."), this);
     loadIpsPatchAct->setStatusTip(tr("Load an IPS patch and apply it as changes"));
     connect(loadIpsPatchAct, &QAction::triggered, this, &MainWindow::loadIpsPatch);
+
+    loadOriginalAct = new QAction(tr("Load original..."), this);
+    loadOriginalAct->setStatusTip(tr("Load the original (unmodified) file to compute changes"));
+    loadOriginalAct->setEnabled(false);
+    connect(loadOriginalAct, &QAction::triggered, this, &MainWindow::loadOriginal);
 
     undoAct = new QAction(QIcon(":/images/undo.png"), tr("Undo"), this);
     undoAct->setShortcuts(QKeySequence::Undo);
@@ -2185,6 +2192,8 @@ void MainWindow::createMenus()
 
     changesMenu = menuBar()->addMenu(tr("Changes"));
     changesMenu->addAction(showChangesAct);
+    changesMenu->addSeparator();
+    changesMenu->addAction(loadOriginalAct);
     changesMenu->addSeparator();
     changesMenu->addAction(createIpsPatchAct);
     changesMenu->addAction(loadIpsPatchAct);
@@ -3281,6 +3290,10 @@ void MainWindow::updateActionStates()
     // Create IPS patch only when project has tracked original bytes
     if (createIpsPatchAct)
         createIpsPatchAct->setEnabled(m_document && !m_document->originalBytes.isEmpty());
+
+    // Load original is available whenever a file is open
+    if (loadOriginalAct)
+        loadOriginalAct->setEnabled(!isUntitled && !curFile.isEmpty());
     
     const bool hasSelection = hexEdit && hexEdit->getRawSelection().size() > 1;
     const bool dumpEnabled = hasSelection;
@@ -3811,6 +3824,86 @@ void MainWindow::loadIpsPatch()
 
     if (showChangesAct->isChecked())
         updateChangedBytesHighlight();
+}
+
+void MainWindow::loadOriginal()
+{
+    if (curFile.isEmpty()) {
+        QMessageBox::warning(this, QString::fromLatin1(AppInfo::Name),
+                             tr("No file is currently open."));
+        return;
+    }
+
+    const QString path = QFileDialog::getOpenFileName(
+        this, tr("Load original file"), lastDirectory(kLastFileDirKey),
+        tr("All Files (*)"));
+    if (path.isEmpty())
+        return;
+
+    QFile origFile(path);
+    if (!origFile.open(QIODevice::ReadOnly)) {
+        QMessageBox::warning(this, QString::fromLatin1(AppInfo::Name),
+                             tr("Cannot read file %1:\n%2.").arg(path, origFile.errorString()));
+        return;
+    }
+
+    const QByteArray origData = origFile.readAll();
+    origFile.close();
+
+    const QByteArray currentData = hexEdit->data();
+
+    if (origData.size() != currentData.size()) {
+        const auto reply = QMessageBox::question(
+            this, QString::fromLatin1(AppInfo::Name),
+            tr("The selected file has a different size from the currently open file (%1 vs %2 bytes).\n"
+               "Continue anyway? Only overlapping bytes will be compared.")
+                .arg(origData.size())
+                .arg(currentData.size()),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (reply != QMessageBox::Yes)
+            return;
+    }
+
+    // Compare byte-by-byte and collect contiguous changed runs.
+    // Store original (from origData) values for every changed position.
+    const qint64 compareLen = qMin<qint64>(origData.size(), currentData.size());
+    QVector<QPair<qint64, QByteArray>> newOriginalBytes;
+
+    qint64 runStart = -1;
+    QByteArray runBytes;
+    for (qint64 i = 0; i <= compareLen; ++i) {
+        const bool changed = (i < compareLen) && (currentData.at(i) != origData.at(i));
+        if (changed) {
+            if (runStart < 0) {
+                runStart = i;
+                runBytes.clear();
+            }
+            runBytes.append(origData.at(i));
+        } else {
+            if (runStart >= 0) {
+                newOriginalBytes.append({runStart, runBytes});
+                runStart = -1;
+                runBytes.clear();
+            }
+        }
+    }
+
+    if (newOriginalBytes.isEmpty()) {
+        QMessageBox::information(this, QString::fromLatin1(AppInfo::Name),
+                                 tr("No differences found between the selected file and the current file."));
+        return;
+    }
+
+    m_document->originalBytes = newOriginalBytes;
+    updateActionStates();
+
+    if (showChangesAct->isChecked())
+        updateChangedBytesHighlight();
+
+    rememberDirectory(kLastFileDirKey, path);
+    statusBar()->showMessage(
+        tr("Original loaded: %n changed byte(s) tracked", nullptr, static_cast<int>(newOriginalBytes.size())),
+        3000);
 }
 
 void MainWindow::updateEndiannes()

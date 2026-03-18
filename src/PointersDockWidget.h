@@ -5,6 +5,8 @@
 #include <QTableView>
 #include <QToolBar>
 #include <QAction>
+#include <QLabel>
+#include <QToolButton>
 
 class QHexEdit;
 class PointerListModel;
@@ -47,12 +49,15 @@ private:
 
     QHexEdit           *m_hexEdit    = nullptr;
     PointerListModel   *m_model      = nullptr;
+    QWidget            *m_contentWidget = nullptr;
     QTableView         *m_view       = nullptr;
     QToolBar           *m_toolbar    = nullptr;
     QAction            *m_findAct    = nullptr;
     QAction            *m_addAct     = nullptr;
     QAction            *m_deleteAct  = nullptr;
     QAction            *m_cleanAllAct = nullptr;
+    QLabel             *m_titleLabel = nullptr;
+    QToolButton        *m_collapseBtn = nullptr;
 };
 
 #endif // POINTERSDOCKWIDGET_H

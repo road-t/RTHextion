@@ -105,6 +105,7 @@ private slots:
     void toggleShowChanges();
     void createIpsPatch();
     void loadIpsPatch();
+    void loadOriginal();
     void onDockTableChanged(TranslationTable *table);
     void onDockTableContentChanged();
 
@@ -215,6 +216,7 @@ private:
     QAction *showChangesAct = nullptr;
     QAction *createIpsPatchAct = nullptr;
     QAction *loadIpsPatchAct = nullptr;
+    QAction *loadOriginalAct = nullptr;
 
     QAction *undoAct;
     QAction *redoAct;

@@ -2,6 +2,7 @@
 #include "translationtable.h"
 
 #include <QVBoxLayout>
+#include <QHBoxLayout>
 #include <QHeaderView>
 #include <QMessageBox>
 #include <QFileDialog>
@@ -61,10 +62,28 @@ TablesDockWidget::TablesDockWidget(QWidget *parent)
     : QDockWidget(tr("Tables"), parent)
 {
     setObjectName(QStringLiteral("TablesDockWidget"));
+    setFeatures(QDockWidget::DockWidgetFloatable | QDockWidget::DockWidgetMovable);
+
+    // Custom title bar with collapse button
+    auto *titleBar = new QWidget(this);
+    titleBar->setObjectName(QStringLiteral("dockTitleBar"));
+    auto *titleLayout = new QHBoxLayout(titleBar);
+    titleLayout->setContentsMargins(6, 2, 2, 2);
+    titleLayout->setSpacing(2);
+    m_titleLabel = new QLabel(tr("Tables"), titleBar);
+    titleLayout->addWidget(m_titleLabel);
+    titleLayout->addStretch();
+    m_collapseBtn = new QToolButton(titleBar);
+    m_collapseBtn->setArrowType(Qt::DownArrow);
+    m_collapseBtn->setAutoRaise(true);
+    m_collapseBtn->setToolTip(tr("Collapse / Expand"));
+    titleLayout->addWidget(m_collapseBtn);
+    setTitleBarWidget(titleBar);
 
     m_undoStack = new QUndoStack(this);
 
     auto *container = new QWidget(this);
+    m_contentWidget = container;
     auto *layout = new QVBoxLayout(container);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
@@ -102,6 +121,12 @@ TablesDockWidget::TablesDockWidget(QWidget *parent)
 
     updateButtonStates();
     retranslateUi();
+
+    connect(m_collapseBtn, &QToolButton::clicked, this, [this]() {
+        const bool visible = m_contentWidget->isVisible();
+        m_contentWidget->setVisible(!visible);
+        m_collapseBtn->setArrowType(visible ? Qt::RightArrow : Qt::DownArrow);
+    });
 }
 
 TablesDockWidget::~TablesDockWidget()
@@ -280,6 +305,10 @@ const QVector<TableTab> &TablesDockWidget::allTables() const
 void TablesDockWidget::retranslateUi()
 {
     setWindowTitle(tr("Tables"));
+    if (m_titleLabel)
+        m_titleLabel->setText(tr("Tables"));
+    if (m_collapseBtn)
+        m_collapseBtn->setToolTip(tr("Collapse / Expand"));
     m_addAct->setToolTip(tr("Add empty table"));
     m_duplicateAct->setToolTip(tr("Duplicate current table"));
     m_importAct->setToolTip(tr("Import table from file"));

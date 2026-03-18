@@ -3,6 +3,7 @@
 #include "qhexedit/qhexedit.h"
 
 #include <QVBoxLayout>
+#include <QHBoxLayout>
 #include <QHeaderView>
 #include <QInputDialog>
 #include <QLineEdit>
@@ -14,8 +15,26 @@ PointersDockWidget::PointersDockWidget(QWidget *parent)
 {
     setWindowTitle(tr("Pointers"));
     setObjectName(QStringLiteral("PointersDockWidget"));
+    setFeatures(QDockWidget::DockWidgetFloatable | QDockWidget::DockWidgetMovable);
+
+    // Custom title bar with collapse button
+    auto *titleBar = new QWidget(this);
+    titleBar->setObjectName(QStringLiteral("dockTitleBar"));
+    auto *titleLayout = new QHBoxLayout(titleBar);
+    titleLayout->setContentsMargins(6, 2, 2, 2);
+    titleLayout->setSpacing(2);
+    m_titleLabel = new QLabel(tr("Pointers"), titleBar);
+    titleLayout->addWidget(m_titleLabel);
+    titleLayout->addStretch();
+    m_collapseBtn = new QToolButton(titleBar);
+    m_collapseBtn->setArrowType(Qt::DownArrow);
+    m_collapseBtn->setAutoRaise(true);
+    m_collapseBtn->setToolTip(tr("Collapse / Expand"));
+    titleLayout->addWidget(m_collapseBtn);
+    setTitleBarWidget(titleBar);
 
     auto *container = new QWidget(this);
+    m_contentWidget = container;
     auto *layout = new QVBoxLayout(container);
     layout->setContentsMargins(2, 2, 2, 2);
     layout->setSpacing(2);
@@ -47,6 +66,12 @@ PointersDockWidget::PointersDockWidget(QWidget *parent)
 
     setWidget(container);
     updateButtonStates();
+
+    connect(m_collapseBtn, &QToolButton::clicked, this, [this]() {
+        const bool visible = m_contentWidget->isVisible();
+        m_contentWidget->setVisible(!visible);
+        m_collapseBtn->setArrowType(visible ? Qt::RightArrow : Qt::DownArrow);
+    });
 }
 
 void PointersDockWidget::setHexEdit(QHexEdit *hexEdit)
@@ -115,6 +140,10 @@ void PointersDockWidget::refreshView()
 void PointersDockWidget::retranslateUi()
 {
     setWindowTitle(tr("Pointers"));
+    if (m_titleLabel)
+        m_titleLabel->setText(tr("Pointers"));
+    if (m_collapseBtn)
+        m_collapseBtn->setToolTip(tr("Collapse / Expand"));
     m_findAct->setText(tr("Find pointers"));
     m_addAct->setText(tr("Add"));
     m_deleteAct->setText(tr("Delete"));

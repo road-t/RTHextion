@@ -8,6 +8,8 @@
 #include <QLineEdit>
 #include <QVector>
 #include <QUndoStack>
+#include <QLabel>
+#include <QToolButton>
 
 #include "translationtable.h"
 
@@ -102,10 +104,13 @@ private:
     /// Push a snapshot-based undo command.
     void pushUndoSnapshot(const QString &description);
 
+    QWidget *m_contentWidget = nullptr;
     QTabWidget *m_tabs = nullptr;
     QToolBar *m_toolbar = nullptr;
     QUndoStack *m_undoStack = nullptr;
     QString m_projectName;
+    QLabel *m_titleLabel = nullptr;
+    QToolButton *m_collapseBtn = nullptr;
 
     QAction *m_addAct = nullptr;
     QAction *m_duplicateAct = nullptr;
