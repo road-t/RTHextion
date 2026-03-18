@@ -74,24 +74,25 @@ TranslationTable::TranslationTable(QString fileName) : TranslationTable()
 
         inputFile.close();
 
-        // fill empty single bytes in decode table with precompiled byte sequences
-        for (uint16_t i = 0; i < 0x100; i++)
+        buildFallbackDecodeEntries();
+    }
+}
+
+void TranslationTable::buildFallbackDecodeEntries()
+{
+    for (uint16_t i = 0; i < 0x100; i++)
+    {
+        if (!encodeTable.contains(i))
         {
-            if (!encodeTable.contains(i))
-            {
-                auto btSequence = QString("{%1}").arg(i, 2, 16, QChar('0'));
-
-                decodeTable[btSequence] = i;
-
-                // for hex sequences that contain letters we'd better add uppercased version
-                if (i > 0x9F || (i & 0xF) > 9)
-                    decodeTable[btSequence.toUpper()] = i;
-            }
+            auto btSequence = QString("{%1}").arg(i, 2, 16, QChar('0'));
+            decodeTable[btSequence] = i;
+            if (i > 0x9F || (i & 0xF) > 9)
+                decodeTable[btSequence.toUpper()] = i;
         }
     }
 }
 
-uint32_t TranslationTable::size()
+uint32_t TranslationTable::size() const
 {
     return encodeTable.size() + multiByteEncodeTable.size();
 }

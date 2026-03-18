@@ -34,7 +34,10 @@ public:
     void clearItems();
     uint32_t generateTable(QString input, QString value);
     bool save(const QString &fileName) const;
-    uint32_t size();
+    /// Fill decodeTable with {xx} fallback entries for unmapped bytes.
+    /// Call after populating entries via setItem()/setMultiByteItem().
+    void buildFallbackDecodeEntries();
+    uint32_t size() const;
     static QString escapeNonPrintable(QByteArray src);
     static QString charToHex(const char symbol);
 
