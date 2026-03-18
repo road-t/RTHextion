@@ -890,14 +890,14 @@ QHexEdit::QHexEdit(QWidget *parent) : QAbstractScrollArea(parent), _addressArea(
     _pointers.setHexEdit(this);
 
     // Scroll map — two thin strips to the right of the viewport:
-    //   _scrollMapPtr    (orange)    — pointer storage locations
-    //   _scrollMapTarget (sky-blue)  — pointer target locations
-    _scrollMapPtr = new HexScrollMap(this);
-    _scrollMapPtr->setColor(pointersColor());
-    _scrollMapPtr->hide();  // shown only when pointers are present
+    //   _scrollMapChanges (red-orange)  — changed byte locations
+    //   _scrollMapTarget  (sky-blue)    — pointer storage + target locations
+    _scrollMapChanges = new HexScrollMap(this);
+    _scrollMapChanges->setColor(QColor(0xd0, 0x40, 0x00));  // red-orange — changes
+    _scrollMapChanges->hide();  // shown only when changes are present
 
     _scrollMapTarget = new HexScrollMap(this);
-    _scrollMapTarget->setColor(QColor(0x40, 0xbf, 0xff));  // sky-blue — pointer targets
+    _scrollMapTarget->setColor(QColor(0x40, 0xbf, 0xff));  // sky-blue — pointer+target locations
     _scrollMapTarget->hide();
 
     setViewportMargins(0, 0, 0, 0);  // margins set dynamically by updateScrollMapMargins()
@@ -915,9 +915,9 @@ QHexEdit::QHexEdit(QWidget *parent) : QAbstractScrollArea(parent), _addressArea(
             this, [this]() {
         if (_scrollMapWatcher->isCanceled()) return;
         const auto &r = _scrollMapWatcher->result();
-        if (_scrollMapPtr) {
-            _scrollMapPtr->setTickOffsets(r.ptrYToOff);
-            _scrollMapPtr->setTicks(r.ptrYs);
+        if (_scrollMapChanges) {
+            _scrollMapChanges->setTickOffsets(r.changesYToOff);
+            _scrollMapChanges->setTicks(r.changesYs);
         }
         if (_scrollMapTarget) {
             _scrollMapTarget->setTickOffsets(r.targetYToOff);
@@ -927,8 +927,8 @@ QHexEdit::QHexEdit(QWidget *parent) : QAbstractScrollArea(parent), _addressArea(
 
     // Recompute when either strip height changes (Y-mapping depends on height).
     // Goes through debounce timer to avoid rapid recomputes during window resize.
-    connect(_scrollMapPtr,    &HexScrollMap::heightChanged, this, &QHexEdit::updateScrollMap);
-    connect(_scrollMapTarget, &HexScrollMap::heightChanged, this, &QHexEdit::updateScrollMap);
+    connect(_scrollMapChanges, &HexScrollMap::heightChanged, this, &QHexEdit::updateScrollMap);
+    connect(_scrollMapTarget,  &HexScrollMap::heightChanged, this, &QHexEdit::updateScrollMap);
 
     // Click on a tick → jump to that exact byte offset (centered in viewport)
     auto scrollMapJump = [this](qint64 off) {
@@ -942,8 +942,8 @@ QHexEdit::QHexEdit(QWidget *parent) : QAbstractScrollArea(parent), _addressArea(
         resetSelection(off * 2);
         ensureVisible();
     };
-    connect(_scrollMapPtr,    &HexScrollMap::tickClicked, this, scrollMapJump);
-    connect(_scrollMapTarget, &HexScrollMap::tickClicked, this, scrollMapJump);
+    connect(_scrollMapChanges, &HexScrollMap::tickClicked, this, scrollMapJump);
+    connect(_scrollMapTarget,  &HexScrollMap::tickClicked, this, scrollMapJump);
 
     // Kick debounce timer on any pointer model change
     auto onModelChanged = [this]() { updateScrollMap(); };
@@ -1613,12 +1613,14 @@ void QHexEdit::setChangedPositions(const QSet<qint64> &positions)
 {
     _changedPositions = positions;
     viewport()->update();
+    updateScrollMap();  // refresh the changes map strip
 }
 
 void QHexEdit::clearChangedPositions()
 {
     _changedPositions.clear();
     viewport()->update();
+    updateScrollMap();  // hide the changes map strip
 }
 
 void QHexEdit::setShowPointers(bool show)
@@ -1636,8 +1638,6 @@ void QHexEdit::setPointersColor(const QColor &color)
 {
     _brushPointers = QBrush(color);
     _penPointers = QPen(_pointerFontColor);
-    if (_scrollMapPtr)
-        _scrollMapPtr->setColor(color);
     viewport()->update();
 }
 
@@ -3346,8 +3346,11 @@ void QHexEdit::paintEvent(QPaintEvent *event)
                             painter.setPen(_penPointed);
                         else if (isPointerByte)
                             painter.setPen(_penPointers);
-                        else
-                            painter.setPen(QPen((isZeroByte && !useTbMultiByte) ? _zeroByteFontColor : _asciiFontColor));
+                        else {
+                            const bool isUnmappedZero = isZeroByte && !useTbMultiByte
+                                && (!_tb || sym == QString(_notInTableChar));
+                            painter.setPen(QPen(isUnmappedZero ? _zeroByteFontColor : _asciiFontColor));
+                        }
                         painter.drawText(r, Qt::AlignLeft | Qt::AlignVCenter, sym);
                     }
 
@@ -3601,9 +3604,9 @@ void QHexEdit::adjust()
         if (vp.isValid() && vp.height() > 0)
         {
             int x = vp.right() + 1;
-            if (_scrollMapPtr && _scrollMapPtr->isVisible())
+            if (_scrollMapChanges && _scrollMapChanges->isVisible())
             {
-                _scrollMapPtr->setGeometry(x, vp.top(), kScrollMapWidth, vp.height());
+                _scrollMapChanges->setGeometry(x, vp.top(), kScrollMapWidth, vp.height());
                 x += kScrollMapWidth;
             }
             if (_scrollMapTarget && _scrollMapTarget->isVisible())
@@ -3838,15 +3841,15 @@ void QHexEdit::updateCursor()
 
 // ---- Scroll map visibility API -------------------------------------------------
 
-bool QHexEdit::scrollMapPtrVisible() const
+bool QHexEdit::scrollMapChangesVisible() const
 {
-    return _scrollMapPtrEnabled;
+    return _scrollMapChangesEnabled;
 }
 
-void QHexEdit::setScrollMapPtrVisible(bool visible)
+void QHexEdit::setScrollMapChangesVisible(bool visible)
 {
-    if (_scrollMapPtrEnabled == visible) return;
-    _scrollMapPtrEnabled = visible;
+    if (_scrollMapChangesEnabled == visible) return;
+    _scrollMapChangesEnabled = visible;
     updateScrollMapMargins();
 }
 
@@ -3862,9 +3865,9 @@ void QHexEdit::setScrollMapTargetVisible(bool visible)
     updateScrollMapMargins();
 }
 
-void QHexEdit::setScrollMapPtrBgColor(const QColor &c)
+void QHexEdit::setScrollMapChangesBgColor(const QColor &c)
 {
-    if (_scrollMapPtr) _scrollMapPtr->setBgColor(c);
+    if (_scrollMapChanges) _scrollMapChanges->setBgColor(c);
 }
 
 void QHexEdit::setScrollMapTargetBgColor(const QColor &c)
@@ -3896,17 +3899,18 @@ void QHexEdit::scheduleScrollMapCompute()
         return;
 
     const bool hasPointers = !_pointers.empty();
-    const bool wantPtr    = _scrollMapPtrEnabled    && hasPointers && _scrollMapPtr;
-    const bool wantTarget = _scrollMapTargetEnabled && hasPointers && _scrollMapTarget;
+    const bool hasChanges  = !_changedPositions.isEmpty();
+    const bool wantChanges = _scrollMapChangesEnabled && hasChanges  && _scrollMapChanges;
+    const bool wantTarget  = _scrollMapTargetEnabled  && hasPointers && _scrollMapTarget;
 
     // Update strip visibility
-    if (_scrollMapPtr)    _scrollMapPtr->setVisible(wantPtr);
-    if (_scrollMapTarget) _scrollMapTarget->setVisible(wantTarget);
-    if (wantPtr)    _scrollMapPtr->raise();
-    if (wantTarget) _scrollMapTarget->raise();
+    if (_scrollMapChanges) _scrollMapChanges->setVisible(wantChanges);
+    if (_scrollMapTarget)  _scrollMapTarget->setVisible(wantTarget);
+    if (wantChanges) _scrollMapChanges->raise();
+    if (wantTarget)  _scrollMapTarget->raise();
 
     // Update viewport right margin only when it actually changes (avoids recursive relayout)
-    const int newMargin = (wantPtr ? kScrollMapWidth : 0) + (wantTarget ? kScrollMapWidth : 0);
+    const int newMargin = (wantChanges ? kScrollMapWidth : 0) + (wantTarget ? kScrollMapWidth : 0);
     if (newMargin != _scrollMapCurrentMargin)
     {
         _scrollMapCurrentMargin = newMargin;
@@ -3916,10 +3920,10 @@ void QHexEdit::scheduleScrollMapCompute()
     }
     adjust();  // always reposition strips so height() is up-to-date
 
-    if (!wantPtr && !wantTarget)
+    if (!wantChanges && !wantTarget)
     {
-        if (_scrollMapPtr)    _scrollMapPtr->setTicks({});
-        if (_scrollMapTarget) _scrollMapTarget->setTicks({});
+        if (_scrollMapChanges) _scrollMapChanges->setTicks({});
+        if (_scrollMapTarget)  _scrollMapTarget->setTicks({});
         return;
     }
 
@@ -3979,16 +3983,18 @@ void QHexEdit::scheduleScrollMapCompute()
     const int mGrooveTop = grooveTop;
     const int mGrooveH   = grooveH;
 
-    QList<qint64> ptrKeys    = wantPtr    ? _pointers.pointerKeys() : QList<qint64>{};
-    QList<qint64> targetKeys = wantTarget ? _pointers.offsetKeys()  : QList<qint64>{};
+    QList<qint64> changedKeys = wantChanges ? _changedPositions.values() : QList<qint64>{};
+    QList<qint64> ptrKeys     = wantTarget  ? _pointers.pointerKeys()    : QList<qint64>{};
+    QList<qint64> targetKeys  = wantTarget  ? _pointers.offsetKeys()     : QList<qint64>{};
 
     auto future = QtConcurrent::run(
         [mapH, totalBytes,
          sbMin, sbMax, sbPage, bytesPerLine,
          mGrooveTop, mGrooveH, mThumbH,
-         wantPtr, wantTarget,
-         ptrKeys    = std::move(ptrKeys),
-         targetKeys = std::move(targetKeys)]() -> ScrollMapMarkers
+         wantChanges, wantTarget,
+         changedKeys = std::move(changedKeys),
+         ptrKeys     = std::move(ptrKeys),
+         targetKeys  = std::move(targetKeys)]() -> ScrollMapMarkers
         {
             ScrollMapMarkers result;
 
@@ -4021,22 +4027,28 @@ void QHexEdit::scheduleScrollMapCompute()
                 return qBound(0, static_cast<int>(std::round(thumbCenterY)), mapH - 1);
             };
 
-            if (wantPtr)
+            if (wantChanges)
             {
                 QVector<bool> px(mapH, false);
-                for (qint64 off : ptrKeys) {
+                for (qint64 off : changedKeys) {
                     int y = offToY(off);
                     px[y] = true;
-                    if (!result.ptrYToOff.contains(y))
-                        result.ptrYToOff.insert(y, off);
+                    if (!result.changesYToOff.contains(y))
+                        result.changesYToOff.insert(y, off);
                 }
                 for (int i = 0; i < mapH; ++i)
-                    if (px[i]) result.ptrYs.push_back(i);
+                    if (px[i]) result.changesYs.push_back(i);
             }
 
             if (wantTarget)
             {
                 QVector<bool> px(mapH, false);
+                for (qint64 off : ptrKeys) {
+                    int y = offToY(off);
+                    px[y] = true;
+                    if (!result.targetYToOff.contains(y))
+                        result.targetYToOff.insert(y, off);
+                }
                 for (qint64 off : targetKeys) {
                     int y = offToY(off);
                     px[y] = true;

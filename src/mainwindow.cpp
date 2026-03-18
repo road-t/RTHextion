@@ -1291,10 +1291,10 @@ void MainWindow::retranslateUi()
     if (showStatusBarAct)
         showStatusBarAct->setText(tr("Status bar"));
 
-    showMapPointersAct->setText(tr("Pointer map"));
-    showMapPointersAct->setStatusTip(tr("Show pointer locations on the side map"));
-    showMapTargetsAct->setText(tr("Target map"));
-    showMapTargetsAct->setStatusTip(tr("Show target locations on the side map"));
+    showMapPointersAct->setText(tr("Changes"));
+    showMapPointersAct->setStatusTip(tr("Show changed byte locations on the side map"));
+    showMapTargetsAct->setText(tr("Pointers/Data"));
+    showMapTargetsAct->setStatusTip(tr("Show pointer and target locations on the side map"));
 
     mapsMenu->setTitle(tr("Maps"));
 
@@ -1543,6 +1543,12 @@ void MainWindow::init()
             this, &MainWindow::onDockTableChanged);
     connect(m_tablesDock, &TablesDockWidget::tableContentChanged,
             this, &MainWindow::onDockTableContentChanged);
+    connect(m_tablesDock, &TablesDockWidget::useTableToggled, this, [this](bool checked) {
+        if (useTableAct->isEnabled()) {
+            useTableAct->setChecked(checked);
+            switchUseTable();
+        }
+    });
 
     // Pointers dock widget (bottom)
     m_pointersDock = new PointersDockWidget(this);
@@ -1778,6 +1784,12 @@ void MainWindow::createActions()
     useTableAct->setDisabled(true);
     useTableAct->setStatusTip(tr("Use translation table"));
     connect(useTableAct, SIGNAL(triggered()), this, SLOT(switchUseTable()));
+    connect(useTableAct, &QAction::toggled, this, [this](bool checked) {
+        if (m_tablesDock) m_tablesDock->setUseTableChecked(checked);
+    });
+    connect(useTableAct, &QAction::changed, this, [this]() {
+        if (m_tablesDock) m_tablesDock->setUseTableEnabled(useTableAct->isEnabled());
+    });
 
     editTableAct = new QAction(tr("Edit table"), this);
     editTableAct->setDisabled(true);
@@ -2052,17 +2064,17 @@ void MainWindow::createActions()
     connect(showAddressGridAct, &QAction::toggled, this, [this](bool checked)
             { hexEdit->setShowHexGrid(checked); });
 
-    showMapPointersAct = new QAction(tr("Pointer map"), this);
+    showMapPointersAct = new QAction(tr("Changes"), this);
     showMapPointersAct->setCheckable(true);
     showMapPointersAct->setChecked(true);
-    showMapPointersAct->setStatusTip(tr("Show pointer storage locations on the side map"));
+    showMapPointersAct->setStatusTip(tr("Show changed byte locations on the side map"));
     connect(showMapPointersAct, &QAction::toggled, this, [this](bool checked)
-            { hexEdit->setScrollMapPtrVisible(checked); });
+            { hexEdit->setScrollMapChangesVisible(checked); });
 
-    showMapTargetsAct = new QAction(tr("Target map"), this);
+    showMapTargetsAct = new QAction(tr("Pointers/Data"), this);
     showMapTargetsAct->setCheckable(true);
     showMapTargetsAct->setChecked(true);
-    showMapTargetsAct->setStatusTip(tr("Show pointer target locations on the side map"));
+    showMapTargetsAct->setStatusTip(tr("Show pointer and target locations on the side map"));
     connect(showMapTargetsAct, &QAction::toggled, this, [this](bool checked)
             { hexEdit->setScrollMapTargetVisible(checked); });
 
@@ -3156,7 +3168,7 @@ void MainWindow::updateHexEditorSettings()
     hexEdit->setCursorFrameColor(settings.value("CursorFrameColor", QColor(Qt::black)).value<QColor>());
     hexEdit->setZeroByteFontColor(settings.value("ZeroByteFontColor", QColor(0xCC, 0xCC, 0xCC)).value<QColor>());
     hexEdit->setChangesColor(settings.value("ChangesColor", QColor(0x99, 0xff, 0x99, 0xff)).value<QColor>());
-    hexEdit->setScrollMapPtrBgColor(settings.value("ScrollMapPtrBgColor", QColor(0xd0, 0xd0, 0xd0)).value<QColor>());
+    hexEdit->setScrollMapChangesBgColor(settings.value("ScrollMapPtrBgColor", QColor(0xd0, 0xd0, 0xd0)).value<QColor>());
     hexEdit->setScrollMapTargetBgColor(settings.value("ScrollMapTargetBgColor", QColor(0xd0, 0xd0, 0xd0)).value<QColor>());
 
     const int newBytesPerLine = qMax(1, hexEdit->bytesPerLine());

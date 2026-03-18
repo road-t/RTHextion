@@ -497,15 +497,15 @@ public:
     void setPointerFrameColor(const QColor &color);
 
     /** Show/hide the pointer-storage scroll map strip (orange). */
-    bool scrollMapPtrVisible() const;
-    void setScrollMapPtrVisible(bool visible);
+    bool scrollMapChangesVisible() const;
+    void setScrollMapChangesVisible(bool visible);
 
     /** Show/hide the pointer-target scroll map strip (sky-blue). */
     bool scrollMapTargetVisible() const;
     void setScrollMapTargetVisible(bool visible);
 
     /** Set background color of each scroll map strip. */
-    void setScrollMapPtrBgColor(const QColor &c);
+    void setScrollMapChangesBgColor(const QColor &c);
     void setScrollMapTargetBgColor(const QColor &c);
 
     QColor pointerFrameBackgroundColor();
@@ -677,10 +677,10 @@ private:
     qint64 _lastEventSize;                      // size, which was emitted last time
     QByteArray _markedShown;                    // marked data in view
     PointerListModel _pointers;                 // pointers in view
-    HexScrollMap *_scrollMapPtr    = nullptr;   // pointer-storage strip (orange)
-    HexScrollMap *_scrollMapTarget = nullptr;   // pointer-target strip (sky-blue)
-    bool          _scrollMapPtrEnabled    = true;  // user preference: show ptr strip
-    bool          _scrollMapTargetEnabled = true;  // user preference: show target strip
+    HexScrollMap *_scrollMapChanges = nullptr;   // changes strip (red-orange)
+    HexScrollMap *_scrollMapTarget  = nullptr;   // pointers+targets strip (sky-blue)
+    bool          _scrollMapChangesEnabled = true;  // user preference: show changes strip
+    bool          _scrollMapTargetEnabled  = true;  // user preference: show target strip
     int           _scrollMapCurrentMargin = 0;     // currently applied right viewport margin
     QTimer       *_scrollMapTimer   = nullptr;  // debounce before launching computation
     QFutureWatcher<ScrollMapMarkers> *_scrollMapWatcher = nullptr;  // background computation

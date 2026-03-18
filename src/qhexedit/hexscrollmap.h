@@ -12,10 +12,10 @@
  */
 struct ScrollMapMarkers
 {
-    QVector<int> ptrYs;         ///< Y-positions for pointer-storage strip
-    QVector<int> targetYs;      ///< Y-positions for pointer-target strip
-    QMap<int, qint64> ptrYToOff;    ///< Y → nearest exact byte offset (ptr)
-    QMap<int, qint64> targetYToOff; ///< Y → nearest exact byte offset (target)
+    QVector<int> changesYs;           ///< Y-positions for changes strip
+    QVector<int> targetYs;            ///< Y-positions for pointers+targets strip
+    QMap<int, qint64> changesYToOff;  ///< Y → nearest exact byte offset (changed)
+    QMap<int, qint64> targetYToOff;   ///< Y → nearest exact byte offset (ptr or target)
 };
 
 /**
