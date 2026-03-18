@@ -217,6 +217,9 @@ bool HexDocument::saveProject(const QString &path,
         out << "navigation_index: " << navigationHistoryIndex << "\n";
     }
 
+    // Cursor position
+    out << "\ncursor_position: 0x" << QString::number(cursorPosition, 16).toUpper() << "\n";
+
     // Original bytes
     if (!originalBytes.isEmpty()) {
         out << "\noriginal:\n";
@@ -309,6 +312,9 @@ bool HexDocument::saveProject(const QString &path, const TranslationTable *table
         out << "navigation_index: " << navigationHistoryIndex << "\n";
     }
 
+    // Cursor position
+    out << "\ncursor_position: 0x" << QString::number(cursorPosition, 16).toUpper() << "\n";
+
     // Original bytes (pre-modification data for IPS/diff)
     if (!originalBytes.isEmpty()) {
         out << "\noriginal:\n";
@@ -352,6 +358,7 @@ bool HexDocument::loadProject(const QString &path)
     pointerSnapshot.clear();
     navigationHistory.clear();
     navigationHistoryIndex = -1;
+    cursorPosition = 0;
     originalBytes.clear();
 
     enum class Section { Root, Pointers, NavHistory, TableEntries, Original, Tables, TablesEntries };
@@ -434,7 +441,9 @@ bool HexDocument::loadProject(const QString &path)
             if (section == Section::TablesEntries && stripped.startsWith(QLatin1String("- "))) {
                 if (tables.isEmpty()) continue;
                 TranslationTable *t = tables.last().table;
-                QString entry = stripped.mid(2);
+                const int markerPos = line.indexOf(QLatin1String("- "));
+                if (markerPos < 0) continue;
+                QString entry = line.mid(markerPos + 2);
                 int eqPos = entry.indexOf(QLatin1Char('='));
                 if (eqPos <= 0) continue;
 
@@ -482,9 +491,10 @@ bool HexDocument::loadProject(const QString &path)
             if (!stripped.startsWith(QLatin1String("- "))) {
                 section = Section::Root;
             } else {
-            QString entry = stripped;
-            if (entry.startsWith(QLatin1String("- ")))
-                entry = entry.mid(2);
+            const int markerPos = line.indexOf(QLatin1String("- "));
+            if (markerPos < 0)
+                continue;
+            QString entry = line.mid(markerPos + 2);
 
             int eqPos = entry.indexOf(QLatin1Char('='));
             if (eqPos <= 0)
@@ -655,6 +665,10 @@ bool HexDocument::loadProject(const QString &path)
             navigationHistoryIndex = val.toInt();
         } else if (key == QLatin1String("active_table")) {
             activeTableIndex = val.toInt();
+        } else if (key == QLatin1String("cursor_position")) {
+            bool ok = false;
+            cursorPosition = val.startsWith(QLatin1String("0x"), Qt::CaseInsensitive)
+                ? val.mid(2).toLongLong(&ok, 16) : val.toLongLong(&ok);
         }
     }
 
