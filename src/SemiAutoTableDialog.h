@@ -3,17 +3,20 @@
 
 #include <QDialog>
 
+#include "translationtable.h"
+
 class QLineEdit;
 class QPushButton;
 class QHexEdit;
-class TranslationTable;
 
 class SemiAutoTableDialog : public QDialog
 {
     Q_OBJECT
 
 public:
-    explicit SemiAutoTableDialog(QHexEdit *hexEdit, TranslationTable **tb, QWidget *parent = nullptr);
+    explicit SemiAutoTableDialog(QHexEdit *hexEdit, QWidget *parent = nullptr);
+    bool hasGeneratedTable() const { return _hasGeneratedTable; }
+    const TranslationTable &generatedTable() const { return _generatedTable; }
 
 signals:
     void tableGenerated();
@@ -26,7 +29,8 @@ private:
     void retranslateUi();
 
     QHexEdit *_hexEdit;
-    TranslationTable **_tb;
+    TranslationTable _generatedTable;
+    bool _hasGeneratedTable = false;
     QLineEdit *_leSearch;
     QPushButton *_pbFind;
     QPushButton *_pbCancel;

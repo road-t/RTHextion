@@ -10,8 +10,8 @@
 #include <QMessageBox>
 #include <QEvent>
 
-SemiAutoTableDialog::SemiAutoTableDialog(QHexEdit *hexEdit, TranslationTable **tb, QWidget *parent)
-    : QDialog(parent), _hexEdit(hexEdit), _tb(tb)
+SemiAutoTableDialog::SemiAutoTableDialog(QHexEdit *hexEdit, QWidget *parent)
+    : QDialog(parent), _hexEdit(hexEdit)
 {
     setWindowTitle(tr("Semi-auto table generation"));
     setModal(true);
@@ -70,42 +70,27 @@ void SemiAutoTableDialog::onFind()
     // Found! Read the actual bytes at the found position
     QByteArray foundBytes = _hexEdit->dataAt(pos, needle.size());
 
-    // Warn if a table already exists
-    if (*_tb)
-    {
-        auto res = QMessageBox::warning(this, tr("Table already exists"),
-                                        tr("A translation table is already loaded. Creating a new one will discard it.\nIf you have unsaved changes, save the table first.\n\nContinue?"),
-                                        QMessageBox::Yes | QMessageBox::No);
-
-        if (res != QMessageBox::Yes)
-            return;
-
-        _hexEdit->removeTranslationTable();
-        delete *_tb;
-        *_tb = nullptr;
-    }
-
-    *_tb = new TranslationTable();
+    TranslationTable generated;
 
     // generateTable expects: input = raw bytes from ROM, value = the known ASCII text
-    (*_tb)->generateTable(QString::fromLatin1(foundBytes.constData(), foundBytes.size()), text);
+    generated.generateTable(QString::fromLatin1(foundBytes.constData(), foundBytes.size()), text);
 
-    if ((*_tb)->size() == 0)
+    if (generated.size() == 0)
     {
         QMessageBox::warning(
             this,
             tr("Generation failed"),
             tr("Could not generate any table entries from the found match.\nTry a different string with more variety of letters."));
-
-        delete *_tb;
-        *_tb = nullptr;
         return;
     }
+
+    _generatedTable = generated;
+    _hasGeneratedTable = true;
 
     QMessageBox::information(
         this,
         tr("Table generated"),
-        tr("Generated %1 table entries.\nThe table editor will open so you can review and adjust.").arg((*_tb)->size()));
+        tr("Generated %1 table entries.\nThe table editor will open so you can review and adjust.").arg(_generatedTable.size()));
 
     emit tableGenerated();
     accept();
