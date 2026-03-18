@@ -861,6 +861,7 @@ QHexEdit::QHexEdit(QWidget *parent) : QAbstractScrollArea(parent), _addressArea(
 
     setAddressAreaColor(this->palette().alternateBase().color());
     setHighlightingColor(QColor(0xff, 0xff, 0x99, 0xff));
+    setChangesColor(QColor(0x99, 0xff, 0x99, 0xff));
     setPointersColor(QColor(0xff, 0x99, 0x00, 0xff));
     setPointedColor(QColor(0x99, 0xff, 0x00, 0xff));
     setPointerFontColor(this->palette().color(QPalette::WindowText));
@@ -1582,6 +1583,42 @@ void QHexEdit::setHighlightingColor(const QColor &color)
 QColor QHexEdit::highlightingColor()
 {
     return _brushHighlighted.color();
+}
+
+void QHexEdit::setShowChanges(bool mode)
+{
+    _showChanges = mode;
+    viewport()->update();
+}
+
+bool QHexEdit::showChanges()
+{
+    return _showChanges;
+}
+
+void QHexEdit::setChangesColor(const QColor &color)
+{
+    _changesColor = color;
+    _brushChanges = QBrush(color);
+    _penChanges = QPen(viewport()->palette().color(QPalette::WindowText));
+    viewport()->update();
+}
+
+QColor QHexEdit::changesColor()
+{
+    return _changesColor;
+}
+
+void QHexEdit::setChangedPositions(const QSet<qint64> &positions)
+{
+    _changedPositions = positions;
+    viewport()->update();
+}
+
+void QHexEdit::clearChangedPositions()
+{
+    _changedPositions.clear();
+    viewport()->update();
 }
 
 void QHexEdit::setShowPointers(bool show)
@@ -2911,6 +2948,7 @@ void QHexEdit::paintEvent(QPaintEvent *event)
                 const bool isSelectedByte = (getSelectionEnd() - getSelectionBegin() > 1)
                                          && (getSelectionBegin() <= posBa) && (getSelectionEnd() > posBa);
                 const bool isHighlightedByte = _highlighting && _markedShown.at((int)(posBa - _bPosFirst));
+                const bool isChangedByte = _showChanges && _changedPositions.contains(posBa);
 
                 if (isSelectedByte)
                 {
@@ -2919,7 +2957,12 @@ void QHexEdit::paintEvent(QPaintEvent *event)
                 }
                 else
                 {
-                    if (isHighlightedByte)
+                    if (isChangedByte)
+                    {
+                        c = _brushChanges.color();
+                        painter.setPen(_penChanges);
+                    }
+                    else if (isHighlightedByte)
                     {
                         c = _brushHighlighted.color();
                         painter.setPen(_penHighlighted);
@@ -2934,7 +2977,7 @@ void QHexEdit::paintEvent(QPaintEvent *event)
                     {
                         QImage ptrIcon = QImage(":/images/pointer.png");
 
-                        if (!isSelectedByte && !isHighlightedByte)
+                        if (!isSelectedByte && !isHighlightedByte && !isChangedByte)
                             c = _brushPointed.color();
 
                         if (!isSelectedByte)
@@ -2943,7 +2986,7 @@ void QHexEdit::paintEvent(QPaintEvent *event)
                         painter.drawImage(pxPosX - _pxCharWidth - 2, pxPosY - (_pxCharHeight / 2), ptrIcon, 0, 0, 10, 10);
                     }
 
-                    if (isPointerByte && !isSelectedByte && !isHighlightedByte && !isPointedByte)
+                    if (isPointerByte && !isSelectedByte && !isHighlightedByte && !isChangedByte && !isPointedByte)
                         painter.setPen(_penPointers);
                     
                     if (isPointerByte)

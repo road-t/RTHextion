@@ -5,6 +5,7 @@
 #include <QPen>
 #include <QBrush>
 #include <QVector>
+#include <QSet>
 
 class QContextMenuEvent;
 
@@ -206,6 +207,9 @@ class QHEXEDIT_API QHexEdit : public QAbstractScrollArea
 
     /*! Color used for dashed frame of currently active multi-byte table entry in hex area. */
     Q_PROPERTY(QColor multibyteFrameColor READ multibyteFrameColor WRITE setMultibyteFrameColor)
+
+    /*! Background color used to highlight bytes that differ from the project's original data. */
+    Q_PROPERTY(QColor changesColor READ changesColor WRITE setChangesColor)
 
     /*! Set the font of the widget. Please use fixed width fonts like Mono or Courier.*/
     Q_PROPERTY(QFont font READ font WRITE setFont)
@@ -465,6 +469,15 @@ public:
     QColor highlightingColor();
     void setHighlightingColor(const QColor &color);
 
+    bool showChanges();
+    void setShowChanges(bool mode);
+
+    QColor changesColor();
+    void setChangesColor(const QColor &color);
+
+    void setChangedPositions(const QSet<qint64> &positions);
+    void clearChangedPositions();
+
     bool showPointers();
     void setShowPointers(bool mode);
 
@@ -621,12 +634,16 @@ private:
     int _bytesPerLine;
     int _hexCharsInLine;
     bool _highlighting;
+    bool _showChanges = false;
     bool _overwriteMode;
     bool _showHexGrid;
     QBrush _brushSelection;
     QPen _penSelection;
     QBrush _brushHighlighted;
     QPen _penHighlighted;
+    QBrush _brushChanges;
+    QPen _penChanges;
+    QColor _changesColor;
     QBrush _brushPointers;
     QPen _penPointers;
     QBrush _brushPointed;
@@ -687,6 +704,7 @@ private:
     const TranslationTable *_asciiAreaWidthCacheTable = nullptr;
     QChar _nonPrintableNoTableChar = QChar(0x25AA); // ▪
     QChar _notInTableChar = QChar(0x25A1);          // □
+    QSet<qint64> _changedPositions;                 // byte positions with project-level changes
     /*! \endcond docNever */
 };
 
