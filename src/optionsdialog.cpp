@@ -195,6 +195,7 @@ void OptionsDialog::saveCurrentSettings()
     m_originalSettings.cursorCharColor = ui->lbCursorCharColor->palette().color(ui->lbCursorCharColor->backgroundRole());
     m_originalSettings.cursorFrameColor = ui->lbCursorFrameColor->palette().color(ui->lbCursorFrameColor->backgroundRole());
     m_originalSettings.zeroByteFontColor = ui->lbZeroByteFontColor->palette().color(ui->lbZeroByteFontColor->backgroundRole());
+    m_originalSettings.changesColor = ui->lbChangesColor->palette().color(ui->lbChangesColor->backgroundRole());
     m_originalSettings.scrollMapPtrBgColor = ui->lbScrollMapPtrBgColor->palette().color(ui->lbScrollMapPtrBgColor->backgroundRole());
     m_originalSettings.scrollMapTargetBgColor = ui->lbScrollMapTargetBgColor->palette().color(ui->lbScrollMapTargetBgColor->backgroundRole());
     m_originalSettings.widgetFont = ui->pbWidgetFont->font();
@@ -243,6 +244,7 @@ void OptionsDialog::restoreSettings()
     setColor(ui->lbCursorCharColor, m_originalSettings.cursorCharColor);
     setColor(ui->lbCursorFrameColor, m_originalSettings.cursorFrameColor);
     setColor(ui->lbZeroByteFontColor, m_originalSettings.zeroByteFontColor);
+    setColor(ui->lbChangesColor, m_originalSettings.changesColor);
     setColor(ui->lbScrollMapPtrBgColor, m_originalSettings.scrollMapPtrBgColor);
     setColor(ui->lbScrollMapTargetBgColor, m_originalSettings.scrollMapTargetBgColor);
     ui->pbWidgetFont->setFont(m_originalSettings.widgetFont);
@@ -325,6 +327,7 @@ void OptionsDialog::readSettings()
     setColor(ui->lbCursorCharColor, settings.value("CursorCharColor", QColor(0x00, 0x60, 0xFF, 0x80)).value<QColor>());
     setColor(ui->lbCursorFrameColor, settings.value("CursorFrameColor", QColor(Qt::black)).value<QColor>());
     setColor(ui->lbZeroByteFontColor, settings.value("ZeroByteFontColor", QColor(0xCC, 0xCC, 0xCC)).value<QColor>());
+    setColor(ui->lbChangesColor, settings.value("ChangesColor", QColor(0x99, 0xff, 0x99, 0xff)).value<QColor>());
     setColor(ui->lbScrollMapPtrBgColor, settings.value("ScrollMapPtrBgColor", QColor(0xd0, 0xd0, 0xd0)).value<QColor>());
     setColor(ui->lbScrollMapTargetBgColor, settings.value("ScrollMapTargetBgColor", QColor(0xd0, 0xd0, 0xd0)).value<QColor>());
 
@@ -382,6 +385,7 @@ void OptionsDialog::writeSettings()
     settings.setValue("CursorCharColor", ui->lbCursorCharColor->palette().color(ui->lbCursorCharColor->backgroundRole()));
     settings.setValue("CursorFrameColor", ui->lbCursorFrameColor->palette().color(ui->lbCursorFrameColor->backgroundRole()));
     settings.setValue("ZeroByteFontColor", ui->lbZeroByteFontColor->palette().color(ui->lbZeroByteFontColor->backgroundRole()));
+    settings.setValue("ChangesColor", ui->lbChangesColor->palette().color(ui->lbChangesColor->backgroundRole()));
     settings.setValue("ScrollMapPtrBgColor", ui->lbScrollMapPtrBgColor->palette().color(ui->lbScrollMapPtrBgColor->backgroundRole()));
     settings.setValue("ScrollMapTargetBgColor", ui->lbScrollMapTargetBgColor->palette().color(ui->lbScrollMapTargetBgColor->backgroundRole()));
     
@@ -647,6 +651,17 @@ void OptionsDialog::on_pbCursorFrameColor_clicked()
     }
 }
 
+void OptionsDialog::on_pbChangesColor_clicked()
+{
+    QColor color = QColorDialog::getColor(currentSwatchColor(ui->lbChangesColor), this, QString(), QColorDialog::ShowAlphaChannel);
+
+    if (color.isValid())
+    {
+        setColor(ui->lbChangesColor, color);
+        updateSettings();
+    }
+}
+
 void OptionsDialog::on_cbShowHexGrid_stateChanged(int)
 {
     updateAreaControls();
@@ -744,6 +759,7 @@ void OptionsDialog::resetToDefaults()
     setColor(ui->lbCursorCharColor, QColor(0x00, 0x60, 0xFF, 0x80));
     setColor(ui->lbCursorFrameColor, QColor(Qt::black));
     setColor(ui->lbZeroByteFontColor, QColor(0xCC, 0xCC, 0xCC));
+    setColor(ui->lbChangesColor, QColor(0x99, 0xff, 0x99, 0xff));
     setColor(ui->lbScrollMapPtrBgColor, QColor(0xd0, 0xd0, 0xd0));
     setColor(ui->lbScrollMapTargetBgColor, QColor(0xd0, 0xd0, 0xd0));
 

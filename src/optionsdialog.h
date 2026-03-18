@@ -47,6 +47,7 @@ private slots:
     void on_pbPointerFrameBgColor_clicked();
     void on_pbCursorCharColor_clicked();
     void on_pbCursorFrameColor_clicked();
+    void on_pbChangesColor_clicked();
     void on_cbDynamicSize_stateChanged(int);
     void on_pbHexAreaBackground_clicked();
     void on_pbHexAreaGrid_clicked();
@@ -121,6 +122,7 @@ private:
         QColor cursorCharColor;
         QColor cursorFrameColor;
         QColor zeroByteFontColor;
+        QColor changesColor;
         QColor scrollMapPtrBgColor;
         QColor scrollMapTargetBgColor;
         QFont widgetFont;
