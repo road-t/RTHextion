@@ -9,11 +9,13 @@
 #include <QHeaderView>
 #include <QItemSelectionModel>
 #include <QtEndian>
+#include <QScreen>
 #include <numeric>
 
 #include "pointersdialog.h"
 #include "ui_pointersdialog.h"
 #include "PointerListModel.h"
+#include "PointersDockWidget.h"
 #include "romdetect.h"
 #include "mainwindow.h"
 #include <QtConcurrent/QtConcurrentRun>
@@ -36,14 +38,6 @@ PointersDialog::PointersDialog(QHexEdit *hexEdit, QWidget *parent) :
     plModel = _hexEdit->pointers();
 
     plModel->setSectionNames(QStringList() << tr("offset") << tr("Pointer") << tr("Data"));
-
-    ui->tvPointers->setModel(plModel);
-    ui->tvPointers->setSelectionBehavior(QAbstractItemView::SelectRows);
-    ui->tvPointers->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    ui->tvPointers->verticalHeader()->setVisible(false);
-    ui->tvPointers->sortByColumn(0, Qt::AscendingOrder);
-    ui->tvPointers->setColumnWidth(0, 78);
-    ui->tvPointers->setColumnWidth(1, 78);
 
     ui->leRangeBegin->setInputMask("");
     ui->leRangeEnd->setInputMask("");
@@ -116,12 +110,6 @@ PointersDialog::PointersDialog(QHexEdit *hexEdit, QWidget *parent) :
 
     ui->bbControls->button(QDialogButtonBox::Ok)->setText(tr("Find"));
 
-    ui->btnDeletePointer->setEnabled(false);
-    connect(ui->tvPointers->selectionModel(), &QItemSelectionModel::selectionChanged,
-            this, [this](const QItemSelection &, const QItemSelection &)
-            { ui->btnDeletePointer->setEnabled(
-                  !ui->tvPointers->selectionModel()->selectedRows().isEmpty()); });
-
     // Timer-based UI drain: the background search thread pushes results to a
     // mutex-protected buffer; the timer flushes it to the model at ~10 fps so
     // the event queue is never flooded and the Stop button stays responsive.
@@ -161,9 +149,8 @@ void PointersDialog::refreshFromTable()
     tb = nullptr;
     if (plModel)
         plModel->refreshData();
-
-    ui->tvPointers->viewport()->update();
-    ui->tvPointers->resizeColumnsToContents();
+    if (m_dock)
+        m_dock->refreshView();
 }
 
 void PointersDialog::setRomProfile(RomType type, qint64 offset)
@@ -312,6 +299,12 @@ void PointersDialog::showEvent(QShowEvent *ev)
 {
     Q_UNUSED(ev);
 
+    // Center window on screen
+    const QRect screenGeom = screen()->availableGeometry();
+    const int x = (screenGeom.width() - width()) / 2 + screenGeom.left();
+    const int y = (screenGeom.height() - height()) / 2 + screenGeom.top();
+    move(x, y);
+
     // Sync ROM profile from MainWindow
     auto *mw = qobject_cast<MainWindow *>(parent());
     if (mw)
@@ -319,10 +312,7 @@ void PointersDialog::showEvent(QShowEvent *ev)
     // Always default to 4-byte pointer size regardless of ROM-type default
     ui->rb4Byte->setChecked(true);
 
-    ui->btnCleanAll->setEnabled(!_hexEdit->pointers()->empty());
     //ui->bbControls->button(QDialogButtonBox::Ok)->setEnabled(_hexEdit->hasSelection());
-
-    ui->tvPointers->setSortingEnabled(false);
 
     auto _tb = _hexEdit->getTranslationTable();
 
@@ -380,10 +370,9 @@ void PointersDialog::showEvent(QShowEvent *ev)
     }
 
     if (plModel->rowCount())
-        ui->tvPointers->resizeColumnsToContents();
+        if (m_dock) m_dock->refreshView();
 
-    ui->tvPointers->setSortingEnabled(true);
-    ui->tvPointers->sortByColumn(0, Qt::AscendingOrder);
+    if (m_dock) m_dock->endSearch();
 
     qint64 selBegin = _hexEdit->getSelectionBegin();
     qint64 selEnd = _hexEdit->getSelectionEnd();
@@ -469,7 +458,8 @@ void PointersDialog::on_bbControls_accepted()
     ui->btnStop->setEnabled(true);
     ui->bbControls->button(QDialogButtonBox::Ok)->setText(tr("Stop"));
     ui->bbControls->button(QDialogButtonBox::Close)->setEnabled(false);
-    ui->tvPointers->setSortingEnabled(false);
+    if (m_dock) m_dock->beginSearch();
+    emit searchStarted();
 
     // Get search parameters
     const bool optimizeForText = ui->cbOptimize->isChecked();
@@ -732,10 +722,8 @@ void PointersDialog::finishSearchUi(bool cancelled, int found, qint64 elapsedMs)
     ui->bbControls->button(QDialogButtonBox::Ok)->setText(tr("Find"));
     ui->bbControls->button(QDialogButtonBox::Ok)->setEnabled(true);
     ui->bbControls->button(QDialogButtonBox::Close)->setEnabled(true);
-    if (plModel->rowCount() <= 10000)
-        ui->tvPointers->resizeColumnsToContents();
-    ui->tvPointers->setSortingEnabled(true);
-    ui->btnCleanAll->setEnabled(!plModel->empty());
+    if (m_dock) m_dock->endSearch();
+    emit searchFinished();
 
     if (_quickSearchMode)
     {
@@ -801,86 +789,6 @@ void PointersDialog::on_cbRangeEnd_currentIndexChanged(int index)
 }
 
 
-void PointersDialog::on_tvPointers_doubleClicked(const QModelIndex &index)
-{
-    const qint64 selectedOffset = index.data(PointerListModel::ValueRole).toLongLong();
-
-    _hexEdit->setCursorPosition(selectedOffset * 2);
-    _hexEdit->ensureVisible();
-}
-
-void PointersDialog::on_btnAddPointer_clicked()
-{
-    bool ok = false;
-    const QString pointerText = QInputDialog::getText(this,
-                                                      tr("Add pointer"),
-                                                      tr("Pointer offset (hex/dec, e.g. 0x1234):"),
-                                                      QLineEdit::Normal,
-                                                      QString(),
-                                                      &ok);
-    if (!ok || pointerText.isEmpty())
-        return;
-
-    const qint64 pointerOffset = pointerText.toLongLong(&ok, 0);
-    if (!ok || pointerOffset < 0)
-    {
-        QMessageBox::warning(this, QString(), tr("Invalid pointer offset."));
-        return;
-    }
-
-    const QString valueText = QInputDialog::getText(this,
-                                                    tr("Add pointer"),
-                                                    tr("Pointer value (hex/dec, e.g. 0x5678):"),
-                                                    QLineEdit::Normal,
-                                                    QString(),
-                                                    &ok);
-    if (!ok || valueText.isEmpty())
-        return;
-
-    const qint64 pointedOffset = valueText.toLongLong(&ok, 0);
-    if (!ok || pointedOffset < 0)
-    {
-        QMessageBox::warning(this, QString(), tr("Invalid pointer value."));
-        return;
-    }
-
-    _hexEdit->addPointerUndoable(pointerOffset, pointedOffset, ui->rb2Byte->isChecked() ? 2 : 4);
-    ui->tvPointers->resizeColumnsToContents();
-    ui->btnCleanAll->setEnabled(!plModel->empty());
-}
-
-void PointersDialog::on_btnDeletePointer_clicked()
-{
-    const auto selectedRows = ui->tvPointers->selectionModel()->selectedRows();
-    if (selectedRows.isEmpty())
-        return;
-
-    QMessageBox msg(QMessageBox::Warning, nullptr, tr("Are you sure want to delete pointer from list?"), QMessageBox::Yes | QMessageBox::No, this);
-    if (msg.exec() != QMessageBox::Yes)
-        return;
-
-    QVector<qint64> pointersToDelete;
-    pointersToDelete.reserve(selectedRows.size());
-    for (const QModelIndex &rowIndex : selectedRows)
-    {
-        const qint64 pointer = rowIndex.data(PointerListModel::KeyRole).toLongLong();
-        pointersToDelete.append(pointer);
-    }
-
-    _hexEdit->removePointersUndoable(pointersToDelete);
-    ui->btnCleanAll->setEnabled(!plModel->empty());
-}
-
-void PointersDialog::on_btnCleanAll_clicked()
-{
-    QMessageBox msg(QMessageBox::Warning, nullptr, tr("Are you sure want to clear pointers list?"), QMessageBox::Yes | QMessageBox::No, this);
-    if (msg.exec() != QMessageBox::Yes)
-        return;
-
-    _hexEdit->clearPointers();
-    ui->tvPointers->reset();
-    ui->btnCleanAll->setEnabled(false);
-}
 
 void PointersDialog::on_leRangeBegin_textChanged(const QString &text)
 {
@@ -896,13 +804,7 @@ void PointersDialog::on_leRangeEnd_textChanged(const QString &text)
 
 void PointersDialog::keyPressEvent(QKeyEvent *event)
 {
-    if (ui->tvPointers->hasFocus())
-    {
-        if (event->key() == Qt::Key_Backspace || event->key() == Qt::Key_Delete)
-        {
-            on_btnDeletePointer_clicked();
-        }
-    }
+    QDialog::keyPressEvent(event);
 }
 
 void PointersDialog::changeEvent(QEvent *event)

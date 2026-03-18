@@ -17,12 +17,15 @@ macx {
 HEADERS = \
     appinfo.h \
     Datas.h \
+    hexdocument.h \
     DumpScriptdialog.h \
     InsertScriptDialog.h \
     JumpToDialog.h \
     PointerListModel.h \
     SemiAutoTableDialog.h \
     TableEditDialog.h \
+    TablesDockWidget.h \
+    PointersDockWidget.h \
     langtranslator.h \
     mainwindow.h \
     optionsdialog.h \
@@ -39,11 +42,14 @@ HEADERS = \
 
 SOURCES = \
     DumpScriptdialog.cpp \
+    hexdocument.cpp \
     InsertScriptDialog.cpp \
     JumpToDialog.cpp \
     PointerListModel.cpp \
     SemiAutoTableDialog.cpp \
     TableEditDialog.cpp \
+    TablesDockWidget.cpp \
+    PointersDockWidget.cpp \
     langtranslator.cpp \
     main.cpp \
     mainwindow.cpp \

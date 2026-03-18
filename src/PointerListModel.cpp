@@ -20,7 +20,7 @@ int PointerListModel::columnCount(const QModelIndex &parent) const
 
 QVariant PointerListModel::headerData(int section, Qt::Orientation orientation, int role) const
 {
-    if (orientation == Qt::Horizontal && role == Qt::DisplayRole)
+    if (orientation == Qt::Horizontal && role == Qt::DisplayRole && section < sectionName.size())
         return sectionName[section];
 
     return QAbstractItemModel::headerData(section, orientation, role);

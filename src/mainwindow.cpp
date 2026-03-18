@@ -17,6 +17,7 @@
 #include <QGridLayout>
 #include <QSettings>
 #include <QScrollBar>
+#include <QShortcut>
 #include <QDir>
 #include <QComboBox>
 #include <QLocale>
@@ -26,6 +27,7 @@
 #include "appinfo.h"
 #include "langtranslator.h"
 #include "mainwindow.h"
+#include "TablesDockWidget.h"
 #include "romdetect.h"
 #include "encodingdetect.h"
 
@@ -37,8 +39,10 @@ namespace
     const char *kMainWindowStateKey = "MainWindow/State";
     const char *kRecentFilesKey = "RecentFiles";
     const char *kRecentTablesKey = "RecentTables";
+    const char *kRecentProjectsKey = "RecentProjects";
     const int kMaxRecentFiles = 10;
     const int kMaxRecentTables = 10;
+    const int kMaxRecentProjects = 10;
 
     QChar readSingleCharSetting(const QSettings &settings, const char *key, const QChar &fallback)
     {
@@ -63,6 +67,12 @@ MainWindow::MainWindow()
 void MainWindow::closeEvent(QCloseEvent *event)
 {
     if (!maybeSave())
+    {
+        event->ignore();
+        return;
+    }
+
+    if (!maybeSaveProject())
     {
         event->ignore();
         return;
@@ -149,19 +159,31 @@ void MainWindow::closeFile()
 {
     if (!maybeSave())
         return;
+    if (!maybeSaveProject())
+        return;
 
+    const bool hadProject = m_document && !m_document->projectFilePath.isEmpty();
+    m_document->projectFilePath.clear();
+    m_document->projectName.clear();
+    m_projectModified = false;
     hexEdit->setData(QByteArray());
     hexEdit->clearPointers();
     resetNavigationHistory();
     showPointersAct->setEnabled(false);
-    setCurrentFile("");
 
-    // Apply preferences: reset table / encoding on file close
+    // Remove table: always when a project existed, otherwise respect settings
     {
         QSettings s;
-        if (s.value("ResetTableOnClose", false).toBool()) {
+        if (hadProject || s.value("ResetTableOnClose", false).toBool()) {
             hexEdit->removeTranslationTable();
+            tb = nullptr;
+            m_tablesDock->clearAll();
+            m_tablesDock->hide();
             useTableAct->setChecked(false);
+            useTableAct->setEnabled(false);
+            editTableAct->setEnabled(false);
+            saveTableAct->setEnabled(false);
+            saveTableAsAct->setEnabled(false);
         }
         if (s.value("ResetEncodingOnClose", false).toBool()) {
             const QString defEnc = s.value("DefaultEncoding", QStringLiteral("ASCII")).toString();
@@ -173,6 +195,7 @@ void MainWindow::closeFile()
         }
     }
 
+    setCurrentFile("");
     statusBar()->showMessage(tr("File closed"), 2000);
 }
 
@@ -180,19 +203,31 @@ void MainWindow::newFile()
 {
     if (!maybeSave())
         return;
+    if (!maybeSaveProject())
+        return;
 
+    const bool hadProject = m_document && !m_document->projectFilePath.isEmpty();
+    m_document->projectFilePath.clear();
+    m_document->projectName.clear();
+    m_projectModified = false;
     hexEdit->setData(QByteArray());
     hexEdit->clearPointers();
     resetNavigationHistory();
     showPointersAct->setEnabled(false);
-    setCurrentFile("");
 
-    // Apply preferences: reset table / encoding on file close
+    // Remove table: always when a project existed, otherwise respect settings
     {
         QSettings s;
-        if (s.value("ResetTableOnClose", false).toBool()) {
+        if (hadProject || s.value("ResetTableOnClose", false).toBool()) {
             hexEdit->removeTranslationTable();
+            tb = nullptr;
+            m_tablesDock->clearAll();
+            m_tablesDock->hide();
             useTableAct->setChecked(false);
+            useTableAct->setEnabled(false);
+            editTableAct->setEnabled(false);
+            saveTableAct->setEnabled(false);
+            saveTableAsAct->setEnabled(false);
         }
         if (s.value("ResetEncodingOnClose", false).toBool()) {
             const QString defEnc = s.value("DefaultEncoding", QStringLiteral("ASCII")).toString();
@@ -204,6 +239,7 @@ void MainWindow::newFile()
         }
     }
 
+    setCurrentFile("");
     statusBar()->showMessage(tr("New file created"), 2000);
 }
 
@@ -260,6 +296,8 @@ void MainWindow::optionsAccepted()
 void MainWindow::pointersUpdated()
 {
     showPointersAct->setEnabled(!hexEdit->pointers()->empty());
+    if (m_document && !m_document->projectFilePath.isEmpty())
+        m_projectModified = true;
 }
 
 void MainWindow::findNext()
@@ -278,14 +316,17 @@ void MainWindow::showJumpToDialog()
 
 bool MainWindow::save()
 {
+    bool ok;
     if (isUntitled)
-    {
-        return saveAs();
-    }
+        ok = saveAs();
     else
-    {
-        return saveFile(curFile);
-    }
+        ok = saveFile(curFile);
+
+    // Also save project if one is open and named
+    if (ok && m_document && !m_document->projectFilePath.isEmpty())
+        saveProjectImpl(m_document->projectFilePath);
+
+    return ok;
 }
 
 bool MainWindow::saveAs()
@@ -477,7 +518,10 @@ void MainWindow::showPointersDialog()
         pointersDialog = new PointersDialog(hexEdit, this);
         connect(pointersDialog, SIGNAL(accepted()), this, SLOT(pointersUpdated()));
         connect(pointersDialog, &PointersDialog::searchCompleted, this, &MainWindow::onQuickSearchCompleted);
+        pointersDialog->setDock(m_pointersDock);
     }
+    m_pointersDock->show();
+    m_pointersDock->raise();
     pointersDialog->show();
 }
 
@@ -815,11 +859,69 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
 
     auto clipActs = addClipboardActions(menu, !clickedAscii);  // Show hex labels only in hex area
 
+    // "Revert to original" — shown when bytePos is in project originalBytes
+    QAction *revertOrigAct = nullptr;
+    if (bytePos >= 0 && m_document && !m_document->originalBytes.isEmpty())
+    {
+        for (const auto &entry : m_document->originalBytes)
+        {
+            const qint64 off = entry.first;
+            const QByteArray &orig = entry.second;
+            if (bytePos >= off && bytePos < off + orig.size())
+            {
+                const uint8_t origByte = static_cast<uint8_t>(orig.at(bytePos - off));
+                menu.addSeparator();
+                revertOrigAct = menu.addAction(
+                    tr("Revert to original: %1")
+                        .arg(QString::number(origByte, 16).toUpper().rightJustified(2, QLatin1Char('0'))));
+                break;
+            }
+        }
+    }
+
     QAction *chosen = menu.exec(globalPos);
     if (handleClipboardAction(chosen, clipActs))
         return;
 
-    if (chosen == addAsPointerAct)
+    if (revertOrigAct && chosen == revertOrigAct)
+    {
+        // Find the entry, write back original byte, then remove it from tracking
+        for (int ei = 0; ei < m_document->originalBytes.size(); ++ei)
+        {
+            auto &entry = m_document->originalBytes[ei];
+            const qint64 off = entry.first;
+            QByteArray &orig = entry.second;
+            if (bytePos >= off && bytePos < off + orig.size())
+            {
+                const char origByte = orig.at(static_cast<int>(bytePos - off));
+                hexEdit->replace(bytePos, 1, QByteArray(1, origByte));
+
+                // Remove this byte from the tracked range, splitting if needed
+                const int localIdx = static_cast<int>(bytePos - off);
+                if (orig.size() == 1) {
+                    // Only byte in group — remove entire entry
+                    m_document->originalBytes.removeAt(ei);
+                } else if (localIdx == 0) {
+                    // First byte — trim from front
+                    entry.first += 1;
+                    orig.remove(0, 1);
+                } else if (localIdx == orig.size() - 1) {
+                    // Last byte — trim from back
+                    orig.chop(1);
+                } else {
+                    // Middle byte — split into two entries
+                    const QByteArray tail = orig.mid(localIdx + 1);
+                    orig.truncate(localIdx);
+                    m_document->originalBytes.insert(ei + 1, {bytePos + 1, tail});
+                }
+                break;
+            }
+        }
+        if (showChangesAct->isChecked())
+            updateChangedBytesHighlight();
+        updateActionStates();
+    }
+    else if (chosen == addAsPointerAct)
     {
         if (canAddAsPointer && hexEdit->addPointerUndoable(bytePos, addAsPointerTarget, ptrSize))
             refreshPointersUi();
@@ -835,7 +937,9 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
             pointersDialog = new PointersDialog(hexEdit, this);
             connect(pointersDialog, SIGNAL(accepted()), this, SLOT(pointersUpdated()));
             connect(pointersDialog, &PointersDialog::searchCompleted, this, &MainWindow::onQuickSearchCompleted);
+            pointersDialog->setDock(m_pointersDock);
         }
+        m_pointersDock->show();
         pointersDialog->quickSearch(bytePos);
     }
     else if (chosen == findPtrAct)
@@ -892,13 +996,17 @@ bool MainWindow::loadTable()
 
     if (!fileName.isEmpty())
     {
-        if (tb)
-            delete tb;
+        const TranslationTable newTable(fileName);
 
-        // todo catch exceptions
-        tb = new TranslationTable(fileName);
+        // Add to dock widget
+        m_tablesDock->addTable(QFileInfo(fileName).completeBaseName(), &newTable);
+        m_tablesDock->show();
+
+        // Also keep tb in sync for backward compat
+        tb = m_tablesDock->currentTable();
         hexEdit->setTranslationTable(tb);
         useTableAct->setDisabled(false);
+        useTableAct->setChecked(true);
         editTableAct->setDisabled(false);
         saveTableAct->setDisabled(false);
         saveTableAsAct->setDisabled(false);
@@ -906,6 +1014,8 @@ bool MainWindow::loadTable()
         rememberDirectory(kLastTableDirKey, fileName);
         tableFilePath = fileName;
         addToRecentTables(fileName);
+        if (m_document && !m_document->projectFilePath.isEmpty())
+            m_projectModified = true;
         statusBar()->showMessage(tr("Table loaded"), 2000);
     }
 
@@ -914,7 +1024,11 @@ bool MainWindow::loadTable()
 
 void MainWindow::switchUseTable()
 {
-    useTableAct->isChecked() ? hexEdit->setTranslationTable(tb) : hexEdit->removeTranslationTable();
+    tb = m_tablesDock->currentTable();
+    if (useTableAct->isChecked() && tb)
+        hexEdit->setTranslationTable(tb);
+    else
+        hexEdit->removeTranslationTable();
     updateActionStates();
 }
 
@@ -1033,7 +1147,7 @@ void MainWindow::retranslateUi()
     // Actions - File
     newAct->setText(tr("New"));
     newAct->setStatusTip(tr("Create a new file"));
-    openAct->setText(tr("Open..."));
+    openAct->setText(tr("Open file..."));
     openAct->setStatusTip(tr("Open an existing file"));
     saveAct->setText(tr("Save"));
     saveAct->setStatusTip(tr("Save the file to disk"));
@@ -1047,6 +1161,21 @@ void MainWindow::retranslateUi()
     revertAct->setStatusTip(tr("Revert file to last saved version"));
     exitAct->setText(tr("Exit"));
     exitAct->setStatusTip(tr("Exit the application"));
+
+    openProjectAct->setText(tr("Open Project..."));
+    openProjectAct->setStatusTip(tr("Open an RTHextion project file"));
+    saveProjectAct->setText(tr("Save Project"));
+    saveProjectAct->setStatusTip(tr("Save the current project"));
+    saveProjectAsAct->setText(tr("Save Project As..."));
+    saveProjectAsAct->setStatusTip(tr("Save the project under a new name"));
+
+    // Actions - Changes
+    showChangesAct->setText(tr("Show changes"));
+    showChangesAct->setStatusTip(tr("Highlight bytes changed compared to project originals"));
+    createIpsPatchAct->setText(tr("Create IPS patch..."));
+    createIpsPatchAct->setStatusTip(tr("Save current changes as an IPS patch file"));
+    loadIpsPatchAct->setText(tr("Load IPS patch..."));
+    loadIpsPatchAct->setStatusTip(tr("Load an IPS patch and apply it as changes"));
 
     // Actions - Edit
     undoAct->setText(tr("Undo"));
@@ -1117,10 +1246,12 @@ void MainWindow::retranslateUi()
 
     // Menu titles
     fileMenu->setTitle(tr("File"));
-    recentFileMenu->setTitle(tr("Recent"));
+    recentProjectMenu->setTitle(tr("Recent projects"));
+    recentFileMenu->setTitle(tr("Recent files"));
     romTypeMenu->setTitle(tr("ROM type"));
     encodingMenu->setTitle(tr("Encoding"));
     editMenu->setTitle(tr("Edit"));
+    changesMenu->setTitle(tr("Changes"));
     tableMenu->setTitle(tr("Table"));
     recentTableMenu->setTitle(tr("Recent"));
     scriptMenu->setTitle(tr("Script"));
@@ -1131,7 +1262,15 @@ void MainWindow::retranslateUi()
     statusBarMenu->setTitle(tr("Status bar"));
     panelsMenu->setTitle(tr("Panels"));
     languageMenu->setTitle(tr("Language"));
+    if (dockMenu)
+        dockMenu->setTitle(tr("Dock"));
     helpMenu->setTitle(tr("Help"));
+
+    // Retranslate dock widget
+    if (m_tablesDock)
+        m_tablesDock->retranslateUi();
+    if (m_pointersDock)
+        m_pointersDock->retranslateUi();
 
     showStatusEndianAct->setText(tr("Endianness"));
     showStatusByteAct->setText(tr("Byte"));
@@ -1216,17 +1355,15 @@ void MainWindow::retranslateUi()
 
 void MainWindow::editTable()
 {
-    if (!tableEditDialog)
-    {
-        tableEditDialog = new TableEditDialog(&tb, this);
-        connect(tableEditDialog, SIGNAL(tableChanged()), this, SLOT(onTranslationTableChanged()));
-    }
-    tableEditDialog->show();
+    // Show and raise the dock widget instead of a separate dialog
+    m_tablesDock->show();
+    m_tablesDock->raise();
 }
 
 void MainWindow::onTranslationTableChanged()
 {
-    if (useTableAct->isChecked())
+    tb = m_tablesDock->currentTable();
+    if (useTableAct->isChecked() && tb)
         hexEdit->setTranslationTable(tb);
 
     hexEdit->viewport()->update();
@@ -1236,27 +1373,62 @@ void MainWindow::onTranslationTableChanged()
         pointersDialog->refreshFromTable();
 }
 
+void MainWindow::onDockTableChanged(TranslationTable *table)
+{
+    tb = table;
+    if (useTableAct->isChecked() && tb)
+        hexEdit->setTranslationTable(tb);
+    else if (!tb)
+        hexEdit->removeTranslationTable();
+
+    const bool hasTables = m_tablesDock->count() > 0;
+    useTableAct->setEnabled(hasTables);
+    editTableAct->setEnabled(hasTables);
+    saveTableAct->setEnabled(hasTables);
+    saveTableAsAct->setEnabled(hasTables);
+
+    hexEdit->viewport()->update();
+    hexEdit->update();
+
+    if (pointersDialog)
+        pointersDialog->refreshFromTable();
+}
+
+void MainWindow::onDockTableContentChanged()
+{
+    tb = m_tablesDock->currentTable();
+    if (useTableAct->isChecked() && tb)
+        hexEdit->setTranslationTable(tb);
+
+    hexEdit->viewport()->update();
+    hexEdit->update();
+
+    if (m_document && !m_document->projectFilePath.isEmpty())
+        m_projectModified = true;
+
+    if (pointersDialog)
+        pointersDialog->refreshFromTable();
+}
+
 void MainWindow::createEmptyTable()
 {
-    if (tb)
-        delete tb;
-
-    tb = new TranslationTable();
+    m_tablesDock->addTable();
+    m_tablesDock->show();
+    tb = m_tablesDock->currentTable();
     hexEdit->setTranslationTable(tb);
     useTableAct->setDisabled(false);
+    useTableAct->setChecked(true);
     editTableAct->setDisabled(false);
     saveTableAct->setDisabled(false);
     saveTableAsAct->setDisabled(false);
     updateActionStates();
-
-    editTable();
 }
 
 void MainWindow::showSemiAutoTableDialog()
 {
     if (!semiAutoTableDialog)
     {
-        semiAutoTableDialog = new SemiAutoTableDialog(hexEdit, &tb, this);
+        semiAutoTableDialog = new SemiAutoTableDialog(hexEdit, this);
         connect(semiAutoTableDialog, &SemiAutoTableDialog::tableGenerated, this, &MainWindow::onSemiAutoTableGenerated);
     }
     semiAutoTableDialog->show();
@@ -1264,6 +1436,12 @@ void MainWindow::showSemiAutoTableDialog()
 
 void MainWindow::onSemiAutoTableGenerated()
 {
+    if (semiAutoTableDialog && semiAutoTableDialog->hasGeneratedTable()) {
+        const TranslationTable &generated = semiAutoTableDialog->generatedTable();
+        m_tablesDock->addTable(QString(), &generated);
+        tb = m_tablesDock->currentTable();
+        m_tablesDock->show();
+    }
     useTableAct->setDisabled(false);
     editTableAct->setDisabled(false);
     saveTableAct->setDisabled(false);
@@ -1271,12 +1449,11 @@ void MainWindow::onSemiAutoTableGenerated()
     useTableAct->setChecked(true);
     hexEdit->setTranslationTable(tb);
     updateActionStates();
-
-    editTable();
 }
 
 void MainWindow::saveTable()
 {
+    tb = m_tablesDock->currentTable();
     if (!tb || tb->size() == 0)
         return;
 
@@ -1299,6 +1476,7 @@ void MainWindow::saveTable()
 
 void MainWindow::saveTableAs()
 {
+    tb = m_tablesDock->currentTable();
     if (!tb || tb->size() == 0)
         return;
 
@@ -1346,6 +1524,8 @@ void MainWindow::init()
     setAttribute(Qt::WA_DeleteOnClose);
     isUntitled = true;
 
+    m_document = new HexDocument;
+
     hexEdit = new QHexEdit;
     setCentralWidget(hexEdit);
 
@@ -1353,7 +1533,35 @@ void MainWindow::init()
     connect(hexEdit, SIGNAL(dataChanged()), this, SLOT(dataChanged()));
     connect(hexEdit, &QHexEdit::contextMenuRequested, this, &MainWindow::hexEditContextMenu);
 
+    // Tables dock widget (right side)
+    m_tablesDock = new TablesDockWidget(this);
+    addDockWidget(Qt::RightDockWidgetArea, m_tablesDock);
+    m_tablesDock->hide();  // hidden until tables are loaded/created
+    connect(m_tablesDock, &TablesDockWidget::activeTableChanged,
+            this, &MainWindow::onDockTableChanged);
+    connect(m_tablesDock, &TablesDockWidget::tableContentChanged,
+            this, &MainWindow::onDockTableContentChanged);
+
+    // Pointers dock widget (bottom)
+    m_pointersDock = new PointersDockWidget(this);
+    m_pointersDock->setHexEdit(hexEdit);
+    addDockWidget(Qt::BottomDockWidgetArea, m_pointersDock);
+    m_pointersDock->hide();
+    connect(m_pointersDock, &PointersDockWidget::findPointersRequested,
+            this, &MainWindow::showPointersDialog);
+
+    // Ctrl+1..9 shortcuts for switching table tabs
+    for (int i = 1; i <= 9; ++i) {
+        auto *shortcut = new QShortcut(QKeySequence(static_cast<int>(Qt::CTRL) | (Qt::Key_0 + i)), this);
+        connect(shortcut, &QShortcut::activated, this, [this, i]() {
+            if (m_tablesDock && m_tablesDock->count() >= i)
+                m_tablesDock->setCurrentIndex(i - 1);
+        });
+    }
+
     createActions();
+    // Give the pointers dock the show-pointers toggle action after it's created
+    m_pointersDock->addShowPointersAction(showPointersAct);
     createToolBars();
     createMenus();
 
@@ -1375,7 +1583,7 @@ void MainWindow::createActions()
     newAct = new QAction(tr("New"), this);
     newAct->setStatusTip(tr("Create a new file"));
     connect(newAct, SIGNAL(triggered()), this, SLOT(newFile()));
-    openAct = new QAction(QIcon(":/images/open.png"), tr("Open..."), this);
+    openAct = new QAction(QIcon(":/images/open.png"), tr("Open file..."), this);
     openAct->setShortcuts(QKeySequence::Open);
     openAct->setStatusTip(tr("Open an existing file"));
     connect(openAct, SIGNAL(triggered()), this, SLOT(open()));
@@ -1407,6 +1615,32 @@ void MainWindow::createActions()
     exitAct->setShortcuts(QKeySequence::Quit);
     exitAct->setStatusTip(tr("Exit the application"));
     connect(exitAct, SIGNAL(triggered()), qApp, SLOT(closeAllWindows()));
+
+    openProjectAct = new QAction(tr("Open Project..."), this);
+    openProjectAct->setStatusTip(tr("Open an RTHextion project file"));
+    connect(openProjectAct, &QAction::triggered, this, &MainWindow::openProject);
+
+    saveProjectAct = new QAction(tr("Save Project"), this);
+    saveProjectAct->setStatusTip(tr("Save the current project"));
+    connect(saveProjectAct, &QAction::triggered, this, &MainWindow::saveProject);
+
+    saveProjectAsAct = new QAction(tr("Save Project As..."), this);
+    saveProjectAsAct->setStatusTip(tr("Save the project under a new name"));
+    connect(saveProjectAsAct, &QAction::triggered, this, &MainWindow::saveProjectAs);
+
+    showChangesAct = new QAction(tr("Show changes"), this);
+    showChangesAct->setCheckable(true);
+    showChangesAct->setStatusTip(tr("Highlight bytes changed compared to project originals"));
+    connect(showChangesAct, &QAction::triggered, this, &MainWindow::toggleShowChanges);
+
+    createIpsPatchAct = new QAction(tr("Create IPS patch..."), this);
+    createIpsPatchAct->setStatusTip(tr("Save current changes as an IPS patch file"));
+    createIpsPatchAct->setEnabled(false);
+    connect(createIpsPatchAct, &QAction::triggered, this, &MainWindow::createIpsPatch);
+
+    loadIpsPatchAct = new QAction(tr("Load IPS patch..."), this);
+    loadIpsPatchAct->setStatusTip(tr("Load an IPS patch and apply it as changes"));
+    connect(loadIpsPatchAct, &QAction::triggered, this, &MainWindow::loadIpsPatch);
 
     undoAct = new QAction(QIcon(":/images/undo.png"), tr("Undo"), this);
     undoAct->setShortcuts(QKeySequence::Undo);
@@ -1836,12 +2070,19 @@ void MainWindow::createMenus()
 
     fileMenu->addAction(newAct);
     fileMenu->addAction(openAct);
-    recentFileMenu = fileMenu->addMenu(tr("Recent"));
+    fileMenu->addAction(openProjectAct);
+    fileMenu->addSeparator();
+    recentProjectMenu = fileMenu->addMenu(tr("Recent projects"));
+    recentProjectMenu->setEnabled(false);
+    recentFileMenu = fileMenu->addMenu(tr("Recent files"));
     recentFileMenu->setEnabled(false);
     fileMenu->addSeparator();
     fileMenu->addAction(saveAct);
     fileMenu->addAction(saveAsAct);
     fileMenu->addAction(saveReadable);
+    fileMenu->addSeparator();
+    fileMenu->addAction(saveProjectAct);
+    fileMenu->addAction(saveProjectAsAct);
     fileMenu->addSeparator();
     // ROM type submenu
     romTypeMenu = fileMenu->addMenu(tr("ROM type"));
@@ -1941,6 +2182,12 @@ void MainWindow::createMenus()
     editMenu->addSeparator();
     editMenu->addAction(findAct);
     editMenu->addAction(findNextAct);
+
+    changesMenu = menuBar()->addMenu(tr("Changes"));
+    changesMenu->addAction(showChangesAct);
+    changesMenu->addSeparator();
+    changesMenu->addAction(createIpsPatchAct);
+    changesMenu->addAction(loadIpsPatchAct);
 
     goMenu = menuBar()->addMenu(tr("Go"));
     goMenu->addAction(gotoAct);
@@ -2046,6 +2293,11 @@ void MainWindow::createMenus()
     languageMenu->addAction(langPortugueseAct);
     languageMenu->addAction(langJapaneseAct);
     languageMenu->addAction(langChineseSimplifiedAct);
+
+    // Dock submenu
+    dockMenu = viewMenu->addMenu(tr("Dock"));
+    dockMenu->addAction(m_tablesDock->toggleViewAction());
+    dockMenu->addAction(m_pointersDock->toggleViewAction());
 
     viewMenu->addSeparator();
 
@@ -2214,15 +2466,324 @@ void MainWindow::createToolBars()
     updateEndiannesLabel();
 }
 
+// ---------------------------------------------------------------------------
+// Project open / save
+// ---------------------------------------------------------------------------
+
+void MainWindow::openProject()
+{
+    const QString dir = lastDirectory(QStringLiteral("kLastProjectDirKey"));
+    const QString path = QFileDialog::getOpenFileName(
+        this, tr("Open Project"), dir,
+        tr("RTHextion Project (*.rthp);;All Files (*)"));
+    if (path.isEmpty())
+        return;
+
+    openProjectFile(path);
+}
+
+void MainWindow::openProjectFile(const QString &path)
+{
+    // If this exact project is already open, close everything cleanly first
+    const QString canonicalPath = QFileInfo(path).canonicalFilePath();
+    const QString alreadyOpen = m_document ? QFileInfo(m_document->projectFilePath).canonicalFilePath() : QString();
+
+    if (!canonicalPath.isEmpty() && canonicalPath == alreadyOpen) {
+        // Close current file/project without prompting (we're about to reload)
+        m_document->projectFilePath.clear();
+        m_document->projectName.clear();
+        m_projectModified = false;
+        hexEdit->setData(QByteArray());
+        hexEdit->clearPointers();
+        hexEdit->removeTranslationTable();
+        tb = nullptr;
+        m_tablesDock->clearAll();
+        m_tablesDock->hide();
+        useTableAct->setChecked(false);
+        useTableAct->setEnabled(false);
+        editTableAct->setEnabled(false);
+        saveTableAct->setEnabled(false);
+        saveTableAsAct->setEnabled(false);
+        resetNavigationHistory();
+        setCurrentFile(QString());
+        setWindowModified(false);
+    }
+
+    HexDocument doc;
+    if (!doc.loadProject(path)) {
+        QMessageBox::warning(this, QString::fromLatin1(AppInfo::Name),
+                             tr("Cannot read project file %1.").arg(path));
+        return;
+    }
+
+    // 1. Load the data file
+    if (!doc.filePath.isEmpty() && QFile::exists(doc.filePath)) {
+        loadFile(doc.filePath);
+    }
+
+    // 2. Load translation tables into dock widget
+    tb = nullptr;
+    m_tablesDock->clearAll();
+
+    if (!doc.tables.isEmpty()) {
+        // Multi-table: add all tables to the dock
+        for (auto &entry : doc.tables) {
+            m_tablesDock->addTable(entry.name, entry.table);
+        }
+        doc.tables.clear();
+
+        if (doc.activeTableIndex >= 0 && doc.activeTableIndex < m_tablesDock->count()) {
+            m_tablesDock->setCurrentIndex(doc.activeTableIndex);
+            tb = m_tablesDock->currentTable();
+            hexEdit->setTranslationTable(tb);
+            useTableAct->setEnabled(true);
+            useTableAct->setChecked(true);
+        } else {
+            useTableAct->setEnabled(m_tablesDock->count() > 0);
+            useTableAct->setChecked(false);
+            hexEdit->removeTranslationTable();
+        }
+        editTableAct->setEnabled(m_tablesDock->count() > 0);
+        saveTableAct->setEnabled(m_tablesDock->count() > 0);
+        saveTableAsAct->setEnabled(m_tablesDock->count() > 0);
+        m_tablesDock->show();
+    } else if (doc.translationTable) {
+        // Legacy single table from project
+        m_tablesDock->addTable(QStringLiteral("Table 1"), doc.translationTable);
+        tb = m_tablesDock->currentTable();
+        tableFilePath = doc.tableFilePath;
+        if (doc.useTable)
+            hexEdit->setTranslationTable(tb);
+        useTableAct->setEnabled(true);
+        useTableAct->setChecked(doc.useTable);
+        editTableAct->setEnabled(true);
+        saveTableAct->setEnabled(true);
+        saveTableAsAct->setEnabled(true);
+        if (!doc.useTable)
+            hexEdit->removeTranslationTable();
+        m_tablesDock->show();
+    } else if (!doc.tableFilePath.isEmpty() && QFile::exists(doc.tableFilePath)) {
+        // Fall back to loading table from file path
+        const TranslationTable fileTable(doc.tableFilePath);
+        m_tablesDock->addTable(QFileInfo(doc.tableFilePath).completeBaseName(), &fileTable);
+        tb = m_tablesDock->currentTable();
+        tableFilePath = doc.tableFilePath;
+        if (doc.useTable)
+            hexEdit->setTranslationTable(tb);
+        useTableAct->setEnabled(true);
+        useTableAct->setChecked(doc.useTable);
+        editTableAct->setEnabled(true);
+        saveTableAct->setEnabled(true);
+        saveTableAsAct->setEnabled(true);
+        if (!doc.useTable)
+            hexEdit->removeTranslationTable();
+        m_tablesDock->show();
+    }
+
+    // 3. Encoding
+    m_currentEncoding = doc.currentEncoding;
+    hexEdit->setCurrentEncoding(doc.currentEncoding);
+    if (lbEncoding)
+        lbEncoding->setText(doc.currentEncoding);
+    syncEncodingMenu();
+
+    // 4. ROM type + byte order
+    m_detectedRomType = doc.romType;
+    {
+        const QSignalBlocker blocker(cbRomType);
+        cbRomType->setCurrentIndex(static_cast<int>(doc.romType));
+        syncRomTypeMenu(static_cast<int>(doc.romType));
+    }
+    hexEdit->byteOrder = doc.byteOrder;
+    updateEndiannesLabel();
+
+    // 5. Pointers
+    doc.restorePointers(hexEdit->pointers());
+    pointersUpdated();
+
+    // 6. Navigation history
+    navigationHistory = doc.navigationHistory;
+    navigationHistoryIndex = doc.navigationHistoryIndex;
+    updateNavigationActions();
+
+    // 7. Store project association
+    *m_document = doc;
+    m_document->translationTable = nullptr; // MainWindow owns tb
+
+    // 8. Remember project as last opened
+    QSettings settings;
+    settings.setValue(QStringLiteral("LastProjectFile"), path);
+    addToRecentProjects(path);
+    rememberDirectory(QStringLiteral("kLastProjectDirKey"), path);
+    m_tablesDock->setProjectName(m_document->projectName);
+    statusBar()->showMessage(tr("Project loaded"), 2000);
+    m_projectModified = false;
+    updateWindowTitle();
+    updateActionStates();
+
+    // 9. Update change highlighting if active
+    if (showChangesAct->isChecked())
+        updateChangedBytesHighlight();
+}
+
+bool MainWindow::saveProject()
+{
+    if (m_document->projectFilePath.isEmpty())
+        return saveProjectAs();
+
+    return saveProjectImpl(m_document->projectFilePath);
+}
+
+bool MainWindow::saveProjectAs()
+{
+    // Suggest a name: take current file's base name, replace underscores with spaces
+    QString suggestedName;
+    if (!curFile.isEmpty()) {
+        suggestedName = QFileInfo(curFile).completeBaseName().replace(QLatin1Char('_'), QLatin1Char(' '));
+    } else if (!m_document->projectName.isEmpty()) {
+        suggestedName = m_document->projectName;
+    }
+
+    const QString dir = lastDirectory(QStringLiteral("kLastProjectDirKey"));
+    const QString suggested = dir.isEmpty() ? suggestedName
+                                             : QDir(dir).filePath(suggestedName);
+    const QString path = QFileDialog::getSaveFileName(
+        this, tr("Save Project"), suggested,
+        tr("RTHextion Project (*.rthp);;All Files (*)"));
+    if (path.isEmpty())
+        return false;
+
+    if (saveProjectImpl(path)) {
+        rememberDirectory(QStringLiteral("kLastProjectDirKey"), path);
+        return true;
+    }
+    return false;
+}
+
+bool MainWindow::saveProjectImpl(const QString &path)
+{
+    // Derive project name from file name if not set yet
+    if (m_document->projectName.isEmpty())
+        m_document->projectName = QFileInfo(path).completeBaseName();
+
+    m_tablesDock->setProjectName(m_document->projectName);
+
+    // Populate document from current state
+    m_document->filePath = curFile;
+    m_document->tableFilePath = tableFilePath;
+    m_document->useTable = (useTableAct && useTableAct->isChecked());
+    m_document->currentEncoding = m_currentEncoding;
+    m_document->romType = m_detectedRomType;
+    m_document->byteOrder = hexEdit->byteOrder;
+    m_document->navigationHistory = navigationHistory;
+    m_document->navigationHistoryIndex = navigationHistoryIndex;
+    m_document->snapshotPointers(hexEdit->pointers());
+
+    // Recompute grouped original bytes for all currently modified ranges.
+    const QVector<QPair<qint64, QByteArray>> previousOriginalBytes = m_document->originalBytes;
+    m_document->originalBytes.clear();
+    if (!curFile.isEmpty()) {
+        QFile diskFile(curFile);
+        if (diskFile.open(QIODevice::ReadOnly)) {
+            const QByteArray originalFileData = diskFile.readAll();
+            const QByteArray currentData = hexEdit->data();
+
+            auto appendGroup = [&](qint64 start, const QByteArray &bytes) {
+                if (bytes.isEmpty())
+                    return;
+
+                // Keep earliest known originals if this offset already exists in previous project data.
+                for (auto &entry : m_document->originalBytes) {
+                    if (entry.first == start) {
+                        if (entry.second.isEmpty())
+                            entry.second = bytes;
+                        return;
+                    }
+                }
+                m_document->originalBytes.append({start, bytes});
+            };
+
+            // Merge any previously loaded original groups first.
+            for (const auto &entry : previousOriginalBytes)
+                appendGroup(entry.first, entry.second);
+
+            const qint64 commonSize = qMin<qint64>(originalFileData.size(), currentData.size());
+            qint64 i = 0;
+            while (i < commonSize) {
+                if (originalFileData.at(i) == currentData.at(i)) {
+                    ++i;
+                    continue;
+                }
+
+                const qint64 start = i;
+                QByteArray group;
+                while (i < commonSize && originalFileData.at(i) != currentData.at(i)) {
+                    group.append(originalFileData.at(i));
+                    ++i;
+                }
+                appendGroup(start, group);
+            }
+
+            // If current file was shortened, keep truncated tail as original bytes too.
+            if (originalFileData.size() > currentData.size()) {
+                const qint64 start = currentData.size();
+                appendGroup(start, originalFileData.mid(start));
+            }
+        }
+    }
+
+    // Build table list from dock widget for multi-table serialization
+    QVector<DocTableEntry> docTables;
+    const auto &dockTables = m_tablesDock->allTables();
+    for (const auto &tt : dockTables) {
+        DocTableEntry dte;
+        dte.name = tt.name;
+        dte.table = const_cast<TranslationTable *>(&tt.table);  // not owned — just a reference for serialization
+        docTables.append(dte);
+    }
+    const int activeIdx = (useTableAct && useTableAct->isChecked())
+                              ? m_tablesDock->currentIndex() : -1;
+
+    if (!m_document->saveProject(path, docTables, activeIdx)) {
+        QMessageBox::warning(this, QString::fromLatin1(AppInfo::Name),
+                             tr("Cannot write project file %1.").arg(path));
+        return false;
+    }
+
+    {
+        QSettings settings;
+        settings.setValue(QStringLiteral("LastProjectFile"), path);
+    }
+    addToRecentProjects(path);
+    m_projectModified = false;
+    updateWindowTitle();
+    updateActionStates();
+
+    statusBar()->showMessage(tr("Project saved"), 2000);
+    return true;
+}
+
 void MainWindow::loadFile(const QString &fileName)
 {
     if (!maybeSave())
         return;
-    
+    if (!maybeSaveProject())
+        return;
+
+    // Capture project state before clearing it
+    const bool hadSavedProject = m_document && !m_document->projectFilePath.isEmpty();
+
+    // Clear project state when loading a new file directly
+    m_document->projectFilePath.clear();
+    m_document->projectName.clear();
+    m_projectModified = false;
+
     const QString canonicalIncoming = QFileInfo(fileName).canonicalFilePath();
     const QString incomingPath = canonicalIncoming.isEmpty() ? fileName : canonicalIncoming;
     const bool loadingAnotherFile = !curFile.isEmpty() && !incomingPath.isEmpty() && curFile != incomingPath;
-    if (loadingAnotherFile && !hexEdit->pointers()->empty())
+
+    // If a saved project was open, silently clear pointers/table without asking
+    if (loadingAnotherFile && !hadSavedProject && !hexEdit->pointers()->empty())
     {
         QMessageBox confirm(QMessageBox::Warning,
                             QString::fromLatin1(AppInfo::Name),
@@ -2231,6 +2792,9 @@ void MainWindow::loadFile(const QString &fileName)
                             this);
         if (confirm.exec() != QMessageBox::Yes)
             return;
+    }
+    if (loadingAnotherFile || hadSavedProject)
+    {
         hexEdit->clearPointers();
         pointersUpdated();
     }
@@ -2262,10 +2826,28 @@ void MainWindow::loadFile(const QString &fileName)
     const bool resetEncoding = settings.value("ResetEncodingOnClose", false).toBool();
     const bool resetTable   = settings.value("ResetTableOnClose",    false).toBool();
 
-    // Apply "reset on file close" preferences to the outgoing file on every load.
-    if (resetTable) {
+    // Apply "reset on file close" preferences, but only when no saved project is being replaced
+    if (resetTable && !hadSavedProject) {
         hexEdit->removeTranslationTable();
+        tb = nullptr;
+        m_tablesDock->clearAll();
+        m_tablesDock->hide();
         useTableAct->setChecked(false);
+        useTableAct->setEnabled(false);
+        editTableAct->setEnabled(false);
+        saveTableAct->setEnabled(false);
+        saveTableAsAct->setEnabled(false);
+    } else if (hadSavedProject) {
+        // Silently clear table when switching file within a project context
+        hexEdit->removeTranslationTable();
+        tb = nullptr;
+        m_tablesDock->clearAll();
+        m_tablesDock->hide();
+        useTableAct->setChecked(false);
+        useTableAct->setEnabled(false);
+        editTableAct->setEnabled(false);
+        saveTableAct->setEnabled(false);
+        saveTableAsAct->setEnabled(false);
     }
 
     RomType rom = RomType::Unknown;
@@ -2371,6 +2953,7 @@ void MainWindow::readSettings()
     hexEdit->setCursorCharColor(settings.value("CursorCharColor", QColor(0x00, 0x60, 0xFF, 0x80)).value<QColor>());
     hexEdit->setCursorFrameColor(settings.value("CursorFrameColor", QColor(Qt::black)).value<QColor>());
     hexEdit->setZeroByteFontColor(settings.value("ZeroByteFontColor", QColor(0xCC, 0xCC, 0xCC)).value<QColor>());
+    hexEdit->setChangesColor(settings.value("ChangesColor", QColor(0x99, 0xff, 0x99, 0xff)).value<QColor>());
 
     if (showAddressAreaAct)
         showAddressAreaAct->setChecked(hexEdit->addressArea());
@@ -2388,12 +2971,19 @@ void MainWindow::readSettings()
 
     updateRecentTableMenu();
 
+    updateRecentProjectMenu();
+
     const bool autoLoadRecentFile = settings.value("AutoLoadRecentFile", true).toBool();
+    const QString lastProjectFile = settings.value("LastProjectFile").toString();
     const QString fileName = settings.value("RecentFile0").toString();
 
-    if (autoLoadRecentFile && !fileName.isEmpty())
+    if (autoLoadRecentFile)
     {
-        if (QFile::exists(fileName))
+        if (!lastProjectFile.isEmpty() && QFile::exists(lastProjectFile))
+        {
+            openProjectFile(lastProjectFile);
+        }
+        else if (!fileName.isEmpty() && QFile::exists(fileName))
         {
             loadFile(fileName);
         }
@@ -2549,6 +3139,7 @@ void MainWindow::updateHexEditorSettings()
     hexEdit->setCursorCharColor(settings.value("CursorCharColor", QColor(0x00, 0x60, 0xFF, 0x80)).value<QColor>());
     hexEdit->setCursorFrameColor(settings.value("CursorFrameColor", QColor(Qt::black)).value<QColor>());
     hexEdit->setZeroByteFontColor(settings.value("ZeroByteFontColor", QColor(0xCC, 0xCC, 0xCC)).value<QColor>());
+    hexEdit->setChangesColor(settings.value("ChangesColor", QColor(0x99, 0xff, 0x99, 0xff)).value<QColor>());
     hexEdit->setScrollMapPtrBgColor(settings.value("ScrollMapPtrBgColor", QColor(0xd0, 0xd0, 0xd0)).value<QColor>());
     hexEdit->setScrollMapTargetBgColor(settings.value("ScrollMapTargetBgColor", QColor(0xd0, 0xd0, 0xd0)).value<QColor>());
 
@@ -2600,6 +3191,25 @@ bool MainWindow::saveFile(const QString &fileName)
     return true;
 }
 
+void MainWindow::updateWindowTitle()
+{
+    const bool hasProject = m_document && !m_document->projectName.isEmpty();
+    const bool hasFile = !isUntitled && !curFile.isEmpty();
+
+    if (hasProject && hasFile)
+        setWindowTitle(QString("%1 — %2[*] - RTHextion")
+                           .arg(m_document->projectName, strippedName(curFile)));
+    else if (hasProject)
+        setWindowTitle(QString("%1[*] - RTHextion").arg(m_document->projectName));
+    else if (hasFile)
+        setWindowTitle(QString("%1[*] - RTHextion").arg(strippedName(curFile)));
+    else
+        setWindowTitle(QStringLiteral("RTHextion"));
+
+    // Refresh recent projects menu since filter depends on current project path
+    updateRecentProjectMenu();
+}
+
 void MainWindow::setCurrentFile(const QString &fileName)
 {
     curFile = QFileInfo(fileName).canonicalFilePath();
@@ -2608,20 +3218,33 @@ void MainWindow::setCurrentFile(const QString &fileName)
     isUntitled = fileName.isEmpty();
     setWindowModified(false);
 
-    if (fileName.isEmpty())
-        setWindowTitle(QString("RTHextion"));
-    else
-    {
-        setWindowTitle(QString("%1[*] - RTHextion").arg(strippedName(curFile)));
+    if (!fileName.isEmpty())
         addToRecentFiles(fileName);
-    }
 
+    updateWindowTitle();
     updateActionStates();
+}
+
+bool MainWindow::maybeSaveProject()
+{
+    if (!m_document || m_document->projectFilePath.isEmpty() || !m_projectModified)
+        return true;
+
+    QMessageBox::StandardButton result = QMessageBox::warning(
+        this,
+        QString::fromLatin1(AppInfo::Name),
+        tr("The project has unsaved changes.\nDo you want to save the project?"),
+        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+
+    if (result == QMessageBox::Save)
+        return saveProjectImpl(m_document->projectFilePath);
+
+    return result != QMessageBox::Cancel;
 }
 
 bool MainWindow::maybeSave()
 {
-    if (!hexEdit->isModified())
+    if (!isWindowModified())
         return true;
 
     QMessageBox::StandardButton result = QMessageBox::warning(
@@ -2643,6 +3266,14 @@ void MainWindow::updateActionStates()
     closeAct->setEnabled(!isUntitled);
     undoAct->setEnabled(hexEdit->canUndo());
     redoAct->setEnabled(hexEdit->canRedo());
+
+    // Save Project is only enabled after the project has been given a path
+    if (saveProjectAct)
+        saveProjectAct->setEnabled(m_document && !m_document->projectFilePath.isEmpty());
+
+    // Create IPS patch only when project has tracked original bytes
+    if (createIpsPatchAct)
+        createIpsPatchAct->setEnabled(m_document && !m_document->originalBytes.isEmpty());
     
     const bool hasSelection = hexEdit && hexEdit->getRawSelection().size() > 1;
     const bool dumpEnabled = hasSelection;
@@ -2828,12 +3459,12 @@ void MainWindow::openRecentTable()
             return;
         }
 
-        if (tb)
-            delete tb;
-
         try
         {
-            tb = new TranslationTable(fileName);
+            const TranslationTable newTable(fileName);
+            m_tablesDock->addTable(QFileInfo(fileName).completeBaseName(), &newTable);
+            m_tablesDock->show();
+            tb = m_tablesDock->currentTable();
             useTableAct->setEnabled(true);
             useTableAct->setChecked(true);
             editTableAct->setEnabled(true);
@@ -2848,6 +3479,331 @@ void MainWindow::openRecentTable()
             QMessageBox::warning(this, tr("Error"), tr("Failed to load table: %1").arg(QString::fromStdString(e.what())));
         }
     }
+}
+
+void MainWindow::addToRecentProjects(const QString &fileName)
+{
+    if (fileName.isEmpty())
+        return;
+
+    QSettings settings;
+    QStringList files = settings.value(kRecentProjectsKey).toStringList();
+
+    files.removeAll(fileName);
+    files.prepend(fileName);
+
+    while (files.size() > kMaxRecentProjects)
+        files.removeLast();
+
+    settings.setValue(kRecentProjectsKey, files);
+    updateRecentProjectMenu();
+}
+
+void MainWindow::updateRecentProjectMenu()
+{
+    QSettings settings;
+    QStringList files = settings.value(kRecentProjectsKey).toStringList();
+
+    // Filter out the currently open project
+    const QString currentProject = m_document ? m_document->projectFilePath : QString();
+
+    recentProjectMenu->clear();
+
+    // Build filtered list (exclude current project)
+    QStringList displayFiles;
+    for (const QString &f : files) {
+        if (!f.isEmpty() && f != currentProject)
+            displayFiles.append(f);
+    }
+
+    if (displayFiles.isEmpty())
+    {
+        recentProjectMenu->setEnabled(false);
+        return;
+    }
+
+    recentProjectMenu->setEnabled(true);
+
+    for (int i = 0; i < displayFiles.size(); ++i)
+    {
+        const QString fileName = displayFiles[i];
+        const QString text = QStringLiteral("&%1 %2").arg(i + 1).arg(QFileInfo(fileName).fileName());
+
+        QAction *action = recentProjectMenu->addAction(text);
+        action->setData(fileName);
+        connect(action, &QAction::triggered, this, &MainWindow::openRecentProject);
+    }
+}
+
+void MainWindow::openRecentProject()
+{
+    QAction *action = qobject_cast<QAction *>(sender());
+    if (!action)
+        return;
+
+    const QString fileName = action->data().toString();
+    if (!fileName.isEmpty())
+    {
+        if (!QFile::exists(fileName))
+        {
+            QMessageBox::warning(this, tr("Error"), tr("File not found: %1").arg(fileName));
+            return;
+        }
+        openProjectFile(fileName);
+    }
+}
+
+void MainWindow::toggleShowChanges()
+{
+    const bool show = showChangesAct->isChecked();
+    hexEdit->setShowChanges(show);
+    if (show)
+        updateChangedBytesHighlight();
+    else
+        hexEdit->clearChangedPositions();
+}
+
+void MainWindow::updateChangedBytesHighlight()
+{
+    QSet<qint64> positions;
+    if (!m_document || m_document->originalBytes.isEmpty()) {
+        hexEdit->setChangedPositions(positions);
+        return;
+    }
+
+    const QByteArray currentData = hexEdit->data();
+    for (const auto &entry : m_document->originalBytes) {
+        const qint64 offset = entry.first;
+        const QByteArray &origBytes = entry.second;
+        for (int i = 0; i < origBytes.size(); ++i) {
+            const qint64 pos = offset + i;
+            if (pos < currentData.size()) {
+                if (currentData.at(pos) != origBytes.at(i))
+                    positions.insert(pos);
+            } else {
+                positions.insert(pos);
+            }
+        }
+    }
+    hexEdit->setChangedPositions(positions);
+}
+
+void MainWindow::createIpsPatch()
+{
+    if (curFile.isEmpty()) {
+        QMessageBox::warning(this, QString::fromLatin1(AppInfo::Name),
+                             tr("No file is currently open."));
+        return;
+    }
+
+    if (!m_document || m_document->originalBytes.isEmpty()) {
+        QMessageBox::information(this, QString::fromLatin1(AppInfo::Name),
+                                 tr("No changes detected."));
+        return;
+    }
+
+    // Build IPS records from project originalBytes:
+    // for each tracked region, compare original vs. current file data
+    const QByteArray currentData = hexEdit->data();
+    QVector<QPair<qint64, QByteArray>> records;
+
+    for (const auto &entry : m_document->originalBytes) {
+        const qint64 baseOffset = entry.first;
+        const QByteArray &origBytes = entry.second;
+
+        qint64 i = 0;
+        while (i < origBytes.size()) {
+            const qint64 absPos = baseOffset + i;
+            if (absPos >= currentData.size() || origBytes.at(i) == currentData.at(absPos)) {
+                ++i;
+                continue;
+            }
+            // Start of a differing run
+            const qint64 start = absPos;
+            QByteArray patchBytes;
+            while (i < origBytes.size()) {
+                const qint64 pos = baseOffset + i;
+                if (pos >= currentData.size())
+                    break;
+                if (origBytes.at(i) == currentData.at(pos))
+                    break;
+                patchBytes.append(currentData.at(pos));
+                ++i;
+                if (patchBytes.size() >= 0xFFFF) break;
+            }
+            if (!patchBytes.isEmpty())
+                records.append({start, patchBytes});
+        }
+    }
+
+    if (records.isEmpty()) {
+        QMessageBox::information(this, QString::fromLatin1(AppInfo::Name),
+                                 tr("No changes detected."));
+        return;
+    }
+
+    // Suggest project name as IPS filename
+    QString suggestedIpsPath;
+    {
+        const QString dir = lastDirectory(kLastFileDirKey);
+        const QString baseName = (m_document && !m_document->projectName.isEmpty())
+                                     ? m_document->projectName
+                                     : QFileInfo(curFile).completeBaseName();
+        suggestedIpsPath = dir.isEmpty() ? baseName : QDir(dir).filePath(baseName);
+    }
+
+    const QString path = QFileDialog::getSaveFileName(
+        this, tr("Create IPS patch"), suggestedIpsPath,
+        tr("IPS Patch (*.ips);;All Files (*)"));
+    if (path.isEmpty())
+        return;
+
+    QFile ipsFile(path);
+    if (!ipsFile.open(QIODevice::WriteOnly)) {
+        QMessageBox::warning(this, QString::fromLatin1(AppInfo::Name),
+                             tr("Cannot write file %1.").arg(path));
+        return;
+    }
+
+    // IPS header
+    ipsFile.write("PATCH", 5);
+
+    for (const auto &rec : records) {
+        // 3-byte offset (big-endian)
+        quint32 ofs = static_cast<quint32>(rec.first);
+        char ofsBytes[3] = {
+            static_cast<char>((ofs >> 16) & 0xFF),
+            static_cast<char>((ofs >> 8) & 0xFF),
+            static_cast<char>(ofs & 0xFF)
+        };
+        ipsFile.write(ofsBytes, 3);
+
+        // 2-byte size (big-endian)
+        quint16 sz = static_cast<quint16>(rec.second.size());
+        char szBytes[2] = {
+            static_cast<char>((sz >> 8) & 0xFF),
+            static_cast<char>(sz & 0xFF)
+        };
+        ipsFile.write(szBytes, 2);
+
+        // Data
+        ipsFile.write(rec.second);
+    }
+
+    // IPS footer
+    ipsFile.write("EOF", 3);
+    ipsFile.close();
+
+    rememberDirectory(kLastFileDirKey, path);
+    statusBar()->showMessage(tr("IPS patch saved"), 2000);
+}
+
+void MainWindow::loadIpsPatch()
+{
+    if (curFile.isEmpty()) {
+        QMessageBox::warning(this, QString::fromLatin1(AppInfo::Name),
+                             tr("No file is currently open."));
+        return;
+    }
+
+    const QString path = QFileDialog::getOpenFileName(
+        this, tr("Load IPS patch"), lastDirectory(kLastFileDirKey),
+        tr("IPS Patch (*.ips);;All Files (*)"));
+    if (path.isEmpty())
+        return;
+
+    QFile ipsFile(path);
+    if (!ipsFile.open(QIODevice::ReadOnly)) {
+        QMessageBox::warning(this, QString::fromLatin1(AppInfo::Name),
+                             tr("Cannot read file %1:\n%2.").arg(path, ipsFile.errorString()));
+        return;
+    }
+
+    const QByteArray ipsData = ipsFile.readAll();
+    ipsFile.close();
+
+    // Validate header
+    if (ipsData.size() < 8 || ipsData.left(5) != QByteArray("PATCH")) {
+        QMessageBox::warning(this, QString::fromLatin1(AppInfo::Name),
+                             tr("Invalid IPS patch file."));
+        return;
+    }
+
+    // Store originals before applying
+    QByteArray currentData = hexEdit->data();
+    QVector<QPair<qint64, QByteArray>> origGroups;
+
+    int pos = 5; // after "PATCH"
+    while (pos + 3 <= ipsData.size()) {
+        // Check for EOF marker
+        if (ipsData.mid(pos, 3) == QByteArray("EOF"))
+            break;
+
+        if (pos + 5 > ipsData.size())
+            break;
+
+        // 3-byte offset
+        quint32 ofs = (static_cast<quint8>(ipsData.at(pos)) << 16)
+                    | (static_cast<quint8>(ipsData.at(pos + 1)) << 8)
+                    | static_cast<quint8>(ipsData.at(pos + 2));
+        pos += 3;
+
+        // 2-byte size
+        quint16 sz = (static_cast<quint8>(ipsData.at(pos)) << 8)
+                   | static_cast<quint8>(ipsData.at(pos + 1));
+        pos += 2;
+
+        if (sz == 0) {
+            // RLE record
+            if (pos + 3 > ipsData.size()) break;
+            quint16 runLen = (static_cast<quint8>(ipsData.at(pos)) << 8)
+                           | static_cast<quint8>(ipsData.at(pos + 1));
+            char runVal = ipsData.at(pos + 2);
+            pos += 3;
+
+            // Store originals
+            if (ofs < currentData.size()) {
+                qint64 origLen = qMin<qint64>(runLen, currentData.size() - ofs);
+                origGroups.append({ofs, currentData.mid(ofs, origLen)});
+            }
+
+            // Apply RLE
+            QByteArray fill(runLen, runVal);
+            hexEdit->replace(ofs, fill.size(), fill);
+        } else {
+            if (pos + sz > ipsData.size()) break;
+            QByteArray patchData = ipsData.mid(pos, sz);
+            pos += sz;
+
+            // Store originals
+            if (ofs < currentData.size()) {
+                qint64 origLen = qMin<qint64>(sz, currentData.size() - ofs);
+                origGroups.append({ofs, currentData.mid(ofs, origLen)});
+            }
+
+            // Apply patch
+            hexEdit->replace(ofs, patchData.size(), patchData);
+        }
+    }
+
+    // Merge into project's originalBytes
+    for (const auto &g : origGroups) {
+        bool merged = false;
+        for (auto &existing : m_document->originalBytes) {
+            if (existing.first == g.first) {
+                merged = true;
+                break;
+            }
+        }
+        if (!merged)
+            m_document->originalBytes.append(g);
+    }
+
+    rememberDirectory(kLastFileDirKey, path);
+    statusBar()->showMessage(tr("IPS patch applied"), 2000);
+
+    if (showChangesAct->isChecked())
+        updateChangedBytesHighlight();
 }
 
 void MainWindow::updateEndiannes()

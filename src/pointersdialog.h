@@ -15,6 +15,7 @@
 class QComboBox;
 class QLineEdit;
 class QGroupBox;
+class PointersDockWidget;
 
 namespace Ui {
 class PointersDialog;
@@ -30,9 +31,12 @@ public:
     void refreshFromTable();
     void quickSearch(qint64 clickBytePos = -1);
     void setRomProfile(RomType type, qint64 offset);
+    void setDock(PointersDockWidget *dock) { m_dock = dock; }
 
 signals:
     void searchCompleted(int found);
+    void searchStarted();
+    void searchFinished();
 
 private slots:
     void on_bbControls_accepted();
@@ -41,12 +45,8 @@ private slots:
     void on_cbOptimize_stateChanged(int arg1);
     void on_cbRangeStart_currentIndexChanged(int index);
     void on_cbRangeEnd_currentIndexChanged(int index);
-    void on_tvPointers_doubleClicked(const QModelIndex &index);
     void updateProgress(int percent, int found);
     void on_btnStop_clicked();
-    void on_btnAddPointer_clicked();
-    void on_btnDeletePointer_clicked();
-    void on_btnCleanAll_clicked();
     void on_leRangeBegin_textChanged(const QString &text);
     void on_leRangeEnd_textChanged(const QString &text);
     void finishSearchUi(bool cancelled, int found, qint64 elapsedMs);
@@ -71,6 +71,7 @@ private:
     Ui::PointersDialog *ui;
     QHexEdit *_hexEdit;
     TranslationTable* tb;
+    PointersDockWidget *m_dock = nullptr;
 
     // Thread-safe result buffer: background thread pushes here, timer drains on UI thread
     QMutex _pendingMutex;

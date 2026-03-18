@@ -14,9 +14,12 @@
 #include "pointersdialog.h"
 #include "JumpToDialog.h"
 #include "TableEditDialog.h"
+#include "TablesDockWidget.h"
+#include "PointersDockWidget.h"
 #include "SemiAutoTableDialog.h"
 #include "DumpScriptdialog.h"
 #include "InsertScriptDialog.h"
+#include "hexdocument.h"
 
 QT_BEGIN_NAMESPACE
 class QAction;
@@ -94,6 +97,16 @@ private slots:
     void setLanguage();
     void openRecentFile();
     void openRecentTable();
+    void openRecentProject();
+    void openProject();
+    void openProjectFile(const QString &path);
+    bool saveProject();
+    bool saveProjectAs();
+    void toggleShowChanges();
+    void createIpsPatch();
+    void loadIpsPatch();
+    void onDockTableChanged(TranslationTable *table);
+    void onDockTableContentChanged();
 
 public:
     void loadFile(const QString &fileName);
@@ -111,6 +124,8 @@ private:
     void createToolBars();
     void retranslateUi();
     bool maybeSave();
+    bool maybeSaveProject();
+    void updateWindowTitle();
     void updateActionStates();
     void readSettings();
     bool saveFile(const QString &fileName);
@@ -121,8 +136,11 @@ private:
     void rememberDirectory(const QString &settingsKey, const QString &filePath);
     void updateRecentFileMenu();
     void updateRecentTableMenu();
+    void updateRecentProjectMenu();
     void addToRecentFiles(const QString &fileName);
     void addToRecentTables(const QString &fileName);
+    void addToRecentProjects(const QString &fileName);
+    void updateChangedBytesHighlight();
     void updateStatusBarVisibility();
     void updateValuePanels();
     void updateEndiannesLabel();
@@ -135,16 +153,24 @@ private:
     void updateNavigationActions();
     QString detectSystemLanguage();
     void applyLanguage(const QString &language);
+    bool saveProjectImpl(const QString &path);
 
     QString curFile;
     QString tableFilePath;
     QFile file;
     bool isUntitled;
     qint64 curOffset = 0;
+    // Non-owning pointer to currently active table in TablesDockWidget.
+    // Temporary exception: during semi-auto generation it briefly owns a heap
+    // table until it is copied into dock storage.
     TranslationTable* tb = nullptr;
+
+    HexDocument *m_document = nullptr;  // current project document
+    bool m_projectModified = false;     // true when project has unsaved pointer/table changes
 
     QMenu *fileMenu;
     QMenu *editMenu;
+    QMenu *changesMenu;
     QMenu *goMenu;
     QMenu *tableMenu;
     QMenu *pointersMenu;
@@ -156,8 +182,10 @@ private:
     QMenu *statusBarMenu;
     QMenu *panelsMenu;
     QMenu *mapsMenu;
+    QMenu *dockMenu = nullptr;
     QMenu *recentFileMenu;
     QMenu *recentTableMenu;
+    QMenu *recentProjectMenu;
     QMenu *romTypeMenu;
     QMenu *encodingMenu;
     QActionGroup *romTypeMenuGroup = nullptr;
@@ -179,6 +207,14 @@ private:
     QAction *newAct;
     QAction *closeAct;
     QAction *exitAct;
+
+    QAction *openProjectAct = nullptr;
+    QAction *saveProjectAct = nullptr;
+    QAction *saveProjectAsAct = nullptr;
+
+    QAction *showChangesAct = nullptr;
+    QAction *createIpsPatchAct = nullptr;
+    QAction *loadIpsPatchAct = nullptr;
 
     QAction *undoAct;
     QAction *redoAct;
@@ -260,6 +296,8 @@ private:
     SemiAutoTableDialog *semiAutoTableDialog;
     DumpScriptDialog *dumpScriptDialog;
     InsertScriptDialog *insertScriptDialog;
+    TablesDockWidget  *m_tablesDock   = nullptr;
+    PointersDockWidget *m_pointersDock = nullptr;
 
     QComboBox *cbRomType;
     QPushButton *lbEndiannes;
