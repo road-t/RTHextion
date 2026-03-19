@@ -86,6 +86,10 @@ public:
     void setUseTableChecked(bool checked);
     void setUseTableEnabled(bool enabled);
 
+    /// Save/restore grid column widths for all tabs.
+    QByteArray saveColumnsState() const;
+    void restoreColumnsState(const QByteArray &state);
+
 signals:
     /// Emitted when the currently selected table changes (switched tab or edited).
     void activeTableChanged(TranslationTable *table);

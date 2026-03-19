@@ -18,6 +18,7 @@
 #include <QButtonGroup>
 #include <QMenu>
 #include <QUndoCommand>
+#include <QDataStream>
 #include <algorithm>
 
 // ---------------------------------------------------------------------------
@@ -762,6 +763,50 @@ void TablesDockWidget::setUseTableEnabled(bool enabled)
 {
     if (m_useTableBtn)
         m_useTableBtn->setEnabled(enabled);
+}
+
+QByteArray TablesDockWidget::saveColumnsState() const
+{
+    QByteArray state;
+    QDataStream stream(&state, QIODevice::WriteOnly);
+
+    // For each table tab, save the grid's header state
+    stream << static_cast<int>(m_tables.size());
+    for (int i = 0; i < m_tabs->count(); ++i) {
+        QTableWidget *grid = gridAt(i);
+        if (grid && grid->horizontalHeader()) {
+            QByteArray headerState = grid->horizontalHeader()->saveState();
+            stream << headerState;
+        } else {
+            stream << QByteArray();
+        }
+    }
+
+    return state;
+}
+
+void TablesDockWidget::restoreColumnsState(const QByteArray &state)
+{
+    if (state.isEmpty())
+        return;
+
+    QDataStream stream(state);
+    stream.setVersion(QDataStream::Qt_5_0);
+
+    int tabCount = 0;
+    stream >> tabCount;
+
+    for (int i = 0; i < tabCount && i < m_tabs->count(); ++i) {
+        QByteArray headerState;
+        stream >> headerState;
+
+        if (!headerState.isEmpty()) {
+            QTableWidget *grid = gridAt(i);
+            if (grid && grid->horizontalHeader()) {
+                grid->horizontalHeader()->restoreState(headerState);
+            }
+        }
+    }
 }
 
 bool TablesDockWidget::isTableOriginal(int index) const
