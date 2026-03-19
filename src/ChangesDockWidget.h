@@ -5,6 +5,7 @@
 #include <QTableWidget>
 #include <QLabel>
 #include <QToolButton>
+#include <QButtonGroup>
 #include <QVector>
 #include <QPair>
 #include <QByteArray>
@@ -58,7 +59,9 @@ private:
     QLabel       *m_titleLabel    = nullptr;
     QToolButton  *m_collapseBtn   = nullptr;
     QToolButton  *m_showChangesBtn = nullptr;
-    QToolButton  *m_textHexBtn    = nullptr;
+    QToolButton  *m_textBtn       = nullptr;
+    QToolButton  *m_hexBtn        = nullptr;
+    QButtonGroup *m_displayModeGroup = nullptr;
     bool          m_hexMode       = false;
 
     // Stored parameters for re-rendering when display mode is toggled

@@ -30,6 +30,7 @@ class QUndoStack;
 class QComboBox;
 class QLabel;
 class QPushButton;
+class QTimer;
 class QDragEnterEvent;
 class QDropEvent;
 QT_END_NAMESPACE
@@ -50,6 +51,8 @@ protected:
 private slots:
     void about();
     void dataChanged();
+    void onHexDataChangedAt(qint64 offset);
+    void flushChangesUiUpdate();
     void newFile();
     void closeFile();
     void open();
@@ -170,6 +173,9 @@ private:
 
     HexDocument *m_document = nullptr;  // current project document
     bool m_projectModified = false;     // true when project has unsaved pointer/table changes
+    bool m_closing = false;             // true once closeEvent has been accepted, suppresses late signals
+    QByteArray m_changeTrackingSnapshot; // file snapshot before last edit for incremental originalBytes updates
+    QTimer *m_changesUiUpdateTimer = nullptr; // coalesces heavy changes/highlight refresh during typing
 
     QMenu *fileMenu;
     QMenu *editMenu;

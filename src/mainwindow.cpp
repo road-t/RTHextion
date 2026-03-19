@@ -22,6 +22,7 @@
 #include <QDir>
 #include <QComboBox>
 #include <QLocale>
+#include <QTimer>
 #include <algorithm>
 
 #include "QtWidgets/qpushbutton.h"
@@ -31,6 +32,7 @@
 #include "TablesDockWidget.h"
 #include "ChangesDockWidget.h"
 #include "romdetect.h"
+#include "romchecksum.h"
 #include "encodingdetect.h"
 
 namespace
@@ -50,6 +52,103 @@ namespace
     {
         const QString value = settings.value(key, QString(fallback)).toString();
         return value.isEmpty() ? fallback : value.at(0);
+    }
+
+    void mergeRunsAt(QVector<QPair<qint64, QByteArray>> &runs, int idx)
+    {
+        if (idx < 0 || idx >= runs.size())
+            return;
+
+        if (idx > 0) {
+            const qint64 prevEnd = runs[idx - 1].first + runs[idx - 1].second.size();
+            if (prevEnd == runs[idx].first) {
+                runs[idx - 1].second.append(runs[idx].second);
+                runs.removeAt(idx);
+                idx -= 1;
+            }
+        }
+
+        if (idx >= 0 && idx + 1 < runs.size()) {
+            const qint64 curEnd = runs[idx].first + runs[idx].second.size();
+            if (curEnd == runs[idx + 1].first) {
+                runs[idx].second.append(runs[idx + 1].second);
+                runs.removeAt(idx + 1);
+            }
+        }
+    }
+
+    void removeByteFromRun(QVector<QPair<qint64, QByteArray>> &runs, int runIdx, int byteIdx)
+    {
+        if (runIdx < 0 || runIdx >= runs.size())
+            return;
+        QByteArray &bytes = runs[runIdx].second;
+        if (byteIdx < 0 || byteIdx >= bytes.size())
+            return;
+
+        if (bytes.size() == 1) {
+            runs.removeAt(runIdx);
+            return;
+        }
+
+        if (byteIdx == 0) {
+            bytes.remove(0, 1);
+            runs[runIdx].first += 1;
+            return;
+        }
+
+        if (byteIdx == bytes.size() - 1) {
+            bytes.chop(1);
+            return;
+        }
+
+        const qint64 rightStart = runs[runIdx].first + byteIdx + 1;
+        QByteArray right = bytes.mid(byteIdx + 1);
+        bytes.truncate(byteIdx);
+        runs.insert(runIdx + 1, {rightStart, right});
+    }
+
+    void applyIncrementalOriginalByteChange(QVector<QPair<qint64, QByteArray>> &runs,
+                                            qint64 offset,
+                                            char oldByte,
+                                            char newByte)
+    {
+        int nearestIdx = -1;
+        for (int i = 0; i < runs.size(); ++i) {
+            if (runs[i].first <= offset)
+                nearestIdx = i;
+            else
+                break;
+        }
+
+        if (nearestIdx >= 0) {
+            const qint64 start = runs[nearestIdx].first;
+            const qint64 rel = offset - start;
+            QByteArray &bytes = runs[nearestIdx].second;
+            if (rel >= 0 && rel < bytes.size()) {
+                const char originalByte = bytes.at(static_cast<int>(rel));
+                // Byte returned to its original value: remove it from tracked runs.
+                if (newByte == originalByte)
+                    removeByteFromRun(runs, nearestIdx, static_cast<int>(rel));
+                return;
+            }
+        }
+
+        // No existing tracked run contains this byte.
+        // If value did not effectively change, nothing to track.
+        if (newByte == oldByte)
+            return;
+
+        const int insertPos = nearestIdx + 1;
+        const bool appendToNearest = (nearestIdx >= 0) &&
+                                     (runs[nearestIdx].first + runs[nearestIdx].second.size() == offset);
+        if (appendToNearest) {
+            runs[nearestIdx].second.append(oldByte);
+            mergeRunsAt(runs, nearestIdx);
+            return;
+        }
+
+        runs.insert(insertPos, {offset, QByteArray(1, oldByte)});
+        mergeRunsAt(runs, insertPos);
     }
 }
 
@@ -80,6 +179,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
         return;
     }
 
+    m_closing = true;
     writeSettings();
     event->accept();
 }
@@ -153,8 +253,52 @@ void MainWindow::about()
 
 void MainWindow::dataChanged()
 {
+    if (m_closing)
+        return;
     setWindowModified(hexEdit->isModified());
     updateActionStates();
+}
+
+void MainWindow::onHexDataChangedAt(qint64 offset)
+{
+    if (m_closing || !m_document)
+        return;
+
+    const QByteArray currentData = hexEdit->data();
+    if (m_changeTrackingSnapshot.isNull()) {
+        m_changeTrackingSnapshot = currentData;
+        return;
+    }
+
+    const qint64 oldSize = m_changeTrackingSnapshot.size();
+    const qint64 newSize = currentData.size();
+
+    // Fast path: single-byte overwrite at known offset.
+    if (oldSize == newSize && offset >= 0 && offset < newSize && offset < oldSize) {
+        const char oldByte = m_changeTrackingSnapshot.at(static_cast<int>(offset));
+        const char newByte = currentData.at(static_cast<int>(offset));
+        if (oldByte != newByte)
+            applyIncrementalOriginalByteChange(m_document->originalBytes, offset, oldByte, newByte);
+        m_changeTrackingSnapshot[static_cast<int>(offset)] = newByte;
+    } else {
+        // Insert/delete or unknown complex edit: resync snapshot and defer to full UI rebuild.
+        m_changeTrackingSnapshot = currentData;
+    }
+
+    if (m_changesUiUpdateTimer)
+        m_changesUiUpdateTimer->start();
+}
+
+void MainWindow::flushChangesUiUpdate()
+{
+    if (m_closing)
+        return;
+
+    if (m_changesDock && m_changesDock->isVisible())
+        refreshChangesView();
+
+    if (showChangesAct && showChangesAct->isChecked())
+        updateChangedBytesHighlight();
 }
 
 void MainWindow::closeFile()
@@ -168,7 +312,9 @@ void MainWindow::closeFile()
     m_document->projectFilePath.clear();
     m_document->projectName.clear();
     m_projectModified = false;
+    m_document->originalBytes.clear();
     hexEdit->setData(QByteArray());
+    m_changeTrackingSnapshot = QByteArray();
     hexEdit->clearPointers();
     resetNavigationHistory();
     showPointersAct->setEnabled(false);
@@ -212,7 +358,9 @@ void MainWindow::newFile()
     m_document->projectFilePath.clear();
     m_document->projectName.clear();
     m_projectModified = false;
+    m_document->originalBytes.clear();
     hexEdit->setData(QByteArray());
+    m_changeTrackingSnapshot = QByteArray();
     hexEdit->clearPointers();
     resetNavigationHistory();
     showPointersAct->setEnabled(false);
@@ -261,7 +409,9 @@ void MainWindow::revert()
         // For new files, just clear the data
         if (QMessageBox::warning(this, tr("Clear data"), tr("Clear all data and changes?"), QMessageBox::Yes | QMessageBox::Cancel) == QMessageBox::Yes)
         {
+            m_document->originalBytes.clear();
             hexEdit->setData(QByteArray());
+            m_changeTrackingSnapshot = QByteArray();
             hexEdit->clearPointers();
             showPointersAct->setEnabled(false);
             statusBar()->showMessage(tr("Data cleared"), 2000);
@@ -276,6 +426,7 @@ void MainWindow::revert()
             file.setFileName(curFile);
             if (hexEdit->setData(file))
             {
+                m_changeTrackingSnapshot = hexEdit->data();
                 resetNavigationHistory();
                 statusBar()->showMessage(tr("File reverted"), 2000);
             }
@@ -1538,7 +1689,13 @@ void MainWindow::init()
 
     connect(hexEdit, SIGNAL(overwriteModeChanged(bool)), this, SLOT(setOverwriteMode(bool)));
     connect(hexEdit, SIGNAL(dataChanged()), this, SLOT(dataChanged()));
+    connect(hexEdit, &QHexEdit::dataChangedAt, this, &MainWindow::onHexDataChangedAt);
     connect(hexEdit, &QHexEdit::contextMenuRequested, this, &MainWindow::hexEditContextMenu);
+
+    m_changesUiUpdateTimer = new QTimer(this);
+    m_changesUiUpdateTimer->setSingleShot(true);
+    m_changesUiUpdateTimer->setInterval(40);
+    connect(m_changesUiUpdateTimer, &QTimer::timeout, this, &MainWindow::flushChangesUiUpdate);
 
     // Tables dock widget (right side)
     m_tablesDock = new TablesDockWidget(this);
@@ -2558,7 +2715,9 @@ void MainWindow::openProjectFile(const QString &path)
         m_document->projectFilePath.clear();
         m_document->projectName.clear();
         m_projectModified = false;
+        m_document->originalBytes.clear();
         hexEdit->setData(QByteArray());
+        m_changeTrackingSnapshot = QByteArray();
         hexEdit->clearPointers();
         hexEdit->removeTranslationTable();
         tb = nullptr;
@@ -2934,6 +3093,8 @@ void MainWindow::loadFile(const QString &fileName)
         return;
     }
 
+    m_changeTrackingSnapshot = hexEdit->data();
+
     resetNavigationHistory();
     setCurrentFile(fileName);
     statusBar()->showMessage(tr("File loaded"), 2000);
@@ -3094,6 +3255,8 @@ void MainWindow::readSettings()
     // Restore dock column states
     if (m_pointersDock)
         m_pointersDock->restoreColumnsState(settings.value(QStringLiteral("PointersDockColumns")).toByteArray());
+    if (m_tablesDock)
+        m_tablesDock->restoreColumnsState(settings.value(QStringLiteral("TablesDockColumns")).toByteArray());
     if (m_changesDock)
         m_changesDock->restoreColumnsState(settings.value(QStringLiteral("ChangesDockColumns")).toByteArray());
 
@@ -3289,9 +3452,32 @@ void MainWindow::updateHexEditorSettings()
 
 bool MainWindow::saveFile(const QString &fileName)
 {
+    QSettings settings;
+    const bool autoFixChecksums = settings.value("AutoFixChecksums", false).toBool();
+
     QString tmpFileName = fileName + ".~tmp";
 
     QApplication::setOverrideCursor(Qt::WaitCursor);
+
+    // If auto-fix is requested, apply checksum correction to a copy of the data
+    // before writing so both the file and the editor reflect the corrected state.
+    bool checksumFixed = false;
+    if (autoFixChecksums) {
+        QByteArray data = hexEdit->data();
+        const ChecksumFixResult csResult = tryFixChecksum(data, m_detectedRomType);
+        if (csResult.status == ChecksumFixStatus::Fixed) {
+            checksumFixed = true;
+            // Update the editor bytes that changed (minimal replace, adds to undo stack).
+            const QByteArray oldData = hexEdit->data();
+            for (int i = 0; i < data.size() && i < oldData.size(); ++i) {
+                if (data[i] != oldData[i])
+                    hexEdit->replace(i, data[i]);
+            }
+            // Refresh changes view to show recalculated checksums
+            if (showChangesAct && showChangesAct->isChecked())
+                refreshChangesView();
+        }
+    }
 
     QFile file(tmpFileName);
 
@@ -3317,7 +3503,10 @@ bool MainWindow::saveFile(const QString &fileName)
 
     setCurrentFile(fileName);
     rememberDirectory(kLastFileDirKey, fileName);
-    statusBar()->showMessage(tr("File saved"), 2000);
+    if (checksumFixed)
+        statusBar()->showMessage(tr("File saved (checksums fixed)"), 3000);
+    else
+        statusBar()->showMessage(tr("File saved"), 2000);
     return true;
 }
 
@@ -3442,6 +3631,8 @@ void MainWindow::writeSettings()
     // Save dock column states
     if (m_pointersDock)
         settings.setValue(QStringLiteral("PointersDockColumns"), m_pointersDock->saveColumnsState());
+    if (m_tablesDock)
+        settings.setValue(QStringLiteral("TablesDockColumns"), m_tablesDock->saveColumnsState());
     if (m_changesDock)
         settings.setValue(QStringLiteral("ChangesDockColumns"), m_changesDock->saveColumnsState());
 
@@ -3726,8 +3917,6 @@ void MainWindow::updateChangedBytesHighlight()
         }
     }
     hexEdit->setChangedPositions(positions);
-    if (m_document)
-        refreshChangesView();
 }
 
 void MainWindow::refreshChangesView()
@@ -4011,9 +4200,12 @@ void MainWindow::loadOriginal()
     const QByteArray currentData = hexEdit->data();
 
     if (origData.size() != currentData.size()) {
-        const auto reply = QMessageBox::question(
+        const auto reply = QMessageBox::warning(
             this, QString::fromLatin1(AppInfo::Name),
-            tr("The selected file has a different size from the currently open file (%1 vs %2 bytes).\n"
+            tr("Warning: the selected file has a different size from the currently open file "
+               "(%1 vs %2 bytes).\n\n"
+               "Size mismatch may lead to undefined behavior when comparing changes, "
+               "applying IPS patches, or recalculating checksums.\n\n"
                "Continue anyway? Only overlapping bytes will be compared.")
                 .arg(origData.size())
                 .arg(currentData.size()),

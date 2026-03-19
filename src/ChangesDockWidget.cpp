@@ -8,6 +8,7 @@
 #include <QHeaderView>
 #include <QStringDecoder>
 #include <QSignalBlocker>
+#include <QButtonGroup>
 
 ChangesDockWidget::ChangesDockWidget(QWidget *parent)
     : QDockWidget(parent)
@@ -87,14 +88,28 @@ ChangesDockWidget::ChangesDockWidget(QWidget *parent)
     m_showChangesBtn->setIconSize(QSize(16, 16));
     toolRow->addWidget(m_showChangesBtn);
 
-    // Text / Hex display mode toggle
-    m_textHexBtn = new QToolButton(this);
-    m_textHexBtn->setCheckable(true);
-    m_textHexBtn->setChecked(false); // false = text mode
-    m_textHexBtn->setAutoRaise(true);
-    m_textHexBtn->setText(QStringLiteral("text"));
-    m_textHexBtn->setToolTip(tr("Toggle hex/text display"));
-    toolRow->addWidget(m_textHexBtn);
+    // Text / Hex display mode — two exclusive toggle buttons
+    m_textBtn = new QToolButton(this);
+    m_textBtn->setCheckable(true);
+    m_textBtn->setChecked(true);   // default: text mode
+    m_textBtn->setAutoRaise(true);
+    m_textBtn->setText(QStringLiteral("TEXT"));
+    m_textBtn->setToolTip(tr("Show values as text"));
+
+    m_hexBtn = new QToolButton(this);
+    m_hexBtn->setCheckable(true);
+    m_hexBtn->setChecked(false);
+    m_hexBtn->setAutoRaise(true);
+    m_hexBtn->setText(QStringLiteral("HEX"));
+    m_hexBtn->setToolTip(tr("Show values as hexadecimal"));
+
+    m_displayModeGroup = new QButtonGroup(this);
+    m_displayModeGroup->setExclusive(true);
+    m_displayModeGroup->addButton(m_textBtn, 0);  // id 0 = text
+    m_displayModeGroup->addButton(m_hexBtn,  1);  // id 1 = hex
+
+    toolRow->addWidget(m_textBtn);
+    toolRow->addWidget(m_hexBtn);
 
     toolRow->addStretch();
     layout->addLayout(toolRow);
@@ -103,9 +118,8 @@ ChangesDockWidget::ChangesDockWidget(QWidget *parent)
         emit showChangesToggled(checked);
     });
 
-    connect(m_textHexBtn, &QToolButton::toggled, this, [this](bool checked) {
-        m_hexMode = checked;
-        m_textHexBtn->setText(checked ? QStringLiteral("hex") : QStringLiteral("text"));
+    connect(m_displayModeGroup, &QButtonGroup::idClicked, this, [this](int id) {
+        m_hexMode = (id == 1);
         refresh(m_lastOriginals, m_lastCurrentData,
                 m_lastOrigTable, m_lastActiveTable,
                 m_lastUseTable, m_lastEncoding);
@@ -270,10 +284,11 @@ void ChangesDockWidget::setHexMode(bool hexMode)
 {
     m_hexMode = hexMode;
 
-    if (m_textHexBtn) {
-        const QSignalBlocker blocker(m_textHexBtn);
-        m_textHexBtn->setChecked(hexMode);
-        m_textHexBtn->setText(hexMode ? QStringLiteral("hex") : QStringLiteral("text"));
+    if (m_textBtn && m_hexBtn) {
+        const QSignalBlocker b1(m_textBtn);
+        const QSignalBlocker b2(m_hexBtn);
+        m_textBtn->setChecked(!hexMode);
+        m_hexBtn->setChecked(hexMode);
     }
 
     refresh(m_lastOriginals, m_lastCurrentData,
@@ -297,8 +312,12 @@ void ChangesDockWidget::retranslateUi()
     setWindowTitle(tr("Changes"));
     if (m_titleLabel)
         m_titleLabel->setText(tr("Changes"));
-    if (m_textHexBtn)
-        m_textHexBtn->setToolTip(tr("Toggle hex/text display"));
+    if (m_showChangesBtn)
+        m_showChangesBtn->setToolTip(tr("Show changes"));
+    if (m_textBtn)
+        m_textBtn->setToolTip(tr("Show values as text"));
+    if (m_hexBtn)
+        m_hexBtn->setToolTip(tr("Show values as hexadecimal"));
     m_table->setHorizontalHeaderLabels({tr("#"), tr("Offset"), tr("Original"), tr("Current")});
 }
 
