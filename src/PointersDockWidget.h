@@ -35,7 +35,14 @@ public:
 
 signals:
     void findPointersRequested();
+    void showPointersToggled(bool checked);
 
+public:
+    void setShowPointersChecked(bool checked);
+    void setShowPointersEnabled(bool enabled);
+
+    QByteArray saveColumnsState() const;
+    void restoreColumnsState(const QByteArray &state);
 private slots:
     void onHexSelectionChanged(qint64 start, qint64 end);
     void onListSelectionChanged();
@@ -58,6 +65,7 @@ private:
     QAction            *m_cleanAllAct = nullptr;
     QLabel             *m_titleLabel = nullptr;
     QToolButton        *m_collapseBtn = nullptr;
+    QToolButton        *m_showPointersBtn = nullptr;
 };
 
 #endif // POINTERSDOCKWIDGET_H

@@ -2,6 +2,9 @@
 #include "PointerListModel.h"
 #include "qhexedit/qhexedit.h"
 
+#include <QPainter>
+#include <QPainterPath>
+
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -48,6 +51,46 @@ PointersDockWidget::PointersDockWidget(QWidget *parent)
     m_toolbar = new QToolBar(this);
     m_toolbar->setIconSize(QSize(16, 16));
 
+    // Eye (show-pointers) toggle button
+    m_showPointersBtn = new QToolButton(this);
+    m_showPointersBtn->setCheckable(true);
+    m_showPointersBtn->setChecked(true);
+    m_showPointersBtn->setAutoRaise(true);
+    m_showPointersBtn->setToolTip(tr("Show pointers"));
+    {
+        auto paint = [](bool filled) -> QPixmap {
+            const int sz = 16;
+            QPixmap pm(sz, sz);
+            pm.fill(Qt::transparent);
+            QPainter p(&pm);
+            p.setRenderHint(QPainter::Antialiasing);
+            const QColor col(70, 70, 70);
+            p.setPen(QPen(col, 1.3));
+            const float cx = sz * 0.5f, cy = sz * 0.5f;
+            const float rx = sz * 0.44f, ry = sz * 0.27f;
+            QPainterPath lens;
+            lens.moveTo(cx - rx, cy);
+            lens.cubicTo(cx - rx*0.4f, cy - ry*2.0f, cx + rx*0.4f, cy - ry*2.0f, cx + rx, cy);
+            lens.cubicTo(cx + rx*0.4f, cy + ry*2.0f, cx - rx*0.4f, cy + ry*2.0f, cx - rx, cy);
+            p.drawPath(lens);
+            const float pr = ry * 0.72f;
+            if (filled) { p.setBrush(col); p.setPen(Qt::NoPen); }
+            p.drawEllipse(QPointF(cx, cy), pr, pr);
+            return pm;
+        };
+        QIcon icon;
+        icon.addPixmap(paint(true),  QIcon::Normal,  QIcon::On);
+        icon.addPixmap(paint(false), QIcon::Normal,  QIcon::Off);
+        icon.addPixmap(paint(false), QIcon::Disabled, QIcon::Off);
+        m_showPointersBtn->setIcon(icon);
+    }
+    m_showPointersBtn->setIconSize(QSize(16, 16));
+    m_toolbar->addWidget(m_showPointersBtn);
+    m_toolbar->addSeparator();
+    connect(m_showPointersBtn, &QToolButton::clicked, this, [this](bool checked) {
+        emit showPointersToggled(checked);
+    });
+
     m_findAct = m_toolbar->addAction(tr("Find pointers"), this,
         [this]{ emit findPointersRequested(); });
     m_findAct->setEnabled(false);
@@ -88,14 +131,15 @@ void PointersDockWidget::setHexEdit(QHexEdit *hexEdit)
     m_hexEdit = hexEdit;
     m_model = hexEdit ? hexEdit->pointers() : nullptr;
     if (m_model)
-        m_model->setSectionNames(QStringList() << tr("Offset") << tr("Pointer") << tr("Data"));
+        m_model->setSectionNames(QStringList() << tr("#") << tr("Pointer") << tr("Offset") << tr("Data"));
     m_view->setModel(m_model);
 
-    // Column widths: first two 2×, last stretches
-    m_view->setColumnWidth(0, 156);
-    m_view->setColumnWidth(1, 156);
+    // Column widths: narrow row# col, two fixed, last stretches
+    m_view->setColumnWidth(0, 30);
+    m_view->setColumnWidth(1, 80);
+    m_view->setColumnWidth(2, 80);
     if (m_model)
-        m_view->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+        m_view->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
 
     if (m_hexEdit)
         connect(m_hexEdit, &QHexEdit::selectionChanged,
@@ -108,16 +152,16 @@ void PointersDockWidget::setHexEdit(QHexEdit *hexEdit)
     if (m_model) {
         connect(m_model, &PointerListModel::pointersChanged,
                 this, &PointersDockWidget::updateButtonStates);
-        m_view->sortByColumn(0, Qt::AscendingOrder);
+        m_view->sortByColumn(1, Qt::AscendingOrder);
     }
 
     updateButtonStates();
 }
 
-void PointersDockWidget::addShowPointersAction(QAction *act)
+void PointersDockWidget::addShowPointersAction(QAction * /*act*/)
 {
-    m_toolbar->addSeparator();
-    m_toolbar->addAction(act);
+    // The eye button in the toolbar is the dock-side show-pointers toggle;
+    // the QAction stays in the menu bar only.
 }
 
 void PointersDockWidget::beginSearch()
@@ -154,7 +198,7 @@ void PointersDockWidget::retranslateUi()
     m_deleteAct->setText(tr("Delete"));
     m_cleanAllAct->setText(tr("Clean all"));
     if (m_model)
-        m_model->setSectionNames(QStringList() << tr("Offset") << tr("Pointer") << tr("Data"));
+        m_model->setSectionNames(QStringList() << tr("#") << tr("Pointer") << tr("Offset") << tr("Data"));
 }
 
 void PointersDockWidget::onHexSelectionChanged(qint64 start, qint64 end)
@@ -254,4 +298,34 @@ void PointersDockWidget::updateButtonStates()
         m_findAct->setEnabled(m_hexEdit->hasSelection());
     else
         m_findAct->setEnabled(false);
+
+    if (m_titleLabel) {
+        const int count = hasModel ? m_model->rowCount() : 0;
+        const QString title = tr("Pointers") +
+            (count > 0 ? QStringLiteral(" \u2013 %1").arg(count) : QString());
+        m_titleLabel->setText(title);
+    }
+}
+
+void PointersDockWidget::setShowPointersChecked(bool checked)
+{
+    if (m_showPointersBtn)
+        m_showPointersBtn->setChecked(checked);
+}
+
+void PointersDockWidget::setShowPointersEnabled(bool enabled)
+{
+    if (m_showPointersBtn)
+        m_showPointersBtn->setEnabled(enabled);
+}
+
+QByteArray PointersDockWidget::saveColumnsState() const
+{
+    return m_view->horizontalHeader()->saveState();
+}
+
+void PointersDockWidget::restoreColumnsState(const QByteArray &state)
+{
+    if (!state.isEmpty())
+        m_view->horizontalHeader()->restoreState(state);
 }
