@@ -15,7 +15,7 @@ int PointerListModel::rowCount(const QModelIndex &parent) const
 int PointerListModel::columnCount(const QModelIndex &parent) const
 {
     Q_UNUSED(parent)
-    return 3;
+    return 4;
 }
 
 QVariant PointerListModel::headerData(int section, Qt::Orientation orientation, int role) const
@@ -54,12 +54,20 @@ QVariant PointerListModel::data(const QModelIndex &index, int role) const
         return QVariant();
 
     if (index.column() == 0)
-        return QString::number(decodePtrTarget(value), 16).toUpper();
+        // Row number (1-based)
+        return index.row() + 1;
 
     if (index.column() == 1)
-        return QString::number(key, 16).toUpper();
+    {
+        const int ptrSize = getPointerSize(key);
+        const int hexChars = ptrSize * 2;
+        return QStringLiteral("0x") + QString::number(decodePtrTarget(value), 16).toUpper().rightJustified(hexChars, QLatin1Char('0'));
+    }
 
     if (index.column() == 2)
+        return QStringLiteral("0x") + QString::number(key, 16).toUpper().rightJustified(8, QLatin1Char('0'));
+
+    if (index.column() == 3)
         return getOffsetText(key);
 
     return QVariant();
@@ -67,11 +75,12 @@ QVariant PointerListModel::data(const QModelIndex &index, int role) const
 
 void PointerListModel::sort(int column, Qt::SortOrder order)
 {
-    if (column < 0 || column > 1)
+    // Columns 1 (Pointer) and 2 (Offset) are sortable; column 0 is row #
+    if (column < 1 || column > 2)
         return;
 
     beginResetModel();
-    _sortColumn = column;
+    _sortColumn = column - 1;  // map UI column to internal sort index
     _sortOrder = order;
     rebuildRowOrder();
     endResetModel();
@@ -87,7 +96,7 @@ void PointerListModel::refreshData()
     if (_rowOrder.isEmpty())
         return;
 
-    emit dataChanged(index(0, 0), index(_rowOrder.count() - 1, 2));
+    emit dataChanged(index(0, 0), index(_rowOrder.count() - 1, 3));
 }
 
 void PointerListModel::clear()

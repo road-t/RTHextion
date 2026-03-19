@@ -473,6 +473,7 @@ void PointersDialog::on_bbControls_accepted()
                                 : ui->rbSW->isChecked() ? ByteOrder::SwappedBytes
                                                         : ByteOrder::LittleEndian;
     const bool excludeSelection = ui->cbExcludeSelection->isChecked();
+    const bool alignedOnly      = ui->cbAlignedOnly->isChecked();
     const QByteArray fileData = _hexEdit->data();
     const qint64 fileSize = fileData.size();
 
@@ -603,6 +604,12 @@ void PointersDialog::on_bbControls_accepted()
             {
                 if (cancelRequested.load())
                     break;
+
+                if (alignedOnly && (j % pointerSize != 0))
+                {
+                    ++processed;
+                    continue;
+                }
 
                 if (stopChar && buf[j] == stopChar)
                 {
@@ -812,7 +819,7 @@ void PointersDialog::changeEvent(QEvent *event)
     if (event->type() == QEvent::LanguageChange)
     {
         ui->retranslateUi(this);
-        plModel->setSectionNames(QStringList() << tr("offset") << tr("Pointer") << tr("Data"));
+        plModel->setSectionNames(QStringList() << tr("Offset") << tr("Pointer") << tr("Data"));
         if (!searchActive)
             ui->bbControls->button(QDialogButtonBox::Ok)->setText(tr("Find"));
     }
