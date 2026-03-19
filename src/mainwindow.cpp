@@ -18,6 +18,7 @@
 #include <QSettings>
 #include <QScrollBar>
 #include <QShortcut>
+#include <QSplitter>
 #include <QDir>
 #include <QComboBox>
 #include <QLocale>
@@ -28,6 +29,7 @@
 #include "langtranslator.h"
 #include "mainwindow.h"
 #include "TablesDockWidget.h"
+#include "ChangesDockWidget.h"
 #include "romdetect.h"
 #include "encodingdetect.h"
 
@@ -742,7 +744,7 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
     };
 
     // 1) Right click on a pointer entry (full pointer length is clickable).
-    if (pointerStart >= 0)
+    if (pointerStart >= 0 && hexEdit->showPointers())
     {
         QMenu menu(this);
         QAction *jumpAct = menu.addAction(tr("Jump to offset"));
@@ -780,7 +782,7 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
     }
 
     // 2) Right click on offset that has incoming pointers.
-    if (model->hasOffset(bytePos))
+    if (model->hasOffset(bytePos) && hexEdit->showPointers())
     {
         QMenu menu(this);
         QAction *titleAct = menu.addAction(tr("Pointers") + ":");
@@ -1030,6 +1032,7 @@ void MainWindow::switchUseTable()
     else
         hexEdit->removeTranslationTable();
     updateActionStates();
+    refreshChangesView();
 }
 
 void MainWindow::updateScriptMenuState(bool enabled)
@@ -1273,6 +1276,8 @@ void MainWindow::retranslateUi()
         m_tablesDock->retranslateUi();
     if (m_pointersDock)
         m_pointersDock->retranslateUi();
+    if (m_changesDock)
+        m_changesDock->retranslateUi();
 
     showStatusEndianAct->setText(tr("Endianness"));
     showStatusByteAct->setText(tr("Byte"));
@@ -1558,6 +1563,21 @@ void MainWindow::init()
     connect(m_pointersDock, &PointersDockWidget::findPointersRequested,
             this, &MainWindow::showPointersDialog);
 
+    // Changes dock widget (to the right of pointers dock, bottom)
+    m_changesDock = new ChangesDockWidget(this);
+    addDockWidget(Qt::BottomDockWidgetArea, m_changesDock);
+    splitDockWidget(m_pointersDock, m_changesDock, Qt::Horizontal);
+    // Set 50/50 width split
+    for (auto *splitter : findChildren<QSplitter*>())
+    {
+        if (splitter->indexOf(m_pointersDock) >= 0 && splitter->indexOf(m_changesDock) >= 0)
+        {
+            splitter->setSizes({400, 400});
+            break;
+        }
+    }
+    m_changesDock->hide();
+
     // Ctrl+1..9 shortcuts for switching table tabs
     for (int i = 1; i <= 9; ++i) {
         auto *shortcut = new QShortcut(QKeySequence(static_cast<int>(Qt::CTRL) | (Qt::Key_0 + i)), this);
@@ -1570,6 +1590,30 @@ void MainWindow::init()
     createActions();
     // Give the pointers dock the show-pointers toggle action after it's created
     m_pointersDock->addShowPointersAction(showPointersAct);
+    connect(m_pointersDock, &PointersDockWidget::showPointersToggled, this, [this](bool checked) {
+        showPointersAct->setChecked(checked);
+        switchShowPointers();
+    });
+    connect(showPointersAct, &QAction::toggled,
+            m_pointersDock, &PointersDockWidget::setShowPointersChecked);
+    connect(showPointersAct, &QAction::changed, this, [this]() {
+        m_pointersDock->setShowPointersEnabled(showPointersAct->isEnabled());
+    });
+
+    connect(m_changesDock, &ChangesDockWidget::showChangesToggled, this, [this](bool checked) {
+        showChangesAct->setChecked(checked);
+        toggleShowChanges();
+    });
+    connect(showChangesAct, &QAction::toggled,
+            m_changesDock, &ChangesDockWidget::setShowChangesChecked);
+    connect(showChangesAct, &QAction::changed, this, [this]() {
+        m_changesDock->setShowChangesEnabled(showChangesAct->isEnabled());
+    });
+    connect(m_changesDock, &ChangesDockWidget::jumpToOffset, this, [this](qint64 offset) {
+        hexEdit->setCursorPosition(offset * 2);
+        hexEdit->ensureVisible();
+        hexEdit->setFocus();
+    });
     createToolBars();
     createMenus();
 
@@ -2551,6 +2595,9 @@ void MainWindow::openProjectFile(const QString &path)
         for (auto &entry : doc.tables) {
             m_tablesDock->addTable(entry.name, entry.table);
         }
+        // Restore isOriginal flags from the project (override the first-table default)
+        for (int i = 0; i < doc.tables.size(); ++i)
+            m_tablesDock->setTableOriginal(i, doc.tables[i].isOriginal);
         doc.tables.clear();
 
         if (doc.activeTableIndex >= 0 && doc.activeTableIndex < m_tablesDock->count()) {
@@ -2648,9 +2695,18 @@ void MainWindow::openProjectFile(const QString &path)
     updateWindowTitle();
     updateActionStates();
 
-    // 9. Update change highlighting if active
-    if (showChangesAct->isChecked())
-        updateChangedBytesHighlight();
+    // Restore display settings
+    showPointersAct->setChecked(doc.showPointers);
+    m_pointersDock->setShowPointersChecked(doc.showPointers);
+    switchShowPointers();
+    showChangesAct->setChecked(doc.showChanges);
+    m_changesDock->setShowChangesChecked(doc.showChanges);
+    m_changesDock->setHexMode(doc.changesHexMode);
+    toggleShowChanges();
+    if (!m_document->originalBytes.isEmpty()) {
+        refreshChangesView();
+        m_changesDock->show();
+    }
 }
 
 bool MainWindow::saveProject()
@@ -2706,57 +2762,96 @@ bool MainWindow::saveProjectImpl(const QString &path)
     m_document->navigationHistoryIndex = navigationHistoryIndex;
     m_document->cursorPosition = hexEdit->cursorPosition();
     m_document->snapshotPointers(hexEdit->pointers());
+    m_document->showPointers = showPointersAct && showPointersAct->isChecked();
+    m_document->showChanges  = showChangesAct  && showChangesAct->isChecked();
+    m_document->changesHexMode = m_changesDock && m_changesDock->hexMode();
 
-    // Recompute grouped original bytes for all currently modified ranges.
+    // Recompute tracked diffs byte-by-byte.
+    // If project already has an original baseline (e.g. loaded via "Load original"),
+    // keep that baseline authoritative and only keep bytes that are still changed.
+    // Otherwise, derive baseline from the current file on disk.
     const QVector<QPair<qint64, QByteArray>> previousOriginalBytes = m_document->originalBytes;
+    const QByteArray currentData = hexEdit->data();
     m_document->originalBytes.clear();
-    if (!curFile.isEmpty()) {
+
+    auto appendGroupedDiffs = [this](const QVector<QPair<qint64, QByteArray>> &flatDiffs) {
+        if (flatDiffs.isEmpty())
+            return;
+
+        qint64 runStart = -1;
+        QByteArray runBytes;
+        for (int i = 0; i < flatDiffs.size(); ++i) {
+            const qint64 ofs = flatDiffs[i].first;
+            const char origByte = flatDiffs[i].second.isEmpty() ? char(0) : flatDiffs[i].second.at(0);
+
+            if (runStart < 0) {
+                runStart = ofs;
+                runBytes.clear();
+                runBytes.append(origByte);
+                continue;
+            }
+
+            const qint64 prevOfs = flatDiffs[i - 1].first;
+            if (ofs == prevOfs + 1) {
+                runBytes.append(origByte);
+            } else {
+                m_document->originalBytes.append({runStart, runBytes});
+                runStart = ofs;
+                runBytes.clear();
+                runBytes.append(origByte);
+            }
+        }
+
+        if (runStart >= 0 && !runBytes.isEmpty())
+            m_document->originalBytes.append({runStart, runBytes});
+    };
+
+    if (!previousOriginalBytes.isEmpty()) {
+        // Flatten previous grouped baseline and keep only currently changed bytes.
+        QVector<QPair<qint64, QByteArray>> filtered;
+        for (const auto &entry : previousOriginalBytes) {
+            const qint64 base = entry.first;
+            const QByteArray &origBytes = entry.second;
+            for (int i = 0; i < origBytes.size(); ++i) {
+                const qint64 pos = base + i;
+                const char origByte = origBytes.at(i);
+
+                bool changedNow = false;
+                if (pos >= 0 && pos < currentData.size())
+                    changedNow = currentData.at(pos) != origByte;
+                else
+                    changedNow = true;
+
+                if (changedNow)
+                    filtered.append({pos, QByteArray(1, origByte)});
+            }
+        }
+
+        std::sort(filtered.begin(), filtered.end(), [](const auto &a, const auto &b) {
+            return a.first < b.first;
+        });
+
+        appendGroupedDiffs(filtered);
+    } else if (!curFile.isEmpty()) {
+        // No external baseline tracked yet: compare against bytes from file on disk.
         QFile diskFile(curFile);
         if (diskFile.open(QIODevice::ReadOnly)) {
             const QByteArray originalFileData = diskFile.readAll();
-            const QByteArray currentData = hexEdit->data();
-
-            auto appendGroup = [&](qint64 start, const QByteArray &bytes) {
-                if (bytes.isEmpty())
-                    return;
-
-                // Keep earliest known originals if this offset already exists in previous project data.
-                for (auto &entry : m_document->originalBytes) {
-                    if (entry.first == start) {
-                        if (entry.second.isEmpty())
-                            entry.second = bytes;
-                        return;
-                    }
-                }
-                m_document->originalBytes.append({start, bytes});
-            };
-
-            // Merge any previously loaded original groups first.
-            for (const auto &entry : previousOriginalBytes)
-                appendGroup(entry.first, entry.second);
+            QVector<QPair<qint64, QByteArray>> flatDiffs;
 
             const qint64 commonSize = qMin<qint64>(originalFileData.size(), currentData.size());
-            qint64 i = 0;
-            while (i < commonSize) {
-                if (originalFileData.at(i) == currentData.at(i)) {
-                    ++i;
-                    continue;
-                }
-
-                const qint64 start = i;
-                QByteArray group;
-                while (i < commonSize && originalFileData.at(i) != currentData.at(i)) {
-                    group.append(originalFileData.at(i));
-                    ++i;
-                }
-                appendGroup(start, group);
+            for (qint64 i = 0; i < commonSize; ++i) {
+                if (originalFileData.at(i) != currentData.at(i))
+                    flatDiffs.append({i, QByteArray(1, originalFileData.at(i))});
             }
 
-            // If current file was shortened, keep truncated tail as original bytes too.
+            // If current file is shorter than original, keep truncated tail bytes too.
             if (originalFileData.size() > currentData.size()) {
-                const qint64 start = currentData.size();
-                appendGroup(start, originalFileData.mid(start));
+                for (qint64 i = currentData.size(); i < originalFileData.size(); ++i)
+                    flatDiffs.append({i, QByteArray(1, originalFileData.at(i))});
             }
+
+            appendGroupedDiffs(flatDiffs);
         }
     }
 
@@ -2766,6 +2861,7 @@ bool MainWindow::saveProjectImpl(const QString &path)
     for (const auto &tt : dockTables) {
         DocTableEntry dte;
         dte.name = tt.name;
+        dte.isOriginal = tt.isOriginal;
         dte.table = const_cast<TranslationTable *>(&tt.table);  // not owned — just a reference for serialization
         docTables.append(dte);
     }
@@ -2994,6 +3090,12 @@ void MainWindow::readSettings()
     const QByteArray windowState = settings.value(kMainWindowStateKey).toByteArray();
     if (!windowState.isEmpty())
         restoreState(windowState);
+
+    // Restore dock column states
+    if (m_pointersDock)
+        m_pointersDock->restoreColumnsState(settings.value(QStringLiteral("PointersDockColumns")).toByteArray());
+    if (m_changesDock)
+        m_changesDock->restoreColumnsState(settings.value(QStringLiteral("ChangesDockColumns")).toByteArray());
 
     updateRecentFileMenu();
 
@@ -3337,6 +3439,12 @@ void MainWindow::writeSettings()
     settings.setValue("size", size());
     settings.setValue(kMainWindowStateKey, saveState());
 
+    // Save dock column states
+    if (m_pointersDock)
+        settings.setValue(QStringLiteral("PointersDockColumns"), m_pointersDock->saveColumnsState());
+    if (m_changesDock)
+        settings.setValue(QStringLiteral("ChangesDockColumns"), m_changesDock->saveColumnsState());
+
     // Save hex editor settings to ensure persisted state
     if (hexEdit)
     {
@@ -3618,6 +3726,40 @@ void MainWindow::updateChangedBytesHighlight()
         }
     }
     hexEdit->setChangedPositions(positions);
+    if (m_document)
+        refreshChangesView();
+}
+
+void MainWindow::refreshChangesView()
+{
+    if (!m_document || !m_changesDock)
+        return;
+
+    TranslationTable *origTable   = nullptr;
+    TranslationTable *activeTable = nullptr;
+
+    if (m_tablesDock) {
+        const auto &tabs = m_tablesDock->allTables();
+        for (const auto &tt : tabs) {
+            if (tt.isOriginal && !origTable)
+                origTable = const_cast<TranslationTable *>(&tt.table);
+        }
+        const int curIdx = m_tablesDock->currentIndex();
+        if (curIdx >= 0 && curIdx < tabs.size() && !tabs[curIdx].isOriginal)
+            activeTable = const_cast<TranslationTable *>(&tabs[curIdx].table);
+        else if (curIdx >= 0 && curIdx < tabs.size()) {
+            // Active table is the original one — find first non-original to use
+            for (const auto &tt : tabs) {
+                if (!tt.isOriginal) {
+                    activeTable = const_cast<TranslationTable *>(&tt.table);
+                    break;
+                }
+            }
+        }
+    }
+
+    m_changesDock->refresh(m_document->originalBytes, hexEdit->data(), origTable, activeTable,
+                           useTableAct && useTableAct->isChecked(), m_currentEncoding);
 }
 
 void MainWindow::createIpsPatch()
@@ -3834,8 +3976,12 @@ void MainWindow::loadIpsPatch()
     rememberDirectory(kLastFileDirKey, path);
     statusBar()->showMessage(tr("IPS patch applied"), 2000);
 
+    m_changesDock->show();
+    refreshChangesView();
     if (showChangesAct->isChecked())
         updateChangedBytesHighlight();
+    else
+        refreshChangesView();
 }
 
 void MainWindow::loadOriginal()
@@ -3908,7 +4054,8 @@ void MainWindow::loadOriginal()
 
     m_document->originalBytes = newOriginalBytes;
     updateActionStates();
-
+    m_changesDock->show();
+    refreshChangesView();
     if (showChangesAct->isChecked())
         updateChangedBytesHighlight();
 

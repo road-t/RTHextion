@@ -16,6 +16,7 @@
 #include "TableEditDialog.h"
 #include "TablesDockWidget.h"
 #include "PointersDockWidget.h"
+#include "ChangesDockWidget.h"
 #include "SemiAutoTableDialog.h"
 #include "DumpScriptdialog.h"
 #include "InsertScriptDialog.h"
@@ -142,6 +143,7 @@ private:
     void addToRecentTables(const QString &fileName);
     void addToRecentProjects(const QString &fileName);
     void updateChangedBytesHighlight();
+    void refreshChangesView();
     void updateStatusBarVisibility();
     void updateValuePanels();
     void updateEndiannesLabel();
@@ -298,8 +300,9 @@ private:
     SemiAutoTableDialog *semiAutoTableDialog;
     DumpScriptDialog *dumpScriptDialog;
     InsertScriptDialog *insertScriptDialog;
-    TablesDockWidget  *m_tablesDock   = nullptr;
-    PointersDockWidget *m_pointersDock = nullptr;
+    TablesDockWidget   *m_tablesDock   = nullptr;
+    PointersDockWidget *m_pointersDock  = nullptr;
+    ChangesDockWidget  *m_changesDock   = nullptr;
 
     QComboBox *cbRomType;
     QPushButton *lbEndiannes;
