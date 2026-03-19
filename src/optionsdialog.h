@@ -132,6 +132,7 @@ private:
         bool detectEncoding = true;
         bool resetTableOnClose = false;
         bool resetEncodingOnClose = false;
+        bool autoFixChecksums = false;
         QString defaultEncoding = QStringLiteral("ASCII");
     };
     SettingsSnapshot m_originalSettings, m_currentSettings;

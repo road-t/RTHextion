@@ -70,6 +70,7 @@ OptionsDialog::OptionsDialog(QWidget *parent) : QDialog(parent), ui(new Ui::Opti
     connect(ui->cbDetectEncoding, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
     connect(ui->cbResetTableOnClose, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
     connect(ui->cbResetEncodingOnClose, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
+    connect(ui->cbAutoFixChecksums, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
     connect(ui->cbDefaultEncoding, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, [this](int){ updateSettings(); });
     // Populate default encoding combo
@@ -205,6 +206,7 @@ void OptionsDialog::saveCurrentSettings()
     m_originalSettings.detectEncoding = ui->cbDetectEncoding->isChecked();
     m_originalSettings.resetTableOnClose = ui->cbResetTableOnClose->isChecked();
     m_originalSettings.resetEncodingOnClose = ui->cbResetEncodingOnClose->isChecked();
+    m_originalSettings.autoFixChecksums = ui->cbAutoFixChecksums->isChecked();
     m_originalSettings.defaultEncoding = ui->cbDefaultEncoding->currentText();
 
     m_originalHotkeys.clear();
@@ -255,6 +257,7 @@ void OptionsDialog::restoreSettings()
     ui->cbDetectEncoding->setChecked(m_originalSettings.detectEncoding);
     ui->cbResetTableOnClose->setChecked(m_originalSettings.resetTableOnClose);
     ui->cbResetEncodingOnClose->setChecked(m_originalSettings.resetEncodingOnClose);
+    ui->cbAutoFixChecksums->setChecked(m_originalSettings.autoFixChecksums);
     ui->cbDefaultEncoding->setCurrentText(m_originalSettings.defaultEncoding);
 
     QSettings s;
@@ -307,6 +310,7 @@ void OptionsDialog::readSettings()
     ui->cbDetectEncoding->setChecked(settings.value("DetectEncoding", true).toBool());
     ui->cbResetTableOnClose->setChecked(settings.value("ResetTableOnClose", false).toBool());
     ui->cbResetEncodingOnClose->setChecked(settings.value("ResetEncodingOnClose", false).toBool());
+    ui->cbAutoFixChecksums->setChecked(settings.value("AutoFixChecksums", false).toBool());
     ui->cbDefaultEncoding->setCurrentText(settings.value("DefaultEncoding", QStringLiteral("ASCII")).toString());
 
     setColor(ui->lbHighlightingColor, settings.value("HighlightingColor", QColor(0xff, 0xff, 0x99, 0xff)).value<QColor>());
@@ -364,6 +368,7 @@ void OptionsDialog::writeSettings()
     settings.setValue("DetectEncoding", ui->cbDetectEncoding->isChecked());
     settings.setValue("ResetTableOnClose", ui->cbResetTableOnClose->isChecked());
     settings.setValue("ResetEncodingOnClose", ui->cbResetEncodingOnClose->isChecked());
+    settings.setValue("AutoFixChecksums", ui->cbAutoFixChecksums->isChecked());
     settings.setValue("DefaultEncoding", ui->cbDefaultEncoding->currentText());
 
     // Write all color settings

@@ -90,6 +90,16 @@
            </widget>
           </item>
           <item>
+           <widget class="QCheckBox" name="cbAutoFixChecksums">
+            <property name="toolTip">
+             <string>Automatically recalculate and fix ROM checksums (MD, SMS, GG, GB, GBC, GBA, SNES) before saving</string>
+            </property>
+            <property name="text">
+             <string>Auto-fix checksums on save</string>
+            </property>
+           </widget>
+          </item>
+          <item>
            <layout class="QHBoxLayout" name="hl_defaultEncoding">
             <item>
              <widget class="QLabel" name="lblDefaultEncoding">
