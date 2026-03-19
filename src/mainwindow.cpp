@@ -4240,7 +4240,7 @@ void MainWindow::loadOriginal()
 
     if (newOriginalBytes.isEmpty()) {
         QMessageBox::information(this, QString::fromLatin1(AppInfo::Name),
-                                 tr("No differences found between the selected file and the current file."));
+                                 tr("Two files are identical, no changes detected"));
         return;
     }
 
