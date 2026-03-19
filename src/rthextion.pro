@@ -26,6 +26,7 @@ HEADERS = \
     TableEditDialog.h \
     TablesDockWidget.h \
     PointersDockWidget.h \
+    ChangesDockWidget.h \
     langtranslator.h \
     mainwindow.h \
     optionsdialog.h \
@@ -50,6 +51,7 @@ SOURCES = \
     TableEditDialog.cpp \
     TablesDockWidget.cpp \
     PointersDockWidget.cpp \
+    ChangesDockWidget.cpp \
     langtranslator.cpp \
     main.cpp \
     mainwindow.cpp \
