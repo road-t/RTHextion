@@ -15,6 +15,8 @@
 #include <QTabBar>
 #include <QSet>
 #include <QApplication>
+#include <QButtonGroup>
+#include <QMenu>
 #include <QUndoCommand>
 #include <algorithm>
 
@@ -168,6 +170,10 @@ TablesDockWidget::TablesDockWidget(QWidget *parent)
     // Double-click on a tab label → rename
     connect(m_tabs->tabBar(), &QTabBar::tabBarDoubleClicked,
             this, &TablesDockWidget::onTabDoubleClicked);
+    // Right-click context menu on tab bar
+    m_tabs->tabBar()->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_tabs->tabBar(), &QWidget::customContextMenuRequested,
+            this, &TablesDockWidget::onTabContextMenu);
     layout->addWidget(m_tabs);
 
     container->setLayout(layout);
@@ -205,6 +211,8 @@ int TablesDockWidget::addTable(const QString &name, const TranslationTable *tabl
     tab.name = name.isEmpty() ? defaultTabName(0) : name;
     if (table)
         tab.table = *table;
+    // First table added to an empty dock becomes the original encoding table
+    tab.isOriginal = m_tables.isEmpty();
 
     // Create grid widget
     auto *grid = new QTableWidget(0, 2, this);
@@ -221,7 +229,52 @@ int TablesDockWidget::addTable(const QString &name, const TranslationTable *tabl
     m_ignoreChanges = false;
 
     m_tables.append(tab);
-    const int idx = m_tabs->addTab(grid, tab.name);
+
+    // Wrap the grid in a container widget; add a centered type toggle row above the grid
+    auto *wrapper = new QWidget(this);
+    auto *wLayout = new QVBoxLayout(wrapper);
+    wLayout->setContentsMargins(0, 2, 0, 0);
+    wLayout->setSpacing(2);
+
+    auto *typeRow = new QWidget(wrapper);
+    typeRow->setObjectName(QStringLiteral("tableTypeRow"));
+    auto *typeLayout = new QHBoxLayout(typeRow);
+    typeLayout->setContentsMargins(4, 0, 4, 0);
+    typeLayout->setSpacing(0);
+
+    auto *origBtn = new QToolButton(typeRow);
+    origBtn->setObjectName(QStringLiteral("origBtn"));
+    origBtn->setText(tr("Original"));
+    origBtn->setCheckable(true);
+    origBtn->setChecked(tab.isOriginal);
+
+    auto *transBtn = new QToolButton(typeRow);
+    transBtn->setObjectName(QStringLiteral("transBtn"));
+    transBtn->setText(tr("Translation"));
+    transBtn->setCheckable(true);
+    transBtn->setChecked(!tab.isOriginal);
+
+    auto *bg = new QButtonGroup(wrapper);
+    bg->setExclusive(true);
+    bg->addButton(origBtn, 0);
+    bg->addButton(transBtn, 1);
+
+    connect(bg, &QButtonGroup::idClicked, this, [this, wrapper](int id) {
+        const int tabIdx = m_tabs->indexOf(wrapper);
+        if (tabIdx < 0 || tabIdx >= m_tables.size()) return;
+        setTableOriginal(tabIdx, id == 0);
+        emit tableContentChanged();
+    });
+
+    typeLayout->addStretch();
+    typeLayout->addWidget(origBtn);
+    typeLayout->addWidget(transBtn);
+    typeLayout->addStretch();
+
+    wLayout->addWidget(typeRow);
+    wLayout->addWidget(grid);
+
+    const int idx = m_tabs->addTab(wrapper, tab.name);
     m_tabs->setCurrentIndex(idx);
     updateButtonStates();
     return idx;
@@ -368,6 +421,14 @@ void TablesDockWidget::retranslateUi()
     m_importAct->setToolTip(tr("Import table from file"));
     m_exportAct->setToolTip(tr("Export table to file"));
     m_removeAct->setToolTip(tr("Remove current table"));
+    for (int i = 0; i < m_tabs->count(); ++i) {
+        auto *w = m_tabs->widget(i);
+        if (!w) continue;
+        if (auto *btn = w->findChild<QToolButton *>(QStringLiteral("origBtn")))
+            btn->setText(tr("Original"));
+        if (auto *btn = w->findChild<QToolButton *>(QStringLiteral("transBtn")))
+            btn->setText(tr("Translation"));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -397,8 +458,12 @@ void TablesDockWidget::onTabDoubleClicked(int index)
         m_tables[index].name,
         &ok);
     if (!ok || newName.trimmed().isEmpty()) {
-        m_tabs->setCurrentIndex(index);
-        m_tabs->tabBar()->setFocus();
+        // Deferred focus restoration: after the modal dialog's close animation
+        // completes, Qt may move focus elsewhere, so we restore it via queued call.
+        QMetaObject::invokeMethod(this, [this, index]() {
+            m_tabs->setCurrentIndex(index);
+            m_tabs->tabBar()->setFocus(Qt::OtherFocusReason);
+        }, Qt::QueuedConnection);
         return;
     }
 
@@ -507,6 +572,20 @@ void TablesDockWidget::updateButtonStates()
     m_removeAct->setEnabled(hasTab);
     m_exportAct->setEnabled(hasEntries);
     m_duplicateAct->setEnabled(hasTab);
+
+    // Update per-tab toggle buttons
+    auto *wrapper = (idx >= 0 && idx < m_tabs->count()) ? m_tabs->widget(idx) : nullptr;
+    if (wrapper) {
+        auto *origBtn  = wrapper->findChild<QToolButton *>(QStringLiteral("origBtn"));
+        auto *transBtn = wrapper->findChild<QToolButton *>(QStringLiteral("transBtn"));
+        if (origBtn && transBtn) {
+            const bool orig = hasTab && m_tables[idx].isOriginal;
+            origBtn->setEnabled(hasTab);
+            transBtn->setEnabled(hasTab);
+            origBtn->setChecked(orig);
+            transBtn->setChecked(hasTab && !orig);
+        }
+    }
 }
 
 QTableWidget *TablesDockWidget::currentGrid() const
@@ -517,7 +596,9 @@ QTableWidget *TablesDockWidget::currentGrid() const
 QTableWidget *TablesDockWidget::gridAt(int index) const
 {
     if (index < 0 || index >= m_tabs->count()) return nullptr;
-    return qobject_cast<QTableWidget *>(m_tabs->widget(index));
+    auto *wrapper = m_tabs->widget(index);
+    if (!wrapper) return nullptr;
+    return wrapper->findChild<QTableWidget *>();
 }
 
 QString TablesDockWidget::defaultTabName(int /*number*/) const
@@ -612,8 +693,53 @@ void TablesDockWidget::applySnapshot(const QVector<TableTab> &snapshot, int acti
         connect(grid, &QTableWidget::cellChanged, this, &TablesDockWidget::onCellChanged);
 
         populateGrid(grid, &copy.table);
+
+        // Wrap in container with centered per-tab type toggle row
+        auto *wrapper = new QWidget(this);
+        auto *wLayout = new QVBoxLayout(wrapper);
+        wLayout->setContentsMargins(0, 2, 0, 0);
+        wLayout->setSpacing(2);
+
+        auto *typeRow = new QWidget(wrapper);
+        typeRow->setObjectName(QStringLiteral("tableTypeRow"));
+        auto *typeLayout = new QHBoxLayout(typeRow);
+        typeLayout->setContentsMargins(4, 0, 4, 0);
+        typeLayout->setSpacing(0);
+
+        auto *origBtn = new QToolButton(typeRow);
+        origBtn->setObjectName(QStringLiteral("origBtn"));
+        origBtn->setText(tr("Original"));
+        origBtn->setCheckable(true);
+        origBtn->setChecked(copy.isOriginal);
+
+        auto *transBtn = new QToolButton(typeRow);
+        transBtn->setObjectName(QStringLiteral("transBtn"));
+        transBtn->setText(tr("Translation"));
+        transBtn->setCheckable(true);
+        transBtn->setChecked(!copy.isOriginal);
+
+        auto *bg = new QButtonGroup(wrapper);
+        bg->setExclusive(true);
+        bg->addButton(origBtn, 0);
+        bg->addButton(transBtn, 1);
+
+        connect(bg, &QButtonGroup::idClicked, this, [this, wrapper](int id) {
+            const int tabIdx = m_tabs->indexOf(wrapper);
+            if (tabIdx < 0 || tabIdx >= m_tables.size()) return;
+            setTableOriginal(tabIdx, id == 0);
+            emit tableContentChanged();
+        });
+
+        typeLayout->addStretch();
+        typeLayout->addWidget(origBtn);
+        typeLayout->addWidget(transBtn);
+        typeLayout->addStretch();
+
+        wLayout->addWidget(typeRow);
+        wLayout->addWidget(grid);
+
         m_tables.append(copy);
-        m_tabs->addTab(grid, copy.name);
+        m_tabs->addTab(wrapper, copy.name);
     }
 
     m_ignoreChanges = false;
@@ -636,4 +762,45 @@ void TablesDockWidget::setUseTableEnabled(bool enabled)
 {
     if (m_useTableBtn)
         m_useTableBtn->setEnabled(enabled);
+}
+
+bool TablesDockWidget::isTableOriginal(int index) const
+{
+    if (index < 0 || index >= m_tables.size())
+        return false;
+    return m_tables[index].isOriginal;
+}
+
+void TablesDockWidget::setTableOriginal(int index, bool original)
+{
+    if (index < 0 || index >= m_tables.size())
+        return;
+
+    if (original) {
+        // Mark exactly one table as original.
+        for (int i = 0; i < m_tables.size(); ++i)
+            m_tables[i].isOriginal = (i == index);
+    } else {
+        // Allow clearing the flag for this table without touching others.
+        m_tables[index].isOriginal = false;
+    }
+
+    updateButtonStates();
+}
+
+void TablesDockWidget::onTabContextMenu(const QPoint &pos)
+{
+    const int tabIndex = m_tabs->tabBar()->tabAt(pos);
+    if (tabIndex < 0 || tabIndex >= m_tables.size())
+        return;
+
+    QMenu menu(this);
+    QAction *markOriginalAct = menu.addAction(tr("Original encoding table"));
+    markOriginalAct->setCheckable(true);
+    markOriginalAct->setChecked(m_tables[tabIndex].isOriginal);
+
+    if (menu.exec(m_tabs->tabBar()->mapToGlobal(pos)) == markOriginalAct) {
+        pushUndoSnapshot(tr("Set original table"));
+        setTableOriginal(tabIndex, markOriginalAct->isChecked());
+    }
 }

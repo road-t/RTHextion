@@ -20,6 +20,7 @@ struct TableTab
 {
     QString name;             // user-editable display name
     TranslationTable table;   // value-owned, copied by value for snapshots/undo
+    bool isOriginal = false;  // true = this is the "original" encoding table
 };
 
 /// Dock widget that contains a QTabWidget with one tab per translation table.
@@ -69,6 +70,12 @@ public:
     /// Set the current project name (used for export filename suggestions).
     void setProjectName(const QString &name) { m_projectName = name; }
 
+    /// Returns whether the table at index is marked as original.
+    bool isTableOriginal(int index) const;
+    /// Set or clear the original flag for the given index
+    /// (only one table can be original at a time).
+    void setTableOriginal(int index, bool original);
+
     /// Retranslate UI strings.
     void retranslateUi();
 
@@ -93,6 +100,7 @@ private slots:
     void onTabChanged(int index);
     void onTabDoubleClicked(int index);
     void onCellChanged(int row, int col);
+    void onTabContextMenu(const QPoint &pos);
 
 private:
     void populateGrid(QTableWidget *grid, TranslationTable *table);

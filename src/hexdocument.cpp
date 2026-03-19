@@ -180,6 +180,7 @@ bool HexDocument::saveProject(const QString &path,
         for (int i = 0; i < tablesVec.size(); ++i) {
             const auto &entry = tablesVec[i];
             out << "  - name: " << yamlEscape(entry.name) << "\n";
+            out << "    original: " << (entry.isOriginal ? "true" : "false") << "\n";
             if (entry.table && entry.table->size() > 0) {
                 out << "    entries:\n";
                 writeTableEntries(out, entry.table, QStringLiteral("      "));
@@ -219,6 +220,11 @@ bool HexDocument::saveProject(const QString &path,
 
     // Cursor position
     out << "\ncursor_position: 0x" << QString::number(cursorPosition, 16).toUpper() << "\n";
+
+    // Display settings
+    out << "show_pointers: " << (showPointers ? "true" : "false") << "\n";
+    out << "show_changes: "  << (showChanges  ? "true" : "false") << "\n";
+    out << "changes_hex_mode: " << (changesHexMode ? "true" : "false") << "\n";
 
     // Original bytes
     if (!originalBytes.isEmpty()) {
@@ -315,6 +321,11 @@ bool HexDocument::saveProject(const QString &path, const TranslationTable *table
     // Cursor position
     out << "\ncursor_position: 0x" << QString::number(cursorPosition, 16).toUpper() << "\n";
 
+    // Display settings
+    out << "show_pointers: " << (showPointers ? "true" : "false") << "\n";
+    out << "show_changes: "  << (showChanges  ? "true" : "false") << "\n";
+    out << "changes_hex_mode: " << (changesHexMode ? "true" : "false") << "\n";
+
     // Original bytes (pre-modification data for IPS/diff)
     if (!originalBytes.isEmpty()) {
         out << "\noriginal:\n";
@@ -359,6 +370,7 @@ bool HexDocument::loadProject(const QString &path)
     navigationHistory.clear();
     navigationHistoryIndex = -1;
     cursorPosition = 0;
+    changesHexMode = false;
     originalBytes.clear();
 
     enum class Section { Root, Pointers, NavHistory, TableEntries, Original, Tables, TablesEntries };
@@ -435,6 +447,12 @@ bool HexDocument::loadProject(const QString &path)
             // Detect "    entries:" sub-header within a table
             if (stripped == QLatin1String("entries:")) {
                 section = Section::TablesEntries;
+                continue;
+            }
+            // Parse "    original: true/false"
+            if (stripped.startsWith(QLatin1String("original:")) && !tables.isEmpty()) {
+                const QString val = stripped.mid(9).trimmed();
+                tables.last().isOriginal = (val == QLatin1String("true"));
                 continue;
             }
             // Parse entry lines "      - HH=text"
@@ -669,6 +687,12 @@ bool HexDocument::loadProject(const QString &path)
             bool ok = false;
             cursorPosition = val.startsWith(QLatin1String("0x"), Qt::CaseInsensitive)
                 ? val.mid(2).toLongLong(&ok, 16) : val.toLongLong(&ok);
+        } else if (key == QLatin1String("show_pointers")) {
+            showPointers = (val == QLatin1String("true"));
+        } else if (key == QLatin1String("show_changes")) {
+            showChanges = (val == QLatin1String("true"));
+        } else if (key == QLatin1String("changes_hex_mode")) {
+            changesHexMode = (val == QLatin1String("true"));
         }
     }
 

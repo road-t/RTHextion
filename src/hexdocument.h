@@ -17,6 +17,7 @@ struct DocTableEntry
 {
     QString name;
     TranslationTable *table = nullptr;  // owned by HexDocument when loaded
+    bool isOriginal = false;            // true if this is the "original" encoding table
 };
 
 /// Per-file document state: everything that belongs to a single opened file
@@ -60,6 +61,11 @@ public:
 
     // --- Cursor position ---
     qint64 cursorPosition = 0;              // last active cursor offset in the editor
+
+    // --- Display settings ---
+    bool showPointers = true;               // whether pointer highlighting is visible
+    bool showChanges  = false;              // whether change highlighting is visible
+    bool changesHexMode = false;            // true = changes list shows hex, false = text
 
     // --- Original bytes (pre-modification snapshots) ---
     /// Groups of original bytes before user modifications.
