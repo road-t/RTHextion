@@ -677,8 +677,8 @@ private:
     qint64 _lastEventSize;                      // size, which was emitted last time
     QByteArray _markedShown;                    // marked data in view
     PointerListModel _pointers;                 // pointers in view
-    HexScrollMap *_scrollMapChanges = nullptr;   // changes strip (red-orange)
-    HexScrollMap *_scrollMapTarget  = nullptr;   // pointers+targets strip (sky-blue)
+    HexScrollMap *_scrollMapChanges = nullptr;   // changes strip (same color as edit area)
+    HexScrollMap *_scrollMapTarget  = nullptr;   // pointers strip: storage=orange, targets=sky-blue
     bool          _scrollMapChangesEnabled = true;  // user preference: show changes strip
     bool          _scrollMapTargetEnabled  = true;  // user preference: show target strip
     int           _scrollMapCurrentMargin = 0;     // currently applied right viewport margin

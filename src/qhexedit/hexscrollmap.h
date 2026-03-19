@@ -13,19 +13,19 @@
 struct ScrollMapMarkers
 {
     QVector<int> changesYs;           ///< Y-positions for changes strip
-    QVector<int> targetYs;            ///< Y-positions for pointers+targets strip
+    QVector<int> pointerYs;           ///< Y-positions for pointer storage locations
+    QVector<int> targetYs;            ///< Y-positions for pointed-to target addresses
     QMap<int, qint64> changesYToOff;  ///< Y → nearest exact byte offset (changed)
-    QMap<int, qint64> targetYToOff;   ///< Y → nearest exact byte offset (ptr or target)
+    QMap<int, qint64> pointerYToOff;  ///< Y → nearest exact byte offset (pointer storage)
+    QMap<int, qint64> targetYToOff;   ///< Y → nearest exact byte offset (target address)
 };
 
 /**
- * Thin vertical strip showing tick marks for one category of offsets.
+ * Thin vertical strip showing tick marks for byte-offset categories.
  *
- * Each HexScrollMap instance draws a single color from a pre-computed
- * Y-position list — no expensive iteration in paintEvent.
- * Two instances are placed side-by-side in QHexEdit:
- *   - pointer storage locations (orange)
- *   - pointer target locations  (sky-blue)
+ * Supports two overlapping tick layers (primary + secondary) each with their
+ * own color, so pointer-storage and pointer-target locations can be shown
+ * together in a single strip without wasting horizontal space.
  */
 class HexScrollMap : public QWidget
 {
@@ -44,6 +44,11 @@ public:
 
     /** Set the strip background color. */
     void setBgColor(const QColor &c);
+
+    /** Secondary tick layer — drawn on top of primary ticks with a different color. */
+    void setSecondaryTicks(const QVector<int> &ys);
+    void setSecondaryTickOffsets(const QMap<int, qint64> &yToOff);
+    void setSecondaryColor(const QColor &c);
 
 signals:
     /** Emitted when widget height changes so QHexEdit can recompute ticks. */
@@ -69,6 +74,10 @@ private:
     QMap<int, qint64>   _yToOff;   ///< Y → exact byte offset
     QColor              _color   { 0xff, 0x99, 0x00 };   // default: orange
     QColor              _bgColor { 0xd0, 0xd0, 0xd0 };   // default: light grey
+
+    QVector<int>        _secondaryTicks;
+    QMap<int, qint64>   _secondaryYToOff;
+    QColor              _secondaryColor { 0x40, 0xbf, 0xff };   // default: sky-blue
 };
 
 #endif // HEXSCROLLMAP_H

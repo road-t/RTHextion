@@ -38,6 +38,23 @@ void HexScrollMap::setBgColor(const QColor &c)
     update();
 }
 
+void HexScrollMap::setSecondaryTicks(const QVector<int> &ys)
+{
+    _secondaryTicks = ys;
+    update();
+}
+
+void HexScrollMap::setSecondaryTickOffsets(const QMap<int, qint64> &yToOff)
+{
+    _secondaryYToOff = yToOff;
+}
+
+void HexScrollMap::setSecondaryColor(const QColor &c)
+{
+    _secondaryColor = c;
+    update();
+}
+
 void HexScrollMap::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
@@ -59,6 +76,9 @@ void HexScrollMap::paintEvent(QPaintEvent *)
 
     for (int y : qAsConst(_ticks))
         p.fillRect(0, y, w, 1, _color);
+
+    for (int y : qAsConst(_secondaryTicks))
+        p.fillRect(0, y, w, 1, _secondaryColor);
 }
 
 void HexScrollMap::mousePressEvent(QMouseEvent *event)
@@ -98,21 +118,23 @@ bool HexScrollMap::event(QEvent *event)
 
 qint64 HexScrollMap::offsetNearY(int y) const
 {
-    if (_yToOff.isEmpty())
-        return -1;
+    auto searchMap = [&](const QMap<int, qint64> &m, qint64 &bestOff, int &bestDist)
+    {
+        if (m.isEmpty()) return;
+        auto it = m.lowerBound(y - kHitRadius);
+        while (it != m.end() && it.key() <= y + kHitRadius) {
+            int dist = qAbs(it.key() - y);
+            if (dist < bestDist) {
+                bestDist = dist;
+                bestOff = it.value();
+            }
+            ++it;
+        }
+    };
 
-    // Find closest tick within ±kHitRadius
-    auto it = _yToOff.lowerBound(y - kHitRadius);
     qint64 bestOff = -1;
     int bestDist = kHitRadius + 1;
-
-    while (it != _yToOff.end() && it.key() <= y + kHitRadius) {
-        int dist = qAbs(it.key() - y);
-        if (dist < bestDist) {
-            bestDist = dist;
-            bestOff = it.value();
-        }
-        ++it;
-    }
+    searchMap(_yToOff,          bestOff, bestDist);
+    searchMap(_secondaryYToOff, bestOff, bestDist);
     return bestOff;
 }
