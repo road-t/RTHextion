@@ -3632,6 +3632,7 @@ void QHexEdit::dataChangedPrivate(int)
     adjust();
 
     emit dataChanged();
+    emit dataChangedAt(_chunks->pos());
 
     emit undoAvailable(_undoStack->canUndo());
     emit redoAvailable(_undoStack->canRedo());

@@ -361,6 +361,9 @@ signals:
     /*! The signal is emitted every time, the data is changed. */
     void dataChanged();
 
+    /*! The signal is emitted every time data is changed and includes the changed byte offset. */
+    void dataChangedAt(qint64 offset);
+
     /*! The signal is emitted every time, the overwrite mode is changed. */
     void overwriteModeChanged(bool state);
 
