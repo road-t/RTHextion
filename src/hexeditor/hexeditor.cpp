@@ -2690,7 +2690,7 @@ void HexEditor::mouseMoveEvent(QMouseEvent *event)
         if (_addressArea)
         {
             const int addrSepX = _pxPosHexX - _pxGapAdrHex - pxOfsX_mv;
-            if (abs(event->x() - addrSepX) < 8)
+            if (std::abs(event->x() - addrSepX) < 8)
             {
                 viewport()->setCursor(Qt::SizeHorCursor);
                 cursorSet = true;
@@ -2706,7 +2706,7 @@ void HexEditor::mouseMoveEvent(QMouseEvent *event)
             else if (_asciiArea)
             {
                 const int separatorScreenX = _pxPosAsciiX - (_pxGapHexAscii / 2) - pxOfsX_mv;
-                viewport()->setCursor((abs(event->x() - separatorScreenX) < 8) ? Qt::SizeHorCursor : Qt::ArrowCursor);
+                viewport()->setCursor((std::abs(event->x() - separatorScreenX) < 8) ? Qt::SizeHorCursor : Qt::ArrowCursor);
             }
             else
             {
@@ -2771,7 +2771,7 @@ void HexEditor::mousePressEvent(QMouseEvent *event)
     {
         const int pxOfsX = horizontalScrollBar()->value();
         const int addrSepX = _pxPosHexX - _pxGapAdrHex - pxOfsX;
-        if (abs(event->x() - addrSepX) < 8)
+        if (std::abs(event->x() - addrSepX) < 8)
         {
             setAddressCollapsed(!_addressCollapsed);
             return;
@@ -2785,7 +2785,7 @@ void HexEditor::mousePressEvent(QMouseEvent *event)
         int separatorScreenX = _pxPosAsciiX - (_pxGapHexAscii / 2) - pxOfsX;
         
         // If click is within 8 pixels of separator, start drag
-        if (abs(event->x() - separatorScreenX) < 8)
+        if (std::abs(event->x() - separatorScreenX) < 8)
         {
             _separatorDragging = true;
             _separatorDragStartX = event->x();

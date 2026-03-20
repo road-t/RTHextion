@@ -576,7 +576,7 @@ protected:
     void resizeEvent(QResizeEvent *);
     void contextMenuEvent(QContextMenuEvent *event) override;
     bool viewportEvent(QEvent *event) override;
-    virtual bool focusNextPrevChild(bool next);
+    bool focusNextPrevChild(bool next) override;
 
 private:
     // Handle selections
