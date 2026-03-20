@@ -6,6 +6,9 @@
 *.log
 *.tmp
 *.bak
+*.o
+*.moc
+tst_hexdocument
 
 # Compiled Qt translation files
 *.qm
