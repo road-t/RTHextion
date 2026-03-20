@@ -1527,7 +1527,7 @@ QByteArray HexEditor::getRawSelection()
 
 Datas HexEditor::getValue(qint64 offset)
 {
-    Datas value;
+    Datas value{};
 
     value.leDword = qFromLittleEndian<quint32_le>(_chunks->data(offset, 4));
 

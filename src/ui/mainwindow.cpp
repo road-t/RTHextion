@@ -583,10 +583,11 @@ void MainWindow::setSelection(qint64 start, qint64 end)
         : tr("No selection");
 
     lbSelection->setText(text);
+    const bool canModify = hexEdit && !hexEdit->isReadOnly() && !hexEdit->showOriginal();
     saveSelectionReadable->setEnabled(selBytes > 0);
     copyAct->setEnabled(selBytes > 0);
-    cutAct->setEnabled(selBytes > 0 && !hexEdit->overwriteMode() && !hexEdit->isReadOnly());
-    pasteAct->setEnabled(!QApplication::clipboard()->text().isEmpty());
+    cutAct->setEnabled(selBytes > 0 && !hexEdit->overwriteMode() && canModify);
+    pasteAct->setEnabled(canModify && !QApplication::clipboard()->text().isEmpty());
 
     updateScriptMenuState(selBytes > 0);
 }
@@ -1735,6 +1736,9 @@ void MainWindow::dumpScript()
 
 void MainWindow::insertScript()
 {
+    if (!hexEdit || hexEdit->isReadOnly() || hexEdit->showOriginal())
+        return;
+
     if (!insertScriptDialog)
         insertScriptDialog = new InsertScriptDialog(hexEdit, this);
 
@@ -1848,6 +1852,7 @@ void MainWindow::init()
             hexEdit->setOriginalData(original);
         }
         hexEdit->setShowOriginal(show);
+        updateActionStates();
     });
     connect(showChangesAct, &QAction::toggled,
             m_changesDock, &ChangesDockWidget::setShowChangesChecked);
@@ -2300,6 +2305,9 @@ void MainWindow::createActions()
     pasteAct->setEnabled(false);
     connect(pasteAct, &QAction::triggered, this, [this]()
     {
+        if (!hexEdit || hexEdit->isReadOnly() || hexEdit->showOriginal())
+            return;
+
         const QString clipText = QApplication::clipboard()->text();
         if (clipText.isEmpty()) return;
 
@@ -4022,11 +4030,13 @@ bool MainWindow::maybeSave()
 
 void MainWindow::updateActionStates()
 {
+    const bool canModify = hexEdit && !hexEdit->isReadOnly() && !hexEdit->showOriginal();
+
     // Save is always enabled (for new files it will trigger Save As)
     saveAct->setEnabled(!m_sessions.isEmpty());
     closeAct->setEnabled(!m_sessions.isEmpty());
-    undoAct->setEnabled(hexEdit && hexEdit->canUndo());
-    redoAct->setEnabled(hexEdit && hexEdit->canRedo());
+    undoAct->setEnabled(canModify && hexEdit->canUndo());
+    redoAct->setEnabled(canModify && hexEdit->canRedo());
 
     // Save Project is only enabled after the project has been given a path
     if (saveProjectAct)
@@ -4046,7 +4056,14 @@ void MainWindow::updateActionStates()
     
     const bool hasSelection = hexEdit && hexEdit->getRawSelection().size() > 1;
     const bool dumpEnabled = hasSelection;
-    const bool insertEnabled = true;
+    const bool insertEnabled = canModify;
+
+    if (cutAct)
+        cutAct->setEnabled(hasSelection && hexEdit && !hexEdit->overwriteMode() && canModify);
+    if (pasteAct)
+        pasteAct->setEnabled(canModify && !QApplication::clipboard()->text().isEmpty());
+    if (editMenu)
+        editMenu->setEnabled(canModify);
 
     if (scriptMenu)
         scriptMenu->setEnabled(dumpEnabled || insertEnabled);
