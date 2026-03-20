@@ -18,7 +18,7 @@ PointersDockWidget::PointersDockWidget(QWidget *parent)
 {
     setWindowTitle(tr("Pointers"));
     setObjectName(QStringLiteral("PointersDockWidget"));
-    setFeatures(QDockWidget::DockWidgetFloatable | QDockWidget::DockWidgetMovable);
+    setFeatures(QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetFloatable | QDockWidget::DockWidgetMovable);
 
     // Custom title bar with collapse button
     auto *titleBar = new QWidget(this);

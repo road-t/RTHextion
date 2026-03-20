@@ -1239,10 +1239,7 @@ bool MainWindow::loadTable()
 void MainWindow::switchUseTable()
 {
     tb = m_tablesDock->currentTable();
-    if (useTableAct->isChecked() && tb)
-        hexEdit->setTranslationTable(tb);
-    else
-        hexEdit->removeTranslationTable();
+    applyTranslationTableForViewMode();
     updateActionStates();
     refreshChangesView();
 }
@@ -1582,8 +1579,7 @@ void MainWindow::editTable()
 void MainWindow::onTranslationTableChanged()
 {
     tb = m_tablesDock->currentTable();
-    if (useTableAct->isChecked() && tb)
-        hexEdit->setTranslationTable(tb);
+    applyTranslationTableForViewMode();
 
     hexEdit->viewport()->update();
     hexEdit->update();
@@ -1598,10 +1594,7 @@ void MainWindow::onDockTableChanged(TranslationTable *table)
 {
     if (m_closing) return;
     tb = table;
-    if (useTableAct->isChecked() && tb)
-        hexEdit->setTranslationTable(tb);
-    else if (!tb)
-        hexEdit->removeTranslationTable();
+    applyTranslationTableForViewMode();
 
     const bool hasTables = m_tablesDock->count() > 0;
     useTableAct->setEnabled(hasTables);
@@ -1622,8 +1615,7 @@ void MainWindow::onDockTableContentChanged()
 {
     if (m_closing) return;
     tb = m_tablesDock->currentTable();
-    if (useTableAct->isChecked() && tb)
-        hexEdit->setTranslationTable(tb);
+    applyTranslationTableForViewMode();
 
     hexEdit->viewport()->update();
     hexEdit->update();
@@ -1800,11 +1792,15 @@ void MainWindow::init()
     m_changesDock = new ChangesDockWidget(this);
     addDockWidget(Qt::BottomDockWidgetArea, m_changesDock);
     splitDockWidget(m_pointersDock, m_changesDock, Qt::Horizontal);
-    // Set 50/50 width split
+    // Set 50/50 width split and matching stretch factors
     for (auto *splitter : findChildren<QSplitter*>())
     {
-        if (splitter->indexOf(m_pointersDock) >= 0 && splitter->indexOf(m_changesDock) >= 0)
+        const int pointersIdx = splitter->indexOf(m_pointersDock);
+        const int changesIdx = splitter->indexOf(m_changesDock);
+        if (pointersIdx >= 0 && changesIdx >= 0)
         {
+            splitter->setStretchFactor(pointersIdx, 1);
+            splitter->setStretchFactor(changesIdx, 1);
             splitter->setSizes({400, 400});
             break;
         }
@@ -1852,6 +1848,8 @@ void MainWindow::init()
             hexEdit->setOriginalData(original);
         }
         hexEdit->setShowOriginal(show);
+        applyTranslationTableForViewMode();
+        refreshChangesView();
         updateActionStates();
     });
     connect(showChangesAct, &QAction::toggled,
@@ -1876,6 +1874,7 @@ void MainWindow::init()
     readSettings();
 
     updateActionStates();
+    enforceBottomDockEqualWidth();
 
     setUnifiedTitleAndToolBarOnMac(true);
 }
@@ -2025,10 +2024,7 @@ void MainWindow::restoreSession(EditorSession *session)
         lbEncoding->setText(m_currentEncoding);
     syncEncodingMenu();
 
-    if (tb && useTableAct->isChecked())
-        hexEdit->setTranslationTable(tb);
-    else
-        hexEdit->removeTranslationTable();
+    applyTranslationTableForViewMode();
 
     if (m_changesDock && showChangesAct && showChangesAct->isChecked())
         refreshChangesView();
@@ -2918,6 +2914,7 @@ void MainWindow::createMenus()
     dockMenu = viewMenu->addMenu(tr("Dock"));
     dockMenu->addAction(m_tablesDock->toggleViewAction());
     dockMenu->addAction(m_pointersDock->toggleViewAction());
+    dockMenu->addAction(m_changesDock->toggleViewAction());
 
     viewMenu->addSeparator();
 
@@ -3266,6 +3263,7 @@ void MainWindow::openProjectFile(const QString &path)
     if (!m_document->originalBytes.isEmpty()) {
         refreshChangesView();
         m_changesDock->show();
+        enforceBottomDockEqualWidth();
     }
 }
 
@@ -3498,6 +3496,7 @@ void MainWindow::loadFile(const QString &fileName)
     hexEdit->setShowOriginal(false);
     if (m_changesDock)
         m_changesDock->setShowOriginalChecked(false);
+    applyTranslationTableForViewMode();
 
     resetNavigationHistory();
     setCurrentFile(fileName);
@@ -4412,31 +4411,67 @@ void MainWindow::refreshChangesView()
     if (!m_document || !m_changesDock)
         return;
 
-    TranslationTable *origTable   = nullptr;
-    TranslationTable *activeTable = nullptr;
-
-    if (m_tablesDock) {
-        const auto &tabs = m_tablesDock->allTables();
-        for (const auto &tt : tabs) {
-            if (tt.isOriginal && !origTable)
-                origTable = const_cast<TranslationTable *>(&tt.table);
-        }
-        const int curIdx = m_tablesDock->currentIndex();
-        if (curIdx >= 0 && curIdx < tabs.size() && !tabs[curIdx].isOriginal)
-            activeTable = const_cast<TranslationTable *>(&tabs[curIdx].table);
-        else if (curIdx >= 0 && curIdx < tabs.size()) {
-            // Active table is the original one — find first non-original to use
-            for (const auto &tt : tabs) {
-                if (!tt.isOriginal) {
-                    activeTable = const_cast<TranslationTable *>(&tt.table);
-                    break;
-                }
-            }
-        }
-    }
+    TranslationTable *origTable = tableForViewMode(true);
+    TranslationTable *activeTable = tableForViewMode(false);
 
     m_changesDock->refresh(m_document->originalBytes, hexEdit->data(), origTable, activeTable,
                            useTableAct && useTableAct->isChecked(), m_currentEncoding);
+}
+
+TranslationTable *MainWindow::tableForViewMode(bool showOriginal) const
+{
+    if (!m_tablesDock)
+        return nullptr;
+
+    const auto &tabs = m_tablesDock->allTables();
+    if (tabs.isEmpty())
+        return nullptr;
+
+    if (showOriginal) {
+        for (const auto &tt : tabs) {
+            if (tt.isOriginal)
+                return const_cast<TranslationTable *>(&tt.table);
+        }
+        return nullptr;
+    }
+
+    const int curIdx = m_tablesDock->currentIndex();
+    if (curIdx >= 0 && curIdx < tabs.size() && !tabs[curIdx].isOriginal)
+        return const_cast<TranslationTable *>(&tabs[curIdx].table);
+
+    for (const auto &tt : tabs) {
+        if (!tt.isOriginal)
+            return const_cast<TranslationTable *>(&tt.table);
+    }
+
+    return nullptr;
+}
+
+void MainWindow::applyTranslationTableForViewMode()
+{
+    if (!hexEdit)
+        return;
+
+    if (!(useTableAct && useTableAct->isChecked())) {
+        hexEdit->removeTranslationTable();
+        return;
+    }
+
+    TranslationTable *table = tableForViewMode(hexEdit->showOriginal());
+    if (table)
+        hexEdit->setTranslationTable(table);
+    else
+        hexEdit->removeTranslationTable();
+}
+
+void MainWindow::enforceBottomDockEqualWidth()
+{
+    if (!m_pointersDock || !m_changesDock)
+        return;
+    if (!m_pointersDock->isVisible() || !m_changesDock->isVisible())
+        return;
+
+    resizeDocks({m_pointersDock, m_changesDock}, {1, 1}, Qt::Horizontal);
 }
 
 void MainWindow::createIpsPatch()
@@ -4654,6 +4689,7 @@ void MainWindow::loadIpsPatch()
     statusBar()->showMessage(tr("IPS patch applied"), 2000);
 
     m_changesDock->show();
+    enforceBottomDockEqualWidth();
     refreshChangesView();
     if (showChangesAct->isChecked())
         updateChangedBytesHighlight();
@@ -4735,6 +4771,7 @@ void MainWindow::loadOriginal()
     m_document->originalBytes = newOriginalBytes;
     updateActionStates();
     m_changesDock->show();
+    enforceBottomDockEqualWidth();
     refreshChangesView();
     if (showChangesAct->isChecked())
         updateChangedBytesHighlight();

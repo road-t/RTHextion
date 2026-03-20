@@ -16,7 +16,7 @@ ChangesDockWidget::ChangesDockWidget(QWidget *parent)
 {
     setWindowTitle(tr("Changes"));
     setObjectName(QStringLiteral("ChangesDockWidget"));
-    setFeatures(QDockWidget::DockWidgetFloatable | QDockWidget::DockWidgetMovable);
+    setFeatures(QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetFloatable | QDockWidget::DockWidgetMovable);
 
     // Compact title bar (same pattern as PointersDockWidget)
     auto *titleBar = new QWidget(this);

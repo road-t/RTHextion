@@ -162,6 +162,9 @@ private:
     void addToRecentProjects(const QString &fileName);
     void updateChangedBytesHighlight();
     void refreshChangesView();
+    TranslationTable *tableForViewMode(bool showOriginal) const;
+    void applyTranslationTableForViewMode();
+    void enforceBottomDockEqualWidth();
     void updateStatusBarVisibility();
     void updateValuePanels();
     void updateEndiannesLabel();

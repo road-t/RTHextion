@@ -68,7 +68,7 @@ TablesDockWidget::TablesDockWidget(QWidget *parent)
     : QDockWidget(tr("Tables"), parent)
 {
     setObjectName(QStringLiteral("TablesDockWidget"));
-    setFeatures(QDockWidget::DockWidgetFloatable | QDockWidget::DockWidgetMovable);
+    setFeatures(QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetFloatable | QDockWidget::DockWidgetMovable);
 
     // Custom compact title bar
     auto *titleBar = new QWidget(this);
