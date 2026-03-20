@@ -35,6 +35,7 @@ namespace
     const int kAsciiColumnGapWidePx = 3;   // spacing for wide/multi-byte glyphs
     const int kPointerByteSize = 4;
     const int kScrollMapWidth = 12;   // width of the side-bar scroll map strip in pixels
+    const int kAddressCollapsedStubPx = 10; // visible width of address area when collapsed
 
     // Returns true for encodings that are always one-byte-per-character
     bool isSingleByteEncoding(const QString &enc)
@@ -1599,6 +1600,51 @@ bool HexEditor::showChanges()
     return _showChanges;
 }
 
+void HexEditor::setAddressCollapsed(bool collapsed)
+{
+    if (_addressCollapsed == collapsed)
+        return;
+    _addressCollapsed = collapsed;
+    if (_dynamicBytesPerLine)
+        resizeEvent(nullptr);
+    else
+        adjust();
+    viewport()->update();
+    emit addressCollapsedChanged(collapsed);
+}
+
+bool HexEditor::addressCollapsed() const
+{
+    return _addressCollapsed;
+}
+
+void HexEditor::setOriginalData(const QByteArray &data)
+{
+    _originalData = data;
+    if (_showOriginal)
+        readBuffers();
+    viewport()->update();
+}
+
+void HexEditor::setShowOriginal(bool show)
+{
+    if (_showOriginal == show)
+        return;
+    _showOriginal = show;
+    readBuffers();
+    viewport()->update();
+}
+
+bool HexEditor::showOriginal() const
+{
+    return _showOriginal;
+}
+
+bool HexEditor::hasOriginalData() const
+{
+    return !_originalData.isEmpty();
+}
+
 void HexEditor::setChangesColor(const QColor &color)
 {
     _changesColor = color;
@@ -2143,10 +2189,13 @@ void HexEditor::keyPressEvent(QKeyEvent *event)
     // Cursor movements
     if (event->matches(QKeySequence::MoveToNextChar))
     {
-        qint64 pos = _cursorPosition + 1;
-
-        if (_editAreaIsAscii)
-            pos += 1;
+        qint64 pos;
+        if (_showOriginal && !_editAreaIsAscii)
+            pos = (_cursorPosition / 2 + 1) * 2;  // byte-only: skip to next byte boundary
+        else if (_editAreaIsAscii)
+            pos = _cursorPosition + 2;
+        else
+            pos = _cursorPosition + 1;
 
         setCursorPosition(pos);
         resetSelection(pos);
@@ -2154,10 +2203,13 @@ void HexEditor::keyPressEvent(QKeyEvent *event)
 
     if (event->matches(QKeySequence::MoveToPreviousChar))
     {
-        qint64 pos = _cursorPosition - 1;
-
-        if (_editAreaIsAscii)
-            pos -= 1;
+        qint64 pos;
+        if (_showOriginal && !_editAreaIsAscii)
+            pos = (_cursorPosition / 2 - 1) * 2;  // byte-only: skip to previous byte boundary
+        else if (_editAreaIsAscii)
+            pos = _cursorPosition - 2;
+        else
+            pos = _cursorPosition - 1;
 
         setCursorPosition(pos);
         resetSelection(pos);
@@ -2299,7 +2351,7 @@ void HexEditor::keyPressEvent(QKeyEvent *event)
     }
 
     // Edit Commands
-    if (!_readOnly)
+    if (!_readOnly && !_showOriginal)
     {
         /* Cut */
         if (event->matches(QKeySequence::Cut))
@@ -2630,30 +2682,37 @@ void HexEditor::mouseMoveEvent(QMouseEvent *event)
     }
 
     // Determine cursor based on autosize mode and hover position
-    if (_dynamicBytesPerLine)
     {
-        // Autosize is ON: always use arrow cursor
-        viewport()->setCursor(Qt::ArrowCursor);
-    }
-    else if (_asciiArea)
-    {
-        // Autosize is OFF and ASCII area visible: check if hovering over separator
-        int pxOfsX = horizontalScrollBar()->value();
-        int separatorScreenX = _pxPosAsciiX - (_pxGapHexAscii / 2) - pxOfsX;
-        
-        if (abs(event->x() - separatorScreenX) < 8)
+        const int pxOfsX_mv = horizontalScrollBar()->value();
+        bool cursorSet = false;
+
+        // Address/hex boundary: click collapses/expands address area
+        if (_addressArea)
         {
-            viewport()->setCursor(Qt::SizeHorCursor);
+            const int addrSepX = _pxPosHexX - _pxGapAdrHex - pxOfsX_mv;
+            if (abs(event->x() - addrSepX) < 8)
+            {
+                viewport()->setCursor(Qt::SizeHorCursor);
+                cursorSet = true;
+            }
         }
-        else
+
+        if (!cursorSet)
         {
-            viewport()->setCursor(Qt::ArrowCursor);
+            if (_dynamicBytesPerLine)
+            {
+                viewport()->setCursor(Qt::ArrowCursor);
+            }
+            else if (_asciiArea)
+            {
+                const int separatorScreenX = _pxPosAsciiX - (_pxGapHexAscii / 2) - pxOfsX_mv;
+                viewport()->setCursor((abs(event->x() - separatorScreenX) < 8) ? Qt::SizeHorCursor : Qt::ArrowCursor);
+            }
+            else
+            {
+                viewport()->setCursor(Qt::ArrowCursor);
+            }
         }
-    }
-    else
-    {
-        // ASCII area hidden: always use arrow cursor
-        viewport()->setCursor(Qt::ArrowCursor);
     }
 
     // Only update selection if mouse button is pressed (not on pure hover)
@@ -2706,6 +2765,18 @@ void HexEditor::mousePressEvent(QMouseEvent *event)
 {
     _blink = false;
     viewport()->update();
+
+    // Address/hex boundary: click collapses or expands the address area
+    if (_addressArea && event->button() == Qt::LeftButton)
+    {
+        const int pxOfsX = horizontalScrollBar()->value();
+        const int addrSepX = _pxPosHexX - _pxGapAdrHex - pxOfsX;
+        if (abs(event->x() - addrSepX) < 8)
+        {
+            setAddressCollapsed(!_addressCollapsed);
+            return;
+        }
+    }
 
     // Check if separator drag is starting (only if not in dynamic/autosize mode)
     if (!_dynamicBytesPerLine && _asciiArea)
@@ -2860,25 +2931,42 @@ void HexEditor::paintEvent(QPaintEvent *event)
         // paint address area
         if (_addressArea)
         {
-            QString address;
-
-            auto rowsCount = (_dataShown.size() / _bytesPerLine);
-
             painter.fillRect(QRect(-pxOfsX, event->rect().top(), _pxPosHexX - _pxGapAdrHex, height()), _addressAreaColor);
 
-            const QFont originalFont = painter.font();
-            QFont boldFont = originalFont;
-            boldFont.setBold(true);
-            painter.setFont(boldFont);
-
-            for (int row = 0, pxPosY = _pxCharHeight; row <= rowsCount; row++, pxPosY += rowStridePx)
+            if (_addressCollapsed)
             {
-                address = QString("%1").arg(_bPosFirst + row * _bytesPerLine + _addressOffset, _addrDigits, 16, QChar('0'));
-                painter.setPen(QPen(_addressFontColor));
-                painter.drawText(_pxPosAdrX - pxOfsX, pxPosY, hexCaps() ? address.toUpper() : address);
+                // Draw a small right-pointing triangle as expand indicator
+                const int midY = viewport()->height() / 2;
+                const int aw = kAddressCollapsedStubPx - 4;
+                const int ah = kAddressCollapsedStubPx - 4;
+                QPolygon tri;
+                tri << QPoint(-pxOfsX + 1,      midY - ah / 2)
+                    << QPoint(-pxOfsX + 1,      midY + ah / 2)
+                    << QPoint(-pxOfsX + aw + 1, midY);
+                painter.setBrush(QBrush(_addressFontColor));
+                painter.setPen(Qt::NoPen);
+                painter.drawPolygon(tri);
+                painter.setPen(viewport()->palette().color(QPalette::WindowText));
             }
+            else
+            {
+                QString address;
+                auto rowsCount = (_dataShown.size() / _bytesPerLine);
 
-            painter.setFont(originalFont);
+                const QFont originalFont = painter.font();
+                QFont boldFont = originalFont;
+                boldFont.setBold(true);
+                painter.setFont(boldFont);
+
+                for (int row = 0, pxPosY = _pxCharHeight; row <= rowsCount; row++, pxPosY += rowStridePx)
+                {
+                    address = QString("%1").arg(_bPosFirst + row * _bytesPerLine + _addressOffset, _addrDigits, 16, QChar('0'));
+                    painter.setPen(QPen(_addressFontColor));
+                    painter.drawText(_pxPosAdrX - pxOfsX, pxPosY, hexCaps() ? address.toUpper() : address);
+                }
+
+                painter.setFont(originalFont);
+            }
         }
 
         // paint hex and ascii area
@@ -3078,13 +3166,13 @@ void HexEditor::paintEvent(QPaintEvent *event)
                 const bool isCursorGroupByte = (byteInBuf >= cursorLeadBufIdx)
                                             && (byteInBuf < cursorLeadBufIdx + cursorMultiByteSpan);
 
-                if (cursorMultiByteSpan == 1 && isCursorByte && _cursorCharColor.alpha() > 0)
+                if (cursorMultiByteSpan == 1 && isCursorByte && _cursorCharColor.alpha() > 0 && !_showOriginal)
                     painter.fillRect(r, _cursorCharColor);
 
                 hex = _hexDataShown.mid((bPosLine + colIdx) * 2, 2);
 
                 // In hex area: draw the active nibble of the cursor byte in bold
-                if (isCursorByte && !_editAreaIsAscii)
+                if (isCursorByte && !_editAreaIsAscii && !_showOriginal)
                 {
                     const int activeNibble = _cursorPosition % 2; // 0 = high, 1 = low
                     const QString ch0 = (hexCaps() ? hex.toUpper() : hex).mid(0, 1);
@@ -3229,7 +3317,7 @@ void HexEditor::paintEvent(QPaintEvent *event)
                             const bool drawRight = (segmentEnd == (qint64)entryEnd);
 
                             // Wide fill covering all segment bytes on this row
-                            if (_cursorCharColor.alpha() > 0)
+                            if (_cursorCharColor.alpha() > 0 && !_showOriginal)
                             {
                                 painter.fillRect(QRect(fx, fy, fW, fh), _cursorCharColor);
                                 // Redraw the hex text of all bytes in the segment (fill covered them)
@@ -3435,6 +3523,14 @@ void HexEditor::paintEvent(QPaintEvent *event)
         emit currentSizeChanged(_lastEventSize);
     }
 
+    // Visual indicator: draw an amber border around the viewport when showing original content
+    if (_showOriginal)
+    {
+        const QRect vr = QRect(0, 0, viewport()->width(), viewport()->height());
+        painter.setPen(QPen(QColor(220, 140, 0), 3, Qt::SolidLine));
+        painter.drawRect(vr.adjusted(1, 1, -2, -2));
+    }
+
 }
 
 void HexEditor::resizeEvent(QResizeEvent *)
@@ -3448,7 +3544,9 @@ void HexEditor::resizeEvent(QResizeEvent *)
         {
             const int addrDigits = _addressArea ? addressWidth() : 0;
             const int pxPosHexX = _addressArea
-                                      ? (_pxGapAdr + addrDigits * _pxCharWidth + _pxGapAdrHex + kAddressRightPaddingPx)
+                                      ? (_addressCollapsed
+                                             ? (kAddressCollapsedStubPx + _pxGapAdrHex)
+                                             : (_pxGapAdr + addrDigits * _pxCharWidth + _pxGapAdrHex + kAddressRightPaddingPx))
                                       : _pxGapAdrHex;
             const int candidateHexCharsInLine = candidateBpl * 3 - 1;
             const int pxHexEndX = pxPosHexX + candidateHexCharsInLine * _pxCharWidth + (candidateBpl - 1) * kHexColumnExtraGapPx;
@@ -3569,8 +3667,16 @@ void HexEditor::adjust()
     // recalc Graphics
     if (_addressArea)
     {
-        _addrDigits = addressWidth();
-        _pxPosHexX = _pxGapAdr + _addrDigits * _pxCharWidth + _pxGapAdrHex + kAddressRightPaddingPx;
+        if (_addressCollapsed)
+        {
+            _addrDigits = addressWidth(); // keep digits accurate for restore
+            _pxPosHexX = kAddressCollapsedStubPx + _pxGapAdrHex;
+        }
+        else
+        {
+            _addrDigits = addressWidth();
+            _pxPosHexX = _pxGapAdr + _addrDigits * _pxCharWidth + _pxGapAdrHex + kAddressRightPaddingPx;
+        }
     }
     else
         _pxPosHexX = _pxGapAdrHex;
@@ -3766,8 +3872,24 @@ void HexEditor::ensureAsciiAreaWidthCache()
 
 void HexEditor::readBuffers()
 {
-    _dataShown = _chunks->data(_bPosFirst, _bPosLast - _bPosFirst + _bytesPerLine + 1, &_markedShown);
-    _hexDataShown = QByteArray(_dataShown.toHex());
+    if (_showOriginal && !_originalData.isEmpty()) {
+        const qint64 count = _bPosLast - _bPosFirst + _bytesPerLine + 1;
+        const qint64 origSize = static_cast<qint64>(_originalData.size());
+        const qint64 safeFrom = qMin(_bPosFirst, origSize);
+        const qint64 safeCount = qMax<qint64>(0, qMin(count, origSize - safeFrom));
+        _dataShown = _originalData.mid(static_cast<int>(safeFrom), static_cast<int>(safeCount));
+        _hexDataShown = QByteArray(_dataShown.toHex());
+        // Mark positions that differ between original and the current (edited) data
+        const QByteArray currentSlice = _chunks->data(_bPosFirst, count);
+        _markedShown = QByteArray(_dataShown.size(), char(0));
+        for (int i = 0; i < _dataShown.size() && i < currentSlice.size(); ++i) {
+            if (_dataShown.at(i) != currentSlice.at(i))
+                _markedShown[i] = char(1);
+        }
+    } else {
+        _dataShown = _chunks->data(_bPosFirst, _bPosLast - _bPosFirst + _bytesPerLine + 1, &_markedShown);
+        _hexDataShown = QByteArray(_dataShown.toHex());
+    }
     _encodingCacheValid = false;
     _tbDisplayCacheValid = false;
 }

@@ -3,6 +3,7 @@
 
 #include <QPainter>
 #include <QPainterPath>
+#include <QFrame>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -50,7 +51,7 @@ ChangesDockWidget::ChangesDockWidget(QWidget *parent)
     // Toolbar row: just the eye button
     auto *toolRow = new QHBoxLayout();
     toolRow->setContentsMargins(0, 0, 0, 0);
-    toolRow->setSpacing(2);
+    toolRow->setSpacing(4);
 
     // Eye (show-changes) toggle button
     m_showChangesBtn = new QToolButton(this);
@@ -108,14 +109,54 @@ ChangesDockWidget::ChangesDockWidget(QWidget *parent)
     m_displayModeGroup->addButton(m_textBtn, 0);  // id 0 = text
     m_displayModeGroup->addButton(m_hexBtn,  1);  // id 1 = hex
 
+    auto makeSep = [this]() -> QWidget * {
+        auto *sep = new QFrame(this);
+        sep->setFrameShape(QFrame::VLine);
+        sep->setFrameShadow(QFrame::Sunken);
+        return sep;
+    };
+
+    toolRow->addSpacing(4);
+    toolRow->addWidget(makeSep());
+    toolRow->addSpacing(4);
     toolRow->addWidget(m_textBtn);
     toolRow->addWidget(m_hexBtn);
+
+    // Current / Original two-button exclusive switcher (mirrors TEXT/HEX pair)
+    m_currentBtn = new QToolButton(this);
+    m_currentBtn->setCheckable(true);
+    m_currentBtn->setChecked(true);   // default: current (edited) view
+    m_currentBtn->setAutoRaise(true);
+    m_currentBtn->setText(tr("Current"));
+    m_currentBtn->setToolTip(tr("Show current (edited) file content"));
+
+    m_originalBtn = new QToolButton(this);
+    m_originalBtn->setCheckable(true);
+    m_originalBtn->setChecked(false);
+    m_originalBtn->setAutoRaise(true);
+    m_originalBtn->setText(tr("Original"));
+    m_originalBtn->setToolTip(tr("Show original file content (read-only)"));
+
+    m_viewModeGroup = new QButtonGroup(this);
+    m_viewModeGroup->setExclusive(true);
+    m_viewModeGroup->addButton(m_currentBtn,  0);  // id 0 = current
+    m_viewModeGroup->addButton(m_originalBtn, 1);  // id 1 = original
+
+    toolRow->addSpacing(4);
+    toolRow->addWidget(makeSep());
+    toolRow->addSpacing(4);
+    toolRow->addWidget(m_currentBtn);
+    toolRow->addWidget(m_originalBtn);
 
     toolRow->addStretch();
     layout->addLayout(toolRow);
 
     connect(m_showChangesBtn, &QToolButton::clicked, this, [this](bool checked) {
         emit showChangesToggled(checked);
+    });
+
+    connect(m_viewModeGroup, &QButtonGroup::idClicked, this, [this](int id) {
+        emit showOriginalToggled(id == 1);
     });
 
     connect(m_displayModeGroup, &QButtonGroup::idClicked, this, [this](int id) {
@@ -280,6 +321,24 @@ void ChangesDockWidget::setShowChangesEnabled(bool enabled)
     m_showChangesBtn->setEnabled(enabled);
 }
 
+void ChangesDockWidget::setShowOriginalChecked(bool checked)
+{
+    if (m_currentBtn && m_originalBtn) {
+        const QSignalBlocker b1(m_currentBtn);
+        const QSignalBlocker b2(m_originalBtn);
+        m_currentBtn->setChecked(!checked);
+        m_originalBtn->setChecked(checked);
+    }
+}
+
+void ChangesDockWidget::setShowOriginalEnabled(bool enabled)
+{
+    if (m_currentBtn)
+        m_currentBtn->setEnabled(enabled);
+    if (m_originalBtn)
+        m_originalBtn->setEnabled(enabled);
+}
+
 void ChangesDockWidget::setHexMode(bool hexMode)
 {
     m_hexMode = hexMode;
@@ -314,6 +373,10 @@ void ChangesDockWidget::retranslateUi()
         m_titleLabel->setText(tr("Changes"));
     if (m_showChangesBtn)
         m_showChangesBtn->setToolTip(tr("Show changes"));
+    if (m_currentBtn)
+        m_currentBtn->setToolTip(tr("Show current (edited) file content"));
+    if (m_originalBtn)
+        m_originalBtn->setToolTip(tr("Show original file content (read-only)"));
     if (m_textBtn)
         m_textBtn->setToolTip(tr("Show values as text"));
     if (m_hexBtn)

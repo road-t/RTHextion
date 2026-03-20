@@ -879,6 +879,81 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         return false;
     };
 
+    // 0) Original-view mode: minimal read-only context menu.
+    if (hexEdit->showOriginal())
+    {
+        QMenu menu(this);
+        const QString addrText = QStringLiteral("0x") + QString("%1").arg(bytePos, 8, 16, QChar('0')).toUpper();
+
+        QAction *copyAddrAct = menu.addAction(tr("Copy address"));
+        QAction *saveAsDumpAct = nullptr;
+        if (clickedAscii)
+            saveAsDumpAct = menu.addAction(tr("Save as dump"));
+
+        // Revert to original is still useful even in original view —
+        // it writes the original byte back into the current (edited) data.
+        QAction *revertOrigAct = nullptr;
+        if (bytePos >= 0 && m_document && !m_document->originalBytes.isEmpty())
+        {
+            for (const auto &entry : m_document->originalBytes)
+            {
+                const qint64 off = entry.first;
+                const QByteArray &orig = entry.second;
+                if (bytePos >= off && bytePos < off + orig.size())
+                {
+                    const uint8_t origByte = static_cast<uint8_t>(orig.at(bytePos - off));
+                    menu.addSeparator();
+                    revertOrigAct = menu.addAction(
+                        tr("Revert to original: %1")
+                            .arg(QString::number(origByte, 16).toUpper().rightJustified(2, QLatin1Char('0'))));
+                    break;
+                }
+            }
+        }
+
+        QAction *chosen = menu.exec(globalPos);
+        if (chosen == copyAddrAct)
+        {
+            QApplication::clipboard()->setText(addrText);
+        }
+        else if (saveAsDumpAct && chosen == saveAsDumpAct)
+        {
+            dumpScript();
+        }
+        else if (revertOrigAct && chosen == revertOrigAct)
+        {
+            for (int ei = 0; ei < m_document->originalBytes.size(); ++ei)
+            {
+                auto &entry = m_document->originalBytes[ei];
+                const qint64 off = entry.first;
+                QByteArray &orig = entry.second;
+                if (bytePos >= off && bytePos < off + orig.size())
+                {
+                    const char origByte = orig.at(static_cast<int>(bytePos - off));
+                    hexEdit->replace(bytePos, 1, QByteArray(1, origByte));
+                    const int localIdx = static_cast<int>(bytePos - off);
+                    if (orig.size() == 1) {
+                        m_document->originalBytes.removeAt(ei);
+                    } else if (localIdx == 0) {
+                        entry.first += 1;
+                        orig.remove(0, 1);
+                    } else if (localIdx == orig.size() - 1) {
+                        orig.chop(1);
+                    } else {
+                        const QByteArray tail = orig.mid(localIdx + 1);
+                        orig.truncate(localIdx);
+                        m_document->originalBytes.insert(ei + 1, {bytePos + 1, tail});
+                    }
+                    break;
+                }
+            }
+            if (showChangesAct->isChecked())
+                updateChangedBytesHighlight();
+            updateActionStates();
+        }
+        return;
+    }
+
     // 1) Right click on a pointer entry (full pointer length is clickable).
     if (pointerStart >= 0 && hexEdit->showPointers())
     {
@@ -1520,6 +1595,7 @@ void MainWindow::onTranslationTableChanged()
 
 void MainWindow::onDockTableChanged(TranslationTable *table)
 {
+    if (m_closing) return;
     tb = table;
     if (useTableAct->isChecked() && tb)
         hexEdit->setTranslationTable(tb);
@@ -1543,6 +1619,7 @@ void MainWindow::onDockTableChanged(TranslationTable *table)
 
 void MainWindow::onDockTableContentChanged()
 {
+    if (m_closing) return;
     tb = m_tablesDock->currentTable();
     if (useTableAct->isChecked() && tb)
         hexEdit->setTranslationTable(tb);
@@ -1756,6 +1833,22 @@ void MainWindow::init()
         showChangesAct->setChecked(checked);
         toggleShowChanges();
     });
+    connect(m_changesDock, &ChangesDockWidget::showOriginalToggled, this, [this](bool show) {
+        if (!hexEdit || !m_document)
+            return;
+        if (show) {
+            // Reconstruct original file from current data + sparse originalBytes records
+            QByteArray original = hexEdit->data();
+            for (const auto &entry : m_document->originalBytes) {
+                const int off = static_cast<int>(entry.first);
+                const QByteArray &origBytes = entry.second;
+                if (off >= 0 && off + origBytes.size() <= original.size())
+                    original.replace(off, origBytes.size(), origBytes);
+            }
+            hexEdit->setOriginalData(original);
+        }
+        hexEdit->setShowOriginal(show);
+    });
     connect(showChangesAct, &QAction::toggled,
             m_changesDock, &ChangesDockWidget::setShowChangesChecked);
     connect(showChangesAct, &QAction::changed, this, [this]() {
@@ -1905,6 +1998,11 @@ void MainWindow::restoreSession(EditorSession *session)
     m_projectModified = session->projectModified;
 
     m_pointersDock->refreshView();
+
+    // Sync changes-dock supplementary buttons with restored session
+    if (m_changesDock) {
+        m_changesDock->setShowOriginalChecked(hexEdit && hexEdit->showOriginal());
+    }
 
     // Sync UI with restored session
     updateWindowTitle();
@@ -3389,6 +3487,9 @@ void MainWindow::loadFile(const QString &fileName)
     }
 
     m_changeTrackingSnapshot = hexEdit->data();
+    hexEdit->setShowOriginal(false);
+    if (m_changesDock)
+        m_changesDock->setShowOriginalChecked(false);
 
     resetNavigationHistory();
     setCurrentFile(fileName);
@@ -3934,6 +4035,10 @@ void MainWindow::updateActionStates()
     // Create IPS patch only when project has tracked original bytes
     if (createIpsPatchAct)
         createIpsPatchAct->setEnabled(m_document && !m_document->originalBytes.isEmpty());
+
+    // Show-original button enabled whenever the project has recorded original bytes
+    if (m_changesDock)
+        m_changesDock->setShowOriginalEnabled(m_document && !m_document->originalBytes.isEmpty());
 
     // Load original is available whenever a file is open
     if (loadOriginalAct)

@@ -369,6 +369,7 @@ signals:
 
     /*! The signal is emitted when selection is chenged. */
     void selectionChanged(qint64 start, qint64 end);
+    void addressCollapsedChanged(bool collapsed);
 
     /*! The signal is emitted when undo availability changes. */
     void undoAvailable(bool available);
@@ -388,6 +389,14 @@ public:
     // Properties
     bool addressArea();
     void setAddressArea(bool addressArea);
+
+    bool addressCollapsed() const;
+    void setAddressCollapsed(bool collapsed);
+
+    void setOriginalData(const QByteArray &data);
+    void setShowOriginal(bool show);
+    bool showOriginal() const;
+    bool hasOriginalData() const;
 
     QColor addressAreaColor();
     void setAddressAreaColor(const QColor &color);
@@ -661,6 +670,9 @@ private:
     bool _dynamicBytesPerLine;
     bool _separatorDragging = false;            // true while dragging hex/ascii separator
     int _separatorDragStartX = 0;               // x position when separator drag started
+    bool _addressCollapsed = false;             // true when address area is collapsed to stub
+    QByteArray _originalData;                   // original file data for "show original" display
+    bool _showOriginal = false;                 // true when displaying original file contents
 
     // other variables
     bool _editAreaIsAscii;                      // flag about the ascii mode edited

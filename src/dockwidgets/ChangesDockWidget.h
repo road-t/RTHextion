@@ -41,6 +41,9 @@ public:
     void setHexMode(bool hexMode);
     bool hexMode() const { return m_hexMode; }
 
+    void setShowOriginalChecked(bool checked);
+    void setShowOriginalEnabled(bool enabled);
+
     QByteArray saveColumnsState() const;
     void restoreColumnsState(const QByteArray &state);
 
@@ -48,6 +51,7 @@ public:
 
 signals:
     void showChangesToggled(bool checked);
+    void showOriginalToggled(bool show);
     void jumpToOffset(qint64 offset);
 
 private slots:
@@ -59,6 +63,9 @@ private:
     QLabel       *m_titleLabel    = nullptr;
     QToolButton  *m_collapseBtn   = nullptr;
     QToolButton  *m_showChangesBtn = nullptr;
+    QToolButton  *m_currentBtn    = nullptr;
+    QToolButton  *m_originalBtn   = nullptr;
+    QButtonGroup *m_viewModeGroup = nullptr;
     QToolButton  *m_textBtn       = nullptr;
     QToolButton  *m_hexBtn        = nullptr;
     QButtonGroup *m_displayModeGroup = nullptr;
