@@ -1,0 +1,287 @@
+/****************************************************************************
+** Meta object code from reading C++ file 'tst_hexedit.cpp'
+**
+** Created by: The Qt Meta Object Compiler version 68 (Qt 6.2.3)
+**
+** WARNING! All changes made in this file will be lost!
+*****************************************************************************/
+
+#include <memory>
+#include <QtCore/qbytearray.h>
+#include <QtCore/qmetatype.h>
+#if !defined(Q_MOC_OUTPUT_REVISION)
+#error "The header file 'tst_hexedit.cpp' doesn't include <QObject>."
+#elif Q_MOC_OUTPUT_REVISION != 68
+#error "This file was generated using the moc from 6.2.3. It"
+#error "cannot be used with the include files from this version of Qt."
+#error "(The moc has changed too much.)"
+#endif
+
+QT_BEGIN_MOC_NAMESPACE
+QT_WARNING_PUSH
+QT_WARNING_DISABLE_DEPRECATED
+struct qt_meta_stringdata_TstHexEdit_t {
+    const uint offsetsAndSize[80];
+    char stringdata0[679];
+};
+#define QT_MOC_LITERAL(ofs, len) \
+    uint(offsetof(qt_meta_stringdata_TstHexEdit_t, stringdata0) + ofs), len 
+static const qt_meta_stringdata_TstHexEdit_t qt_meta_stringdata_TstHexEdit = {
+    {
+QT_MOC_LITERAL(0, 10), // "TstHexEdit"
+QT_MOC_LITERAL(11, 16), // "setDataByteArray"
+QT_MOC_LITERAL(28, 0), // ""
+QT_MOC_LITERAL(29, 15), // "setDataIODevice"
+QT_MOC_LITERAL(45, 10), // "insertChar"
+QT_MOC_LITERAL(56, 15), // "insertByteArray"
+QT_MOC_LITERAL(72, 11), // "replaceChar"
+QT_MOC_LITERAL(84, 16), // "replaceByteArray"
+QT_MOC_LITERAL(101, 11), // "removeBytes"
+QT_MOC_LITERAL(113, 16), // "indexOfFindsData"
+QT_MOC_LITERAL(130, 15), // "indexOfNotFound"
+QT_MOC_LITERAL(146, 20), // "lastIndexOfFindsData"
+QT_MOC_LITERAL(167, 11), // "undoReplace"
+QT_MOC_LITERAL(179, 13), // "redoAfterUndo"
+QT_MOC_LITERAL(193, 19), // "addressAreaProperty"
+QT_MOC_LITERAL(213, 17), // "asciiAreaProperty"
+QT_MOC_LITERAL(231, 20), // "bytesPerLineProperty"
+QT_MOC_LITERAL(252, 16), // "readOnlyProperty"
+QT_MOC_LITERAL(269, 21), // "overwriteModeProperty"
+QT_MOC_LITERAL(291, 15), // "hexCapsProperty"
+QT_MOC_LITERAL(307, 20), // "highlightingProperty"
+QT_MOC_LITERAL(328, 16), // "addressAreaColor"
+QT_MOC_LITERAL(345, 14), // "selectionColor"
+QT_MOC_LITERAL(360, 17), // "highlightingColor"
+QT_MOC_LITERAL(378, 19), // "isModifiedAfterEdit"
+QT_MOC_LITERAL(398, 23), // "cursorPositionRoundTrip"
+QT_MOC_LITERAL(422, 13), // "addressOffset"
+QT_MOC_LITERAL(436, 21), // "dataAtReturnsSubArray"
+QT_MOC_LITERAL(458, 13), // "writeToDevice"
+QT_MOC_LITERAL(472, 14), // "selectionReset"
+QT_MOC_LITERAL(487, 25), // "translationTableSetAndGet"
+QT_MOC_LITERAL(513, 24), // "currentEncodingRoundTrip"
+QT_MOC_LITERAL(538, 16), // "addAndGetPointer"
+QT_MOC_LITERAL(555, 13), // "clearPointers"
+QT_MOC_LITERAL(569, 17), // "dataChangedSignal"
+QT_MOC_LITERAL(587, 26), // "overwriteModeChangedSignal"
+QT_MOC_LITERAL(614, 11), // "setFontMono"
+QT_MOC_LITERAL(626, 11), // "showHexGrid"
+QT_MOC_LITERAL(638, 19), // "showChangesProperty"
+QT_MOC_LITERAL(658, 20) // "showPointersProperty"
+
+    },
+    "TstHexEdit\0setDataByteArray\0\0"
+    "setDataIODevice\0insertChar\0insertByteArray\0"
+    "replaceChar\0replaceByteArray\0removeBytes\0"
+    "indexOfFindsData\0indexOfNotFound\0"
+    "lastIndexOfFindsData\0undoReplace\0"
+    "redoAfterUndo\0addressAreaProperty\0"
+    "asciiAreaProperty\0bytesPerLineProperty\0"
+    "readOnlyProperty\0overwriteModeProperty\0"
+    "hexCapsProperty\0highlightingProperty\0"
+    "addressAreaColor\0selectionColor\0"
+    "highlightingColor\0isModifiedAfterEdit\0"
+    "cursorPositionRoundTrip\0addressOffset\0"
+    "dataAtReturnsSubArray\0writeToDevice\0"
+    "selectionReset\0translationTableSetAndGet\0"
+    "currentEncodingRoundTrip\0addAndGetPointer\0"
+    "clearPointers\0dataChangedSignal\0"
+    "overwriteModeChangedSignal\0setFontMono\0"
+    "showHexGrid\0showChangesProperty\0"
+    "showPointersProperty"
+};
+#undef QT_MOC_LITERAL
+
+static const uint qt_meta_data_TstHexEdit[] = {
+
+ // content:
+      10,       // revision
+       0,       // classname
+       0,    0, // classinfo
+      38,   14, // methods
+       0,    0, // properties
+       0,    0, // enums/sets
+       0,    0, // constructors
+       0,       // flags
+       0,       // signalCount
+
+ // slots: name, argc, parameters, tag, flags, initial metatype offsets
+       1,    0,  242,    2, 0x08,    1 /* Private */,
+       3,    0,  243,    2, 0x08,    2 /* Private */,
+       4,    0,  244,    2, 0x08,    3 /* Private */,
+       5,    0,  245,    2, 0x08,    4 /* Private */,
+       6,    0,  246,    2, 0x08,    5 /* Private */,
+       7,    0,  247,    2, 0x08,    6 /* Private */,
+       8,    0,  248,    2, 0x08,    7 /* Private */,
+       9,    0,  249,    2, 0x08,    8 /* Private */,
+      10,    0,  250,    2, 0x08,    9 /* Private */,
+      11,    0,  251,    2, 0x08,   10 /* Private */,
+      12,    0,  252,    2, 0x08,   11 /* Private */,
+      13,    0,  253,    2, 0x08,   12 /* Private */,
+      14,    0,  254,    2, 0x08,   13 /* Private */,
+      15,    0,  255,    2, 0x08,   14 /* Private */,
+      16,    0,  256,    2, 0x08,   15 /* Private */,
+      17,    0,  257,    2, 0x08,   16 /* Private */,
+      18,    0,  258,    2, 0x08,   17 /* Private */,
+      19,    0,  259,    2, 0x08,   18 /* Private */,
+      20,    0,  260,    2, 0x08,   19 /* Private */,
+      21,    0,  261,    2, 0x08,   20 /* Private */,
+      22,    0,  262,    2, 0x08,   21 /* Private */,
+      23,    0,  263,    2, 0x08,   22 /* Private */,
+      24,    0,  264,    2, 0x08,   23 /* Private */,
+      25,    0,  265,    2, 0x08,   24 /* Private */,
+      26,    0,  266,    2, 0x08,   25 /* Private */,
+      27,    0,  267,    2, 0x08,   26 /* Private */,
+      28,    0,  268,    2, 0x08,   27 /* Private */,
+      29,    0,  269,    2, 0x08,   28 /* Private */,
+      30,    0,  270,    2, 0x08,   29 /* Private */,
+      31,    0,  271,    2, 0x08,   30 /* Private */,
+      32,    0,  272,    2, 0x08,   31 /* Private */,
+      33,    0,  273,    2, 0x08,   32 /* Private */,
+      34,    0,  274,    2, 0x08,   33 /* Private */,
+      35,    0,  275,    2, 0x08,   34 /* Private */,
+      36,    0,  276,    2, 0x08,   35 /* Private */,
+      37,    0,  277,    2, 0x08,   36 /* Private */,
+      38,    0,  278,    2, 0x08,   37 /* Private */,
+      39,    0,  279,    2, 0x08,   38 /* Private */,
+
+ // slots: parameters
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+    QMetaType::Void,
+
+       0        // eod
+};
+
+void TstHexEdit::qt_static_metacall(QObject *_o, QMetaObject::Call _c, int _id, void **_a)
+{
+    if (_c == QMetaObject::InvokeMetaMethod) {
+        auto *_t = static_cast<TstHexEdit *>(_o);
+        (void)_t;
+        switch (_id) {
+        case 0: _t->setDataByteArray(); break;
+        case 1: _t->setDataIODevice(); break;
+        case 2: _t->insertChar(); break;
+        case 3: _t->insertByteArray(); break;
+        case 4: _t->replaceChar(); break;
+        case 5: _t->replaceByteArray(); break;
+        case 6: _t->removeBytes(); break;
+        case 7: _t->indexOfFindsData(); break;
+        case 8: _t->indexOfNotFound(); break;
+        case 9: _t->lastIndexOfFindsData(); break;
+        case 10: _t->undoReplace(); break;
+        case 11: _t->redoAfterUndo(); break;
+        case 12: _t->addressAreaProperty(); break;
+        case 13: _t->asciiAreaProperty(); break;
+        case 14: _t->bytesPerLineProperty(); break;
+        case 15: _t->readOnlyProperty(); break;
+        case 16: _t->overwriteModeProperty(); break;
+        case 17: _t->hexCapsProperty(); break;
+        case 18: _t->highlightingProperty(); break;
+        case 19: _t->addressAreaColor(); break;
+        case 20: _t->selectionColor(); break;
+        case 21: _t->highlightingColor(); break;
+        case 22: _t->isModifiedAfterEdit(); break;
+        case 23: _t->cursorPositionRoundTrip(); break;
+        case 24: _t->addressOffset(); break;
+        case 25: _t->dataAtReturnsSubArray(); break;
+        case 26: _t->writeToDevice(); break;
+        case 27: _t->selectionReset(); break;
+        case 28: _t->translationTableSetAndGet(); break;
+        case 29: _t->currentEncodingRoundTrip(); break;
+        case 30: _t->addAndGetPointer(); break;
+        case 31: _t->clearPointers(); break;
+        case 32: _t->dataChangedSignal(); break;
+        case 33: _t->overwriteModeChangedSignal(); break;
+        case 34: _t->setFontMono(); break;
+        case 35: _t->showHexGrid(); break;
+        case 36: _t->showChangesProperty(); break;
+        case 37: _t->showPointersProperty(); break;
+        default: ;
+        }
+    }
+    (void)_a;
+}
+
+const QMetaObject TstHexEdit::staticMetaObject = { {
+    QMetaObject::SuperData::link<QObject::staticMetaObject>(),
+    qt_meta_stringdata_TstHexEdit.offsetsAndSize,
+    qt_meta_data_TstHexEdit,
+    qt_static_metacall,
+    nullptr,
+qt_incomplete_metaTypeArray<qt_meta_stringdata_TstHexEdit_t
+, QtPrivate::TypeAndForceComplete<TstHexEdit, std::true_type>
+, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>, QtPrivate::TypeAndForceComplete<void, std::false_type>
+
+
+>,
+    nullptr
+} };
+
+
+const QMetaObject *TstHexEdit::metaObject() const
+{
+    return QObject::d_ptr->metaObject ? QObject::d_ptr->dynamicMetaObject() : &staticMetaObject;
+}
+
+void *TstHexEdit::qt_metacast(const char *_clname)
+{
+    if (!_clname) return nullptr;
+    if (!strcmp(_clname, qt_meta_stringdata_TstHexEdit.stringdata0))
+        return static_cast<void*>(this);
+    return QObject::qt_metacast(_clname);
+}
+
+int TstHexEdit::qt_metacall(QMetaObject::Call _c, int _id, void **_a)
+{
+    _id = QObject::qt_metacall(_c, _id, _a);
+    if (_id < 0)
+        return _id;
+    if (_c == QMetaObject::InvokeMetaMethod) {
+        if (_id < 38)
+            qt_static_metacall(this, _c, _id, _a);
+        _id -= 38;
+    } else if (_c == QMetaObject::RegisterMethodArgumentMetaType) {
+        if (_id < 38)
+            *reinterpret_cast<QMetaType *>(_a[0]) = QMetaType();
+        _id -= 38;
+    }
+    return _id;
+}
+QT_WARNING_POP
+QT_END_MOC_NAMESPACE
