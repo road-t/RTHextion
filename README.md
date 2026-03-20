@@ -1,14 +1,33 @@
-# RTHextion v1.1
+# RTHextion v2.0 alpha - Retrogames Translation Hex Editor
 
 A hex editor for retrogames translation and ROMHacking, a tribute to 00's Translhextion16c by Januschan. 
 
 **RTHextion** is based on an early version of Dax89's [QHexView](https://github.com/Dax89/QHexView) (MIT License) and uses the Qt framework (GPL/LGPL).
 
 ## Features
+- Translation projects support:
+  - Multiple tables support
+  - Pointers/data list
+  - Original data import/preservation for safe editing and comparison
+  - IPS patch generation and import
+- Table editor moved into a side dock widget for easier access and multi-table management
+- New "Changes" dock widget:
+  - Live list of all modifications to the current file
+  - Hex/text display modes
+  - Tables support
+  - Clickable entries for quick navigation to changes
+- New Pointers dock widget:
+  - Pointer list with clickable entries for quick navigation
+- **Multi-tab workspace** with persistent session — open multiple files/projects simultaneously, all tabs and their state saved and restored on restart
+- Dock widgets for convenient workflow:
+  - **Pointers dock** — search data pointers and navigate to referenced locations with real-time preview
+  - **Translation tables dock** — view, edit, and switch between translation tables without leaving the editor  
+  - **Changes dock** — track all modifications to the current file
 - Dual view (hex + text) with synchronized scrolling and selection
 - Translation tables support with built-in editor and semi-automatic translation tables generation
 - Advanced data pointers search and navigation
-- Script dump and import with insertion to offset and automatic pointers update
+- Script dump and import with insertion to offset and automatic pointers update; IPS patch generation and import
+- Empty file editing — click to create the first byte and immediately start typing
 - Byte order switch (big-endian/little-endian/byte-swapped)
 - Auto-detect ROM type, default byte order and required pointer arithmetics
 - Customizable user interface with 7 languages (English, Russian, French, German, Spanish, Portuguese, Japanese, Chinese)

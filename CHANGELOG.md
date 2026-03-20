@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v2.0 alpha] - 2026-03-20
+
+### Added
+- Projects support:
+  - Multiple tables support
+  - Pointers/data list
+  - Original data import/preservation for safe editing and comparison
+  - IPS patch generation and import
+- Table editor moved into a side dock widget for easier access and multi-table management
+- New "Changes" dock widget:
+  - Live list of all modifications to the current file
+  - Hex/Text display modes
+  - Tables support
+  - Clickable entries for quick navigation to changes
+- New Pointers dock widget:
+  - Pointer list with clickable entries for quick navigation
+- **Persistent multi-tab sessions** — all open files and projects, their positions, and translation table/pointer dock state now saved automatically on exit and restored on next launch
+- Empty file editing — click in the hex or ASCII area of an empty file to create the first byte and immediately start typing
+
 ## [v1.1.6] - 2026-03-14
 
 ### Added
