@@ -137,9 +137,10 @@ QByteArray TranslationTable::decodeToBytes(const QString &text) const
         return it.value();
 
     // Fall back to single-byte
-    uint16_t b = encodeTable.key(text, 0xFFFF);
-    if (b != 0xFFFF)
-        return QByteArray(1, static_cast<char>(b));
+    for (auto it2 = encodeTable.constBegin(); it2 != encodeTable.constEnd(); ++it2) {
+        if (it2.value() == text)
+            return QByteArray(1, it2.key());
+    }
 
     return QByteArray(); // not found
 }

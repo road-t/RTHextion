@@ -19,7 +19,7 @@ jobs:
       - name: Install Qt 6
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.5.3'
+          version: '6.7.3'
           host: ${{ runner.os == 'macOS' && 'mac' || 'linux' }}
           target: 'desktop'
           arch: ${{ runner.os == 'macOS' && 'clang_64' || 'linux_gcc_64' }}
@@ -29,11 +29,13 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0
+          sudo apt-get install -y libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 \
+            libegl1 libfontconfig1
 
       - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen
+          QT_PLUGIN_PATH: ${{ env.QT_ROOT_DIR }}/plugins
         run: |
           export PATH="${QT_ROOT_DIR}/bin:$PATH"
           export QMAKE="${QT_ROOT_DIR}/bin/qmake"

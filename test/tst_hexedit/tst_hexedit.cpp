@@ -407,6 +407,126 @@ private slots:
         editor.setShowPointers(false);
         QVERIFY(!editor.showPointers());
     }
+
+    // ---- Address area collapse ----
+
+    void addressCollapsedProperty()
+    {
+        HexEditor editor;
+        QVERIFY(!editor.addressCollapsed());
+        editor.setAddressCollapsed(true);
+        QVERIFY(editor.addressCollapsed());
+        editor.setAddressCollapsed(false);
+        QVERIFY(!editor.addressCollapsed());
+    }
+
+    void addressCollapsedSignal()
+    {
+        HexEditor editor;
+        QSignalSpy spy(&editor, &HexEditor::addressCollapsedChanged);
+        editor.setAddressCollapsed(true);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.at(0).at(0).toBool(), true);
+        editor.setAddressCollapsed(false);
+        QCOMPARE(spy.count(), 2);
+        QCOMPARE(spy.at(1).at(0).toBool(), false);
+    }
+
+    void addressCollapsedNoDuplicateSignal()
+    {
+        HexEditor editor;
+        QSignalSpy spy(&editor, &HexEditor::addressCollapsedChanged);
+        // Setting same value should not emit signal
+        editor.setAddressCollapsed(false);
+        QCOMPARE(spy.count(), 0);
+    }
+
+    // ---- Original data view ----
+
+    void hasNoOriginalDataByDefault()
+    {
+        HexEditor editor;
+        QVERIFY(!editor.hasOriginalData());
+    }
+
+    void setOriginalDataSetsFlag()
+    {
+        HexEditor editor;
+        editor.setOriginalData(QByteArray(16, '\xAB'));
+        QVERIFY(editor.hasOriginalData());
+    }
+
+    void showOriginalDefaultIsFalse()
+    {
+        HexEditor editor;
+        QVERIFY(!editor.showOriginal());
+    }
+
+    void showOriginalToggle()
+    {
+        HexEditor editor;
+        editor.setOriginalData(QByteArray(16, '\xAB'));
+        editor.setShowOriginal(true);
+        QVERIFY(editor.showOriginal());
+        editor.setShowOriginal(false);
+        QVERIFY(!editor.showOriginal());
+    }
+
+    void showOriginalIdempotent()
+    {
+        HexEditor editor;
+        // Should not crash or emit extra updates when called with same value
+        editor.setShowOriginal(false);
+        editor.setShowOriginal(false);
+        QVERIFY(!editor.showOriginal());
+    }
+
+    // ---- Changed positions ----
+
+    void setAndClearChangedPositions()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(32, 'A'));
+        QSet<qint64> positions = {0, 5, 10, 31};
+        editor.setChangedPositions(positions);
+        // Just verify it doesn't crash; visual state only
+        editor.clearChangedPositions();
+        QVERIFY(true);
+    }
+
+    // ---- Dynamic bytes per line ----
+
+    void dynamicBytesPerLineProperty()
+    {
+        HexEditor editor;
+        editor.setDynamicBytesPerLine(true);
+        QVERIFY(editor.dynamicBytesPerLine());
+        editor.setDynamicBytesPerLine(false);
+        QVERIFY(!editor.dynamicBytesPerLine());
+    }
+
+    // ---- Multibyte frame ----
+
+    void showMultibyteFrameProperty()
+    {
+        HexEditor editor;
+        editor.setShowMultibyteFrame(true);
+        QVERIFY(editor.showMultibyteFrame());
+        editor.setShowMultibyteFrame(false);
+        QVERIFY(!editor.showMultibyteFrame());
+    }
+
+    // ---- Encoding decode/encode round-trip ----
+
+    void encodeDecodeASCIIRoundTrip()
+    {
+        HexEditor editor;
+        editor.setCurrentEncoding(QStringLiteral("ASCII"));
+        QByteArray bytes("Hello");
+        QString decoded = editor.decodeTextForCurrentEncoding(bytes);
+        QByteArray reEncoded = editor.encodeTextForCurrentEncoding(decoded);
+        QCOMPARE(reEncoded, bytes);
+    }
 };
 
 QTEST_MAIN(TstHexEdit)
