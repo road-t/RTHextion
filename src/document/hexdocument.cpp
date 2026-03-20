@@ -370,6 +370,8 @@ bool HexDocument::loadProject(const QString &path)
     navigationHistory.clear();
     navigationHistoryIndex = -1;
     cursorPosition = 0;
+    showPointers = true;
+    showChanges = false;
     changesHexMode = false;
     originalBytes.clear();
 

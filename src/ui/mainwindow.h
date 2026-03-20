@@ -164,6 +164,7 @@ private:
     void refreshChangesView();
     TranslationTable *tableForViewMode(bool showOriginal) const;
     void applyTranslationTableForViewMode();
+    bool shouldSwitchTableOnViewModeChange() const;
     void enforceBottomDockEqualWidth();
     void updateStatusBarVisibility();
     void updateValuePanels();
@@ -195,6 +196,7 @@ private:
     bool m_projectModified = false;
     bool m_closing = false;
     bool m_restoringTableDockState = false;
+    bool m_restoringProjectUi = false;
     QByteArray m_changeTrackingSnapshot;
     QTimer *m_changesUiUpdateTimer = nullptr;
 

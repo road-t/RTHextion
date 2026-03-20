@@ -1242,6 +1242,9 @@ void MainWindow::switchUseTable()
     applyTranslationTableForViewMode();
     updateActionStates();
     refreshChangesView();
+    
+    if (m_pointersDock)
+        m_pointersDock->refreshView();
 }
 
 void MainWindow::updateScriptMenuState(bool enabled)
@@ -1588,6 +1591,8 @@ void MainWindow::onTranslationTableChanged()
         pointersDialog->refreshFromTable();
     else
         m_pointersDock->refreshView();
+    
+    refreshChangesView();
 }
 
 void MainWindow::onDockTableChanged(TranslationTable *table)
@@ -1609,6 +1614,8 @@ void MainWindow::onDockTableChanged(TranslationTable *table)
         pointersDialog->refreshFromTable();
     else
         m_pointersDock->refreshView();
+    
+    refreshChangesView();
 }
 
 void MainWindow::onDockTableContentChanged()
@@ -1627,6 +1634,8 @@ void MainWindow::onDockTableContentChanged()
         pointersDialog->refreshFromTable();
     else
         m_pointersDock->refreshView();
+    
+    refreshChangesView();
 }
 
 void MainWindow::createEmptyTable()
@@ -1848,7 +1857,11 @@ void MainWindow::init()
             hexEdit->setOriginalData(original);
         }
         hexEdit->setShowOriginal(show);
-        applyTranslationTableForViewMode();
+        
+        // Only switch table if there are tables with different isOriginal values
+        if (shouldSwitchTableOnViewModeChange())
+            applyTranslationTableForViewMode();
+        
         refreshChangesView();
         updateActionStates();
     });
@@ -2003,8 +2016,14 @@ void MainWindow::restoreSession(EditorSession *session)
 
     m_pointersDock->refreshView();
 
+    m_restoringProjectUi = true;
+
     // Sync changes-dock supplementary buttons with restored session
     if (m_changesDock) {
+        if (showChangesAct)
+            showChangesAct->setChecked(m_document && m_document->showChanges);
+        m_changesDock->setShowChangesChecked(showChangesAct && showChangesAct->isChecked());
+        m_changesDock->setHexMode(m_document && m_document->changesHexMode);
         m_changesDock->setShowOriginalChecked(hexEdit && hexEdit->showOriginal());
     }
 
@@ -2025,6 +2044,10 @@ void MainWindow::restoreSession(EditorSession *session)
     syncEncodingMenu();
 
     applyTranslationTableForViewMode();
+
+    toggleShowChanges();
+
+    m_restoringProjectUi = false;
 
     if (m_changesDock && showChangesAct && showChangesAct->isChecked())
         refreshChangesView();
@@ -3253,6 +3276,7 @@ void MainWindow::openProjectFile(const QString &path)
     updateActionStates();
 
     // Restore display settings
+    m_restoringProjectUi = true;
     showPointersAct->setChecked(doc.showPointers);
     m_pointersDock->setShowPointersChecked(doc.showPointers);
     switchShowPointers();
@@ -3260,6 +3284,8 @@ void MainWindow::openProjectFile(const QString &path)
     m_changesDock->setShowChangesChecked(doc.showChanges);
     m_changesDock->setHexMode(doc.changesHexMode);
     toggleShowChanges();
+    m_restoringProjectUi = false;
+    m_projectModified = false;
     if (!m_document->originalBytes.isEmpty()) {
         refreshChangesView();
         m_changesDock->show();
@@ -4379,6 +4405,12 @@ void MainWindow::toggleShowChanges()
         updateChangedBytesHighlight();
     else
         hexEdit->clearChangedPositions();
+
+    if (m_document)
+        m_document->showChanges = show;
+
+    if (!m_restoringProjectUi && m_document && !m_document->projectFilePath.isEmpty())
+        m_projectModified = true;
 }
 
 void MainWindow::updateChangedBytesHighlight()
@@ -4427,15 +4459,19 @@ TranslationTable *MainWindow::tableForViewMode(bool showOriginal) const
     if (tabs.isEmpty())
         return nullptr;
 
+    const int curIdx = m_tablesDock->currentIndex();
+    TranslationTable *currentTable = nullptr;
+    if (curIdx >= 0 && curIdx < tabs.size())
+        currentTable = const_cast<TranslationTable *>(&tabs[curIdx].table);
+
     if (showOriginal) {
         for (const auto &tt : tabs) {
             if (tt.isOriginal)
                 return const_cast<TranslationTable *>(&tt.table);
         }
-        return nullptr;
+        return currentTable ? currentTable : const_cast<TranslationTable *>(&tabs.first().table);
     }
 
-    const int curIdx = m_tablesDock->currentIndex();
     if (curIdx >= 0 && curIdx < tabs.size() && !tabs[curIdx].isOriginal)
         return const_cast<TranslationTable *>(&tabs[curIdx].table);
 
@@ -4444,7 +4480,7 @@ TranslationTable *MainWindow::tableForViewMode(bool showOriginal) const
             return const_cast<TranslationTable *>(&tt.table);
     }
 
-    return nullptr;
+    return currentTable ? currentTable : const_cast<TranslationTable *>(&tabs.first().table);
 }
 
 void MainWindow::applyTranslationTableForViewMode()
@@ -4462,6 +4498,35 @@ void MainWindow::applyTranslationTableForViewMode()
         hexEdit->setTranslationTable(table);
     else
         hexEdit->removeTranslationTable();
+}
+
+bool MainWindow::shouldSwitchTableOnViewModeChange() const
+{
+    if (!m_tablesDock)
+        return false;
+
+    const auto &tabs = m_tablesDock->allTables();
+    
+    // If there's only one table or no tables, no need to switch
+    if (tabs.size() <= 1)
+        return false;
+
+    // Check if there are tables with different isOriginal values
+    bool hasOriginal = false;
+    bool hasNonOriginal = false;
+    
+    for (const auto &tt : tabs) {
+        if (tt.isOriginal)
+            hasOriginal = true;
+        else
+            hasNonOriginal = true;
+            
+        if (hasOriginal && hasNonOriginal)
+            return true;
+    }
+    
+    // If we don't have both types, no need to switch
+    return false;
 }
 
 void MainWindow::enforceBottomDockEqualWidth()
