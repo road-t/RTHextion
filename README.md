@@ -2,28 +2,18 @@
 
 A hex editor for retrogames translation and ROMHacking, a tribute to 00's Translhextion16c by Januschan. 
 
-**RTHextion** is based on an early version of Dax89's [QHexView](https://github.com/Dax89/QHexView) (MIT License) and uses the Qt framework (GPL/LGPL).
-
 ## Features
 - Translation projects support:
   - Multiple tables support
   - Pointers/data list
   - Original data import/preservation for safe editing and comparison
   - IPS patch generation and import
-- Table editor moved into a side dock widget for easier access and multi-table management
-- New "Changes" dock widget:
-  - Live list of all modifications to the current file
-  - Hex/text display modes
-  - Tables support
-  - Clickable entries for quick navigation to changes
-- New Pointers dock widget:
-  - Pointer list with clickable entries for quick navigation
+  - Quick original content view
 - **Multi-tab workspace** with persistent session — open multiple files/projects simultaneously, all tabs and their state saved and restored on restart
 - Dock widgets for convenient workflow:
   - **Pointers dock** — search data pointers and navigate to referenced locations with real-time preview
   - **Translation tables dock** — view, edit, and switch between translation tables without leaving the editor  
   - **Changes dock** — track all modifications to the current file
-- Dual view (hex + text) with synchronized scrolling and selection
 - Translation tables support with built-in editor and semi-automatic translation tables generation
 - Advanced data pointers search and navigation
 - Script dump and import with insertion to offset and automatic pointers update; IPS patch generation and import
@@ -35,9 +25,10 @@ A hex editor for retrogames translation and ROMHacking, a tribute to 00's Transl
 
 ## Screenshots
 
-<img src="assets/main_window.png" alt="General view" width="600" />
+<img src="assets/general_view_1.png" alt="General view" width="600" />
+<img src="assets/general_view_2.png" alt="General view" width="600" />
 <img src="assets/pointer_quick_search.png" alt="Pointer quick search" width="600" />
-<img src="assets/pointers.png" alt="Pointers search window" width="600" />
+<img src="assets/find_pointers.png" alt="Pointers search window" width="600" />
 <img src="assets/pointer_hint.png" alt="Pointer hint" width="600" />
 <img src="assets/pointers_view.png" alt="Pointers highlighting" width="600" />
 <img src="assets/pointed_data.png" alt="Data with found pointers" width="600" />
@@ -114,6 +105,8 @@ For arm64:
 ## License
 
 RTHextion is free software licensed under the GNU General Public License v3.0 (see LICENSE).
+
+**RTHextion** uses some code from early version of Dax89's [QHexView](https://github.com/Dax89/QHexView) (MIT License) and uses the Qt framework (GPL/LGPL).
 
 This project uses:
 - [QHexView](https://github.com/Dax89/QHexView) (MIT License)
