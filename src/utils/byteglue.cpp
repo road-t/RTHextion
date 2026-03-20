@@ -26,7 +26,8 @@ bool hexStringToByteArray(std::string hexString, byte* byteArray)
 
 void shiftByteArray(const byte *ptr, byte *buf, byte length, bool bigEndian, byte toBits)
 {
-    union qWordBytes data = {.qWord = 0};
+    union qWordBytes data{};
+    data.qWord = 0;
 
     if (bigEndian)
     {
