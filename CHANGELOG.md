@@ -21,6 +21,13 @@ All notable changes to this project will be documented in this file.
 - **Persistent multi-tab sessions** — all open files and projects, their positions, and translation table/pointer dock state now saved automatically on exit and restored on next launch
 - Empty file editing — click in the hex or ASCII area of an empty file to create the first byte and immediately start typing
 
+### Fixed
+- Missing and incorrect translations
+
+### Changed
+- Find pointers window lost the pointers list for pointers widget
+- Table editor dialog replaced with a dock widget for better workflow integration and multi-table management
+
 ## [v1.1.6] - 2026-03-14
 
 ### Added
