@@ -104,6 +104,27 @@ private slots:
         QCOMPARE(loaded.originalBytes[0].second, QByteArray("\x41\x42\x43", 3));
     }
 
+    void saveAndLoadDisplaySettings()
+    {
+        QTemporaryDir tmpDir;
+        QVERIFY(tmpDir.isValid());
+        QString projectPath = tmpDir.path() + "/display_settings.rthp";
+
+        HexDocument doc;
+        doc.showPointers = false;
+        doc.showChanges = true;
+        doc.changesHexMode = false;
+
+        QVector<DocTableEntry> tables;
+        QVERIFY(doc.saveProject(projectPath, tables, -1));
+
+        HexDocument loaded;
+        QVERIFY(loaded.loadProject(projectPath));
+        QCOMPARE(loaded.showPointers, false);
+        QCOMPARE(loaded.showChanges, true);
+        QCOMPARE(loaded.changesHexMode, false);
+    }
+
     // ---- Save with embedded table and reload ----
 
     void saveAndLoadWithTable()
