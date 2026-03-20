@@ -16,14 +16,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Qt 6
+      - name: Install Qt 6 (macOS)
+        if: runner.os == 'macOS'
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.7.3'
-          host: ${{ runner.os == 'macOS' && 'mac' || 'linux' }}
+          host: 'mac'
           target: 'desktop'
-          arch: ${{ runner.os == 'macOS' && 'clang_64' || 'linux_gcc_64' }}
+          arch: 'clang_64'
           cache: true
+
+      - name: Install Qt 6 (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          python3 -m pip install aqtinstall
+          python3 -m aqt install-qt linux desktop 6.7.3 linux_gcc_64 -O "$HOME/Qt"
+          echo "QT_ROOT_DIR=$HOME/Qt/6.7.3/gcc_64" >> "$GITHUB_ENV"
+          echo "$HOME/Qt/6.7.3/gcc_64/bin" >> "$GITHUB_PATH"
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
