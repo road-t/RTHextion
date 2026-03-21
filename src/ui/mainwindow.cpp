@@ -436,6 +436,12 @@ void MainWindow::findNext()
 {
     if (!searchDialog)
         searchDialog = new SearchDialog(hexEdit, this);
+    else
+        searchDialog->setHexEdit(hexEdit);
+
+    if (useTableAct)
+        searchDialog->setUseTableChecked(useTableAct->isChecked());
+
     searchDialog->findNext();
 }
 
@@ -647,6 +653,12 @@ void MainWindow::showSearchDialog()
 {
     if (!searchDialog)
         searchDialog = new SearchDialog(hexEdit, this);
+    else
+        searchDialog->setHexEdit(hexEdit);
+
+    if (useTableAct)
+        searchDialog->setUseTableChecked(useTableAct->isChecked());
+
     searchDialog->show();
 }
 
@@ -704,6 +716,36 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         hexEdit->viewport()->update();
     };
 
+    auto selectedPointerOffsetsForDrop = [&]() -> QVector<qint64>
+    {
+        QVector<qint64> result;
+        if (!hasSelection || !model)
+            return result;
+
+        const qint64 selBegin = hexEdit->getSelectionBegin();
+        const qint64 selEnd = hexEdit->getSelectionEnd();
+        if (selEnd <= selBegin)
+            return result;
+
+        QSet<qint64> unique;
+        const QList<qint64> keys = model->pointerKeys();
+        unique.reserve(keys.size());
+
+        for (qint64 ptrOfs : keys)
+        {
+            const qint64 targetOfs = model->getOffset(ptrOfs);
+            const bool pointerInSelection = (ptrOfs >= selBegin && ptrOfs < selEnd);
+            const bool targetInSelection = (targetOfs >= selBegin && targetOfs < selEnd);
+            if (pointerInSelection || targetInSelection)
+                unique.insert(ptrOfs);
+        }
+
+        result.reserve(unique.size());
+        for (qint64 ptrOfs : unique)
+            result.append(ptrOfs);
+        return result;
+    };
+
     // --- Helper: clipboard has pasteable hex data ---
     const QClipboard *clipboard = QApplication::clipboard();
     const bool canPaste = !isReadOnly && !clipboard->text().isEmpty();
@@ -722,7 +764,6 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         ClipboardActions acts;
 
         menu.addSeparator();
-
         // Copy address is always available
         acts.copyAddress = menu.addAction(tr("Copy address"));
 
@@ -737,7 +778,6 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
             acts.copy = menu.addAction(tr("Copy"));
         acts.copy->setShortcut(QKeySequence::Copy);
         acts.copy->setEnabled(hasSelection);
-
         if (isHexArea)
             acts.paste = menu.addAction(tr("Paste hex values"));
         else
@@ -961,6 +1001,14 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         QMenu menu(this);
         QAction *jumpAct = menu.addAction(tr("Jump to offset"));
         QAction *dropAct = menu.addAction(tr("Drop pointer"));
+        QAction *dropSelectionPtrsAct = nullptr;
+        QVector<qint64> dropSelectionPtrs;
+        if (hasSelection)
+        {
+            dropSelectionPtrs = selectedPointerOffsetsForDrop();
+            dropSelectionPtrsAct = menu.addAction(tr("Drop pointers"));
+            dropSelectionPtrsAct->setEnabled(!dropSelectionPtrs.isEmpty());
+        }
         menu.addSeparator();
         QAction *addAsPointerAct = menu.addAction(tr("Add as pointer"));
         addAsPointerAct->setEnabled(canAddAsPointer);
@@ -990,6 +1038,11 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
             if (hexEdit->removePointerUndoable(pointerStart))
                 refreshPointersUi();
         }
+        else if (dropSelectionPtrsAct && chosen == dropSelectionPtrsAct)
+        {
+            if (hexEdit->removePointersUndoable(dropSelectionPtrs) > 0)
+                refreshPointersUi();
+        }
         return;
     }
 
@@ -1012,6 +1065,14 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
 
         menu.addSeparator();
         QAction *dropAllAct = menu.addAction(tr("Drop all"));
+        QAction *dropSelectionPtrsAct = nullptr;
+        QVector<qint64> dropSelectionPtrs;
+        if (hasSelection)
+        {
+            dropSelectionPtrs = selectedPointerOffsetsForDrop();
+            dropSelectionPtrsAct = menu.addAction(tr("Drop pointers"));
+            dropSelectionPtrsAct->setEnabled(!dropSelectionPtrs.isEmpty());
+        }
         QAction *addAsPointerAct = menu.addAction(tr("Add as pointer"));
         addAsPointerAct->setEnabled(canAddAsPointer);
 
@@ -1053,6 +1114,11 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
                     refreshPointersUi();
             }
         }
+        else if (dropSelectionPtrsAct && chosen == dropSelectionPtrsAct)
+        {
+            if (hexEdit->removePointersUndoable(dropSelectionPtrs) > 0)
+                refreshPointersUi();
+        }
         return;
     }
 
@@ -1063,6 +1129,14 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
     QAction *findPtrAct     = menu.addAction(tr("Find pointers") + QString("..."));
     QAction *addAsPointerAct = menu.addAction(tr("Add as pointer"));
     addAsPointerAct->setEnabled(canAddAsPointer);
+    QAction *dropSelectionPtrsAct = nullptr;
+    QVector<qint64> dropSelectionPtrs;
+    if (hasSelection)
+    {
+        dropSelectionPtrs = selectedPointerOffsetsForDrop();
+        dropSelectionPtrsAct = menu.addAction(tr("Drop pointers"));
+        dropSelectionPtrsAct->setEnabled(!dropSelectionPtrs.isEmpty());
+    }
 
     QAction *saveAsDumpAct = nullptr;
     if (clickedAscii)
@@ -1138,6 +1212,11 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
     else if (chosen == addAsPointerAct)
     {
         if (canAddAsPointer && hexEdit->addPointerUndoable(bytePos, addAsPointerTarget, ptrSize))
+            refreshPointersUi();
+    }
+    else if (dropSelectionPtrsAct && chosen == dropSelectionPtrsAct)
+    {
+        if (hexEdit->removePointersUndoable(dropSelectionPtrs) > 0)
             refreshPointersUi();
     }
     else if (saveAsDumpAct && chosen == saveAsDumpAct)
@@ -1985,6 +2064,8 @@ void MainWindow::saveCurrentSession()
     m_currentSession->tableSnapshot = m_tablesDock->takeSnapshot();
     m_currentSession->tableActiveIndex = m_tablesDock->currentIndex();
     m_currentSession->tablesDockVisible = m_tablesDock->isVisible();
+    if (m_document)
+        m_document->useTable = useTableAct && useTableAct->isChecked();
 }
 
 void MainWindow::restoreSession(EditorSession *session)
@@ -2014,12 +2095,20 @@ void MainWindow::restoreSession(EditorSession *session)
     m_restoringTableDockState = false;
     tb = m_tablesDock->currentTable();
     session->table = tb;  // keep in sync after pointer recreation
-    m_tablesDock->setVisible(session->tablesDockVisible);
+    const bool hasTables = m_tablesDock->count() > 0;
+    m_tablesDock->setVisible(session->tablesDockVisible && hasTables);
+
+    useTableAct->setEnabled(hasTables);
+    editTableAct->setEnabled(hasTables);
+    saveTableAct->setEnabled(hasTables);
+    saveTableAsAct->setEnabled(hasTables);
+    useTableAct->setChecked(hasTables && m_document && m_document->useTable);
 
     // Keep the persisted project-modified state exactly as it was for this tab.
     m_projectModified = session->projectModified;
 
-    m_pointersDock->refreshView();
+    if (m_pointersDock && m_pointersDock->isVisible())
+        m_pointersDock->refreshView();
 
     m_restoringProjectUi = true;
 
@@ -2048,13 +2137,13 @@ void MainWindow::restoreSession(EditorSession *session)
         lbEncoding->setText(m_currentEncoding);
     syncEncodingMenu();
 
-    applyTranslationTableForViewMode();
+    applySelectedTable();
 
     toggleShowChanges();
 
     m_restoringProjectUi = false;
 
-    if (m_changesDock && showChangesAct && showChangesAct->isChecked())
+    if (m_changesDock && m_changesDock->isVisible() && showChangesAct && showChangesAct->isChecked())
         refreshChangesView();
 
     // Sync status bar with restored session
@@ -3174,6 +3263,7 @@ void MainWindow::openProjectFile(const QString &path)
     // 2. Load translation tables into dock widget
     tb = nullptr;
     m_tablesDock->clearAll();
+    bool hasTables = false;
 
     if (!doc.tables.isEmpty()) {
         // Multi-table: add all tables to the dock
@@ -3185,7 +3275,7 @@ void MainWindow::openProjectFile(const QString &path)
             m_tablesDock->setTableOriginal(i, doc.tables[i].isOriginal);
         doc.tables.clear();
 
-        const bool hasTables = m_tablesDock->count() > 0;
+        hasTables = m_tablesDock->count() > 0;
         if (doc.activeTableIndex >= 0 && doc.activeTableIndex < m_tablesDock->count())
             m_tablesDock->setCurrentIndex(doc.activeTableIndex);
         else if (hasTables)
@@ -3203,10 +3293,10 @@ void MainWindow::openProjectFile(const QString &path)
         editTableAct->setEnabled(m_tablesDock->count() > 0);
         saveTableAct->setEnabled(m_tablesDock->count() > 0);
         saveTableAsAct->setEnabled(m_tablesDock->count() > 0);
-        m_tablesDock->show();
     } else if (doc.translationTable) {
         // Legacy single table from project
         m_tablesDock->addTable(QStringLiteral("Table 1"), doc.translationTable);
+        hasTables = m_tablesDock->count() > 0;
         tb = m_tablesDock->currentTable();
         tableFilePath = doc.tableFilePath;
         if (doc.useTable)
@@ -3218,11 +3308,11 @@ void MainWindow::openProjectFile(const QString &path)
         saveTableAsAct->setEnabled(true);
         if (!doc.useTable)
             hexEdit->removeTranslationTable();
-        m_tablesDock->show();
     } else if (!doc.tableFilePath.isEmpty() && QFile::exists(doc.tableFilePath)) {
         // Fall back to loading table from file path
         const TranslationTable fileTable(doc.tableFilePath);
         m_tablesDock->addTable(QFileInfo(doc.tableFilePath).completeBaseName(), &fileTable);
+        hasTables = m_tablesDock->count() > 0;
         tb = m_tablesDock->currentTable();
         tableFilePath = doc.tableFilePath;
         if (doc.useTable)
@@ -3234,7 +3324,6 @@ void MainWindow::openProjectFile(const QString &path)
         saveTableAsAct->setEnabled(true);
         if (!doc.useTable)
             hexEdit->removeTranslationTable();
-        m_tablesDock->show();
     }
 
     // 3. Encoding
@@ -3293,13 +3382,23 @@ void MainWindow::openProjectFile(const QString &path)
     m_changesDock->setShowChangesChecked(doc.showChanges);
     m_changesDock->setHexMode(doc.changesHexMode);
     toggleShowChanges();
+
+    // Restore dock visibility snapshot from project file.
+    m_tablesDock->setVisible(hasTables && doc.tablesDockVisible);
+    m_pointersDock->setVisible(doc.pointersDockVisible);
+    m_changesDock->setVisible(doc.changesDockVisible && !m_document->originalBytes.isEmpty());
+
     m_restoringProjectUi = false;
     m_projectModified = false;
     if (!m_document->originalBytes.isEmpty()) {
         refreshChangesView();
-        m_changesDock->show();
-        enforceBottomDockEqualWidth();
+        if (m_changesDock->isVisible())
+            enforceBottomDockEqualWidth();
     }
+
+    // Keep the current tab session snapshot in sync with the just-loaded project.
+    // This prevents stale default values (like hidden tables dock) from being restored.
+    saveCurrentSession();
 }
 
 bool MainWindow::saveProject()
@@ -3358,6 +3457,9 @@ bool MainWindow::saveProjectImpl(const QString &path)
     m_document->showPointers = showPointersAct && showPointersAct->isChecked();
     m_document->showChanges  = showChangesAct  && showChangesAct->isChecked();
     m_document->changesHexMode = m_changesDock && m_changesDock->hexMode();
+    m_document->tablesDockVisible = m_tablesDock && m_tablesDock->isVisible();
+    m_document->pointersDockVisible = m_pointersDock && m_pointersDock->isVisible();
+    m_document->changesDockVisible = m_changesDock && m_changesDock->isVisible();
 
     // Recompute tracked diffs byte-by-byte.
     // If project already has an original baseline (e.g. loaded via "Load original"),

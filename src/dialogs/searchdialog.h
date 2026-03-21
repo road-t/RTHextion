@@ -16,10 +16,14 @@ public:
     explicit SearchDialog(HexEditor *hexEdit, QWidget *parent = 0);
     ~SearchDialog();
     qint64 findNext();
+    qint64 findPrevious();
+    void setHexEdit(HexEditor *hexEdit);
+    void setUseTableChecked(bool checked);
     Ui::SearchDialog *ui;
 
 private slots:
     void on_pbFind_clicked();
+    void on_pbFindPrev_clicked();
     void on_pbReplace_clicked();
     void on_pbReplaceAll_clicked();
 

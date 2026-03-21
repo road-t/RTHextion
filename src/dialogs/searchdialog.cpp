@@ -6,6 +6,8 @@
 #include <QLineEdit>
 #include <QRegularExpression>
 #include <QRegularExpressionValidator>
+#include <QStringDecoder>
+#include <QStringEncoder>
 
 SearchDialog::SearchDialog(HexEditor *hexEdit, QWidget *parent) :
     QDialog(parent),
@@ -21,43 +23,67 @@ SearchDialog::~SearchDialog()
   delete ui;
 }
 
+void SearchDialog::setHexEdit(HexEditor *hexEdit)
+{
+        _hexEdit = hexEdit;
+}
+
+void SearchDialog::setUseTableChecked(bool checked)
+{
+    if (ui && ui->cbUseTable)
+    ui->cbUseTable->setChecked(checked);
+}
+
 qint64 SearchDialog::findNext()
 {
+    if (!_hexEdit)
+        return -1;
+
     qint64 from = _hexEdit->cursorPosition() / 2;
     _findBa = getContent(ui->cbFindFormat->currentIndex(), ui->cbFind->currentText());
     qint64 idx = -1;
 
     if (_findBa.length() > 0)
     {
-        if (ui->cbUseTable->isChecked())
-        {
-            auto tb = _hexEdit->getTranslationTable();
-
-            if (tb)
-            {
-                _findBa = tb->decode(_findBa);
-            }
-        }
-
         if (ui->cbRelative->isChecked())
         {
             idx = _hexEdit->relativeSearch(_findBa, from);
         }
         else
         {
-            if (ui->cbBackwards->isChecked())
-                idx = _hexEdit->lastIndexOf(_findBa, from);
-            else
-                idx = _hexEdit->indexOf(_findBa, from);
+            idx = _hexEdit->indexOf(_findBa, from);
         }
     }
 
     return idx;
 }
 
+qint64 SearchDialog::findPrevious()
+{
+    if (!_hexEdit)
+        return -1;
+
+    qint64 from = _hexEdit->cursorPosition() / 2;
+    if (from > 0)
+        --from;
+
+    _findBa = getContent(ui->cbFindFormat->currentIndex(), ui->cbFind->currentText());
+    if (_findBa.isEmpty())
+        return -1;
+
+    // Relative backward search isn't defined in current HexEditor API,
+    // so Find prev always performs regular backward search.
+    return _hexEdit->lastIndexOf(_findBa, from);
+}
+
 void SearchDialog::on_pbFind_clicked()
 {
     findNext();
+}
+
+void SearchDialog::on_pbFindPrev_clicked()
+{
+    findPrevious();
 }
 
 void SearchDialog::on_pbReplace_clicked()
@@ -103,11 +129,40 @@ QByteArray SearchDialog::getContent(int comboIndex, const QString &input)
     switch (comboIndex)
     {
         case 0:     // text
-            findBa = input.toUtf8();
+            if (!_hexEdit)
+            {
+                findBa = input.toUtf8();
+            }
+            else if (ui->cbUseTable->isChecked() && _hexEdit->getTranslationTable())
+            {
+                findBa = _hexEdit->getTranslationTable()->decode(input.toUtf8());
+            }
+            else
+            {
+                const QString encoding = _hexEdit->currentEncoding();
+                if (encoding.isEmpty() || encoding == QLatin1String("ASCII"))
+                {
+                    const QByteArray encoded = input.toLatin1();
+                    findBa = (QString::fromLatin1(encoded) == input) ? encoded : QByteArray();
+                }
+                else
+                {
+                    QStringEncoder enc(encoding.toUtf8().constData());
+                    if (enc.isValid()) {
+                        const QByteArray encoded = enc.encode(input);
+                        QStringDecoder dec(encoding.toUtf8().constData());
+                        findBa = (dec.isValid() && dec.decode(encoded) == input) ? encoded : QByteArray();
+                    } else {
+                        // Do not silently fall back to another encoding for text search.
+                        // Lossy conversion creates false positives (e.g. 0x3F sequences).
+                        findBa.clear();
+                    }
+                }
+            }
             break;
 
         case 1:     // hex
-            findBa = QByteArray::fromHex(input.toLatin1());
+            findBa = QByteArray::fromHex(input.simplified().remove(' ').toLatin1());
             break;
     }
 

@@ -226,6 +226,9 @@ bool HexDocument::saveProject(const QString &path,
     out << "show_pointers: " << (showPointers ? "true" : "false") << "\n";
     out << "show_changes: "  << (showChanges  ? "true" : "false") << "\n";
     out << "changes_hex_mode: " << (changesHexMode ? "true" : "false") << "\n";
+    out << "tables_dock_visible: " << (tablesDockVisible ? "true" : "false") << "\n";
+    out << "pointers_dock_visible: " << (pointersDockVisible ? "true" : "false") << "\n";
+    out << "changes_dock_visible: " << (changesDockVisible ? "true" : "false") << "\n";
 
     // Original bytes
     if (!originalBytes.isEmpty()) {
@@ -326,6 +329,9 @@ bool HexDocument::saveProject(const QString &path, const TranslationTable *table
     out << "show_pointers: " << (showPointers ? "true" : "false") << "\n";
     out << "show_changes: "  << (showChanges  ? "true" : "false") << "\n";
     out << "changes_hex_mode: " << (changesHexMode ? "true" : "false") << "\n";
+    out << "tables_dock_visible: " << (tablesDockVisible ? "true" : "false") << "\n";
+    out << "pointers_dock_visible: " << (pointersDockVisible ? "true" : "false") << "\n";
+    out << "changes_dock_visible: " << (changesDockVisible ? "true" : "false") << "\n";
 
     // Original bytes (pre-modification data for IPS/diff)
     if (!originalBytes.isEmpty()) {
@@ -374,6 +380,9 @@ bool HexDocument::loadProject(const QString &path)
     showPointers = true;
     showChanges = false;
     changesHexMode = false;
+    tablesDockVisible = true;
+    pointersDockVisible = false;
+    changesDockVisible = false;
     originalBytes.clear();
 
     enum class Section { Root, Pointers, NavHistory, TableEntries, Original, Tables, TablesEntries };
@@ -700,6 +709,12 @@ bool HexDocument::loadProject(const QString &path)
             showChanges = (val == QLatin1String("true"));
         } else if (key == QLatin1String("changes_hex_mode")) {
             changesHexMode = (val == QLatin1String("true"));
+        } else if (key == QLatin1String("tables_dock_visible")) {
+            tablesDockVisible = (val == QLatin1String("true"));
+        } else if (key == QLatin1String("pointers_dock_visible")) {
+            pointersDockVisible = (val == QLatin1String("true"));
+        } else if (key == QLatin1String("changes_dock_visible")) {
+            changesDockVisible = (val == QLatin1String("true"));
         }
     }
 

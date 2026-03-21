@@ -66,6 +66,9 @@ public:
     bool showPointers = true;               // whether pointer highlighting is visible
     bool showChanges  = false;              // whether change highlighting is visible
     bool changesHexMode = false;            // true = changes list shows hex, false = text
+    bool tablesDockVisible = true;          // tables dock visibility in UI
+    bool pointersDockVisible = false;       // pointers dock visibility in UI
+    bool changesDockVisible = false;        // changes dock visibility in UI
 
     // --- Original bytes (pre-modification snapshots) ---
     /// Groups of original bytes before user modifications.

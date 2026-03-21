@@ -118,13 +118,6 @@
          </widget>
         </item>
         <item>
-         <widget class="QCheckBox" name="cbBackwards">
-          <property name="text">
-           <string>Backwards</string>
-          </property>
-         </widget>
-        </item>
-        <item>
          <widget class="QCheckBox" name="cbPrompt">
           <property name="text">
            <string>Prompt on replace</string>
@@ -141,7 +134,7 @@
      <item>
       <widget class="QPushButton" name="pbFind">
        <property name="text">
-        <string>Find</string>
+                <string>Find next</string>
        </property>
        <property name="shortcut">
         <string>F3</string>
@@ -151,6 +144,16 @@
        </property>
       </widget>
      </item>
+         <item>
+            <widget class="QPushButton" name="pbFindPrev">
+             <property name="text">
+                <string>Find prev</string>
+             </property>
+             <property name="shortcut">
+                <string>Shift+F3</string>
+             </property>
+            </widget>
+         </item>
      <item>
       <widget class="QPushButton" name="pbReplace">
        <property name="text">
@@ -194,9 +197,10 @@
   <tabstop>cbReplace</tabstop>
   <tabstop>cbFindFormat</tabstop>
   <tabstop>cbReplaceFormat</tabstop>
-  <tabstop>cbBackwards</tabstop>
+    <tabstop>cbUseTable</tabstop>
   <tabstop>cbPrompt</tabstop>
   <tabstop>pbFind</tabstop>
+    <tabstop>pbFindPrev</tabstop>
   <tabstop>pbReplace</tabstop>
   <tabstop>pbReplaceAll</tabstop>
   <tabstop>pbCancel</tabstop>

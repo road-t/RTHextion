@@ -1948,10 +1948,11 @@ qint64 HexEditor::indexOf(const QByteArray &ba, qint64 from)
     if (pos > -1)
     {
         qint64 curPos = pos * 2;
+        const qint64 selectionEndPos = curPos + ba.length() * 2 - 1;
 
-        setCursorPosition(curPos + ba.length() * 2);
+        setCursorPosition(curPos);
         resetSelection(curPos);
-        setSelection(curPos + ba.length() * 2);
+        setSelection(selectionEndPos);
         ensureVisible();
     }
 
@@ -1991,10 +1992,11 @@ qint64 HexEditor::relativeSearch(const QByteArray &ba, qint64 from)
         if (coin == searchLen)
         {
             qint64 curPos = i * 2;
+            const qint64 selectionEndPos = curPos + searchLen * 2 - 1;
 
-            setCursorPosition(curPos + searchLen * 2);
+            setCursorPosition(curPos);
             resetSelection(curPos);
-            setSelection(curPos + searchLen * 2);
+            setSelection(selectionEndPos);
             ensureVisible();
 
             /*if (!_tb)
@@ -2040,9 +2042,10 @@ qint64 HexEditor::lastIndexOf(const QByteArray &ba, qint64 from)
     if (pos > -1)
     {
         qint64 curPos = pos * 2;
-        setCursorPosition(curPos - 1);
+        const qint64 selectionEndPos = curPos + ba.length() * 2 - 1;
+        setCursorPosition(curPos);
         resetSelection(curPos);
-        setSelection(curPos + ba.length() * 2);
+        setSelection(selectionEndPos);
         ensureVisible();
     }
 
@@ -2748,7 +2751,7 @@ bool HexEditor::viewportEvent(QEvent *event)
             {
                 const auto ptrs = _pointers.getPointers(bytePos);
                 const QString tip = (ptrs.size() == 1)
-                    ? QStringLiteral("0x%1").arg(ptrs[0], 8, 16, QChar('0')).toUpper()
+                    ? QStringLiteral("0x") + QStringLiteral("%1").arg(ptrs[0], 8, 16, QChar('0')).toUpper()
                     : tr("%1 pointers").arg(ptrs.size());
                 QToolTip::showText(helpEvent->globalPos(), tip, viewport());
                 return true;
