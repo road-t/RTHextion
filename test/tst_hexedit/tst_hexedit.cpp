@@ -119,6 +119,40 @@ private slots:
         QCOMPARE(editor.lastIndexOf(QByteArray("XY"), 31), qint64(20));
     }
 
+    void indexOfSetsCursorToMatchStartAndSelectsFullLength()
+    {
+        HexEditor editor;
+        QByteArray data(32, '\0');
+        data[10] = char(0xDE);
+        data[11] = char(0xAD);
+        data[12] = char(0xBE);
+        data[13] = char(0xEF);
+        editor.setData(data);
+
+        const QByteArray needle = QByteArray::fromHex("DEADBEEF");
+        QCOMPARE(editor.indexOf(needle, 0), qint64(10));
+        QCOMPARE(editor.cursorPosition(), qint64(20));
+        QCOMPARE(editor.getSelectionBegin(), qint64(10));
+        QCOMPARE(editor.getSelectionEnd(), qint64(14));
+    }
+
+    void lastIndexOfSetsCursorToMatchStartAndSelectsFullLength()
+    {
+        HexEditor editor;
+        QByteArray data(48, '\0');
+        data[8] = char(0xAA);
+        data[9] = char(0xBB);
+        data[30] = char(0xAA);
+        data[31] = char(0xBB);
+        editor.setData(data);
+
+        const QByteArray needle = QByteArray::fromHex("AABB");
+        QCOMPARE(editor.lastIndexOf(needle, 47), qint64(30));
+        QCOMPARE(editor.cursorPosition(), qint64(60));
+        QCOMPARE(editor.getSelectionBegin(), qint64(30));
+        QCOMPARE(editor.getSelectionEnd(), qint64(32));
+    }
+
     // ---- Undo / Redo ----
 
     void undoReplace()

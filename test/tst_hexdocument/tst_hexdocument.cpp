@@ -163,6 +163,45 @@ private slots:
         delete entry.table;
     }
 
+    void saveAndLoadV3ActiveTableAndUseTable()
+    {
+        QTemporaryDir tmpDir;
+        QVERIFY(tmpDir.isValid());
+        QString projectPath = tmpDir.path() + "/test_v3_active.rthp";
+
+        HexDocument doc;
+        doc.useTable = true;
+
+        DocTableEntry t1;
+        t1.name = QStringLiteral("Orig");
+        t1.isOriginal = true;
+        t1.table = new TranslationTable();
+        t1.table->setItem(0x41, QStringLiteral("A"));
+
+        DocTableEntry t2;
+        t2.name = QStringLiteral("Current");
+        t2.isOriginal = false;
+        t2.table = new TranslationTable();
+        t2.table->setItem(0x42, QStringLiteral("B"));
+
+        QVector<DocTableEntry> tables;
+        tables.append(t1);
+        tables.append(t2);
+
+        QVERIFY(doc.saveProject(projectPath, tables, 1));
+
+        HexDocument loaded;
+        QVERIFY(loaded.loadProject(projectPath));
+        QCOMPARE(loaded.tables.size(), 2);
+        QCOMPARE(loaded.activeTableIndex, 1);
+        QCOMPARE(loaded.useTable, true);
+        QCOMPARE(loaded.tables[0].name, QStringLiteral("Orig"));
+        QCOMPARE(loaded.tables[1].name, QStringLiteral("Current"));
+
+        delete t1.table;
+        delete t2.table;
+    }
+
     // ---- Byte order variants ----
 
     void saveAndLoadByteOrders()
