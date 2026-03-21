@@ -162,7 +162,10 @@ private:
     void addToRecentProjects(const QString &fileName);
     void updateChangedBytesHighlight();
     void refreshChangesView();
+    TranslationTable *selectedTable() const;
+    int tableIndexForViewMode(bool showOriginal) const;
     TranslationTable *tableForViewMode(bool showOriginal) const;
+    void applySelectedTable();
     void applyTranslationTableForViewMode();
     bool shouldSwitchTableOnViewModeChange() const;
     void enforceBottomDockEqualWidth();

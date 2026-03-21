@@ -188,6 +188,7 @@ bool HexDocument::saveProject(const QString &path,
         }
         out << "active_table: " << activeIdx << "\n";
     }
+    out << "use_table: " << (useTable ? "true" : "false") << "\n";
 
     // Encoding
     out << "\nencoding: " << yamlEscape(currentEncoding) << "\n";

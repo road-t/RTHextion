@@ -1239,7 +1239,7 @@ bool MainWindow::loadTable()
 void MainWindow::switchUseTable()
 {
     tb = m_tablesDock->currentTable();
-    applyTranslationTableForViewMode();
+    applySelectedTable();
     updateActionStates();
     refreshChangesView();
     
@@ -1582,7 +1582,7 @@ void MainWindow::editTable()
 void MainWindow::onTranslationTableChanged()
 {
     tb = m_tablesDock->currentTable();
-    applyTranslationTableForViewMode();
+    applySelectedTable();
 
     hexEdit->viewport()->update();
     hexEdit->update();
@@ -1599,7 +1599,7 @@ void MainWindow::onDockTableChanged(TranslationTable *table)
 {
     if (m_closing) return;
     tb = table;
-    applyTranslationTableForViewMode();
+    applySelectedTable();
 
     const bool hasTables = m_tablesDock->count() > 0;
     useTableAct->setEnabled(hasTables);
@@ -1622,7 +1622,7 @@ void MainWindow::onDockTableContentChanged()
 {
     if (m_closing) return;
     tb = m_tablesDock->currentTable();
-    applyTranslationTableForViewMode();
+    applySelectedTable();
 
     hexEdit->viewport()->update();
     hexEdit->update();
@@ -1859,8 +1859,13 @@ void MainWindow::init()
         hexEdit->setShowOriginal(show);
         
         // Only switch table if there are tables with different isOriginal values
-        if (shouldSwitchTableOnViewModeChange())
-            applyTranslationTableForViewMode();
+        if (shouldSwitchTableOnViewModeChange()) {
+            const int idx = tableIndexForViewMode(show);
+            if (idx >= 0 && m_tablesDock && m_tablesDock->currentIndex() != idx)
+                m_tablesDock->setCurrentIndex(idx);
+            else
+                applyTranslationTableForViewMode();
+        }
         
         refreshChangesView();
         updateActionStates();
@@ -3180,17 +3185,21 @@ void MainWindow::openProjectFile(const QString &path)
             m_tablesDock->setTableOriginal(i, doc.tables[i].isOriginal);
         doc.tables.clear();
 
-        if (doc.activeTableIndex >= 0 && doc.activeTableIndex < m_tablesDock->count()) {
+        const bool hasTables = m_tablesDock->count() > 0;
+        if (doc.activeTableIndex >= 0 && doc.activeTableIndex < m_tablesDock->count())
             m_tablesDock->setCurrentIndex(doc.activeTableIndex);
-            tb = m_tablesDock->currentTable();
-            hexEdit->setTranslationTable(tb);
-            useTableAct->setEnabled(true);
-            useTableAct->setChecked(true);
-        } else {
-            useTableAct->setEnabled(m_tablesDock->count() > 0);
-            useTableAct->setChecked(false);
+        else if (hasTables)
+            m_tablesDock->setCurrentIndex(0);
+
+        tb = m_tablesDock->currentTable();
+        useTableAct->setEnabled(hasTables);
+        useTableAct->setChecked(hasTables && doc.useTable);
+
+        if (useTableAct->isChecked())
+            applySelectedTable();
+        else
             hexEdit->removeTranslationTable();
-        }
+
         editTableAct->setEnabled(m_tablesDock->count() > 0);
         saveTableAct->setEnabled(m_tablesDock->count() > 0);
         saveTableAsAct->setEnabled(m_tablesDock->count() > 0);
@@ -3449,7 +3458,7 @@ bool MainWindow::saveProjectImpl(const QString &path)
         dte.table = const_cast<TranslationTable *>(&tt.table);  // not owned — just a reference for serialization
         docTables.append(dte);
     }
-    const int activeIdx = (useTableAct && useTableAct->isChecked())
+    const int activeIdx = (m_tablesDock && m_tablesDock->count() > 0)
                               ? m_tablesDock->currentIndex() : -1;
 
     if (!m_document->saveProject(path, docTables, activeIdx)) {
@@ -4444,7 +4453,9 @@ void MainWindow::refreshChangesView()
         return;
 
     TranslationTable *origTable = tableForViewMode(true);
-    TranslationTable *activeTable = tableForViewMode(false);
+    TranslationTable *activeTable = selectedTable();
+    if (!activeTable)
+        activeTable = tableForViewMode(false);
 
     m_changesDock->refresh(m_document->originalBytes, hexEdit->data(), origTable, activeTable,
                            useTableAct && useTableAct->isChecked(), m_currentEncoding);
@@ -4464,13 +4475,12 @@ TranslationTable *MainWindow::tableForViewMode(bool showOriginal) const
     if (curIdx >= 0 && curIdx < tabs.size())
         currentTable = const_cast<TranslationTable *>(&tabs[curIdx].table);
 
-    if (showOriginal) {
-        for (const auto &tt : tabs) {
-            if (tt.isOriginal)
-                return const_cast<TranslationTable *>(&tt.table);
-        }
+    const int modeIdx = tableIndexForViewMode(showOriginal);
+    if (modeIdx >= 0)
+        return const_cast<TranslationTable *>(&tabs[modeIdx].table);
+
+    if (showOriginal)
         return currentTable ? currentTable : const_cast<TranslationTable *>(&tabs.first().table);
-    }
 
     if (curIdx >= 0 && curIdx < tabs.size() && !tabs[curIdx].isOriginal)
         return const_cast<TranslationTable *>(&tabs[curIdx].table);
@@ -4481,6 +4491,60 @@ TranslationTable *MainWindow::tableForViewMode(bool showOriginal) const
     }
 
     return currentTable ? currentTable : const_cast<TranslationTable *>(&tabs.first().table);
+}
+
+int MainWindow::tableIndexForViewMode(bool showOriginal) const
+{
+    if (!m_tablesDock)
+        return -1;
+
+    const auto &tabs = m_tablesDock->allTables();
+    if (tabs.isEmpty())
+        return -1;
+
+    const int curIdx = m_tablesDock->currentIndex();
+    if (curIdx >= 0 && curIdx < tabs.size() && tabs[curIdx].isOriginal == showOriginal)
+        return curIdx;
+
+    for (int i = 0; i < tabs.size(); ++i) {
+        if (tabs[i].isOriginal == showOriginal)
+            return i;
+    }
+
+    return -1;
+}
+
+TranslationTable *MainWindow::selectedTable() const
+{
+    if (!m_tablesDock)
+        return nullptr;
+
+    const auto &tabs = m_tablesDock->allTables();
+    if (tabs.isEmpty())
+        return nullptr;
+
+    const int curIdx = m_tablesDock->currentIndex();
+    if (curIdx >= 0 && curIdx < tabs.size())
+        return const_cast<TranslationTable *>(&tabs[curIdx].table);
+
+    return const_cast<TranslationTable *>(&tabs.first().table);
+}
+
+void MainWindow::applySelectedTable()
+{
+    if (!hexEdit)
+        return;
+
+    if (!(useTableAct && useTableAct->isChecked())) {
+        hexEdit->removeTranslationTable();
+        return;
+    }
+
+    TranslationTable *table = selectedTable();
+    if (table)
+        hexEdit->setTranslationTable(table);
+    else
+        hexEdit->removeTranslationTable();
 }
 
 void MainWindow::applyTranslationTableForViewMode()
