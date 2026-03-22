@@ -9,6 +9,8 @@ macx {
     QMAKE_BUNDLE = RTHextion
     QMAKE_INFO_PLIST = Info.plist
     LIBS += -liconv
+    OBJECTIVE_SOURCES += utils/macostheme.mm
+    HEADERS += utils/macostheme.h
 }
 
 # Windows: iconv path is passed via CI qmake arguments (INCLUDEPATH/LIBS)
@@ -36,6 +38,7 @@ HEADERS = \
     document/hexdocument.h \
     document/translationtable.h \
     document/PointerListModel.h \
+    document/theme.h \
     # dialogs
     dialogs/DumpScriptdialog.h \
     dialogs/InsertScriptDialog.h \
@@ -46,6 +49,7 @@ HEADERS = \
     dialogs/SemiAutoTableDialog.h \
     dialogs/TableEditDialog.h \
     # dockwidgets
+    dockwidgets/DockTitleBar.h \
     dockwidgets/TablesDockWidget.h \
     dockwidgets/PointersDockWidget.h \
     dockwidgets/ChangesDockWidget.h \
@@ -68,6 +72,7 @@ SOURCES = \
     document/hexdocument.cpp \
     document/translationtable.cpp \
     document/PointerListModel.cpp \
+    document/theme.cpp \
     # dialogs
     dialogs/DumpScriptdialog.cpp \
     dialogs/InsertScriptDialog.cpp \

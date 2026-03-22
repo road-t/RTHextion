@@ -28,6 +28,8 @@
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSRequiresAquaSystemAppearance</key>
+    <false/>
     <key>NSApplicationSupportsSecureRestorableState</key>
     <true/>
     <key>CFBundleDevelopmentRegion</key>
