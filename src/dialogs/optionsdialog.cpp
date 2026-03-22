@@ -10,11 +10,24 @@
 #include <QScrollArea>
 #include <QKeySequenceEdit>
 #include <QCoreApplication>
+#include <QListWidget>
+#include <QCheckBox>
+#include <QGroupBox>
+#include <QGridLayout>
+#include <QFileDialog>
+#include <QInputDialog>
+#include <QMessageBox>
+#include <QJsonDocument>
+
+#include "theme.h"
 
 namespace
 {
     const QChar kDefaultNonPrintableNoTableChar(0x25AA); // ▪
     const QChar kDefaultNotInTableChar(0x25A1);          // □
+
+    constexpr int kBplValues[] = {4,8,16,20,24,28,32,36,40,44,48,52,56,60,64,68,72,76,80};
+    constexpr int kBplCount = 19;
 
     QString sanitizeSingleChar(const QString &text, const QChar &fallback)
     {
@@ -49,8 +62,9 @@ OptionsDialog::OptionsDialog(QWidget *parent) : QDialog(parent), ui(new Ui::Opti
     m_suppressUpdate = true;
 
     initHotkeysTab();
+    initThemesTab();
 
-    resize(qMax(width(), 860), 620);
+    resize(qMax(width(), 602), 620);
 
     // Connect signals for area enable/disable logic
     connect(ui->cbAddressArea, QOverload<int>::of(&QCheckBox::stateChanged),
@@ -62,7 +76,7 @@ OptionsDialog::OptionsDialog(QWidget *parent) : QDialog(parent), ui(new Ui::Opti
     connect(ui->cbAddressArea, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
     connect(ui->cbAsciiArea, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
     connect(ui->cbHighlighting, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
-    connect(ui->cbDynamicSize, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
+    // cbDynamicSize replaced by m_cbBytesPerLine combo
     connect(ui->cbShowHexGrid, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
     connect(ui->cbShowMultibyteFrame, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
     connect(ui->cbAutoLoadRecentFile, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
@@ -87,8 +101,7 @@ OptionsDialog::OptionsDialog(QWidget *parent) : QDialog(parent), ui(new Ui::Opti
         for (const QString &e : encs)
             ui->cbDefaultEncoding->addItem(e);
     }
-    connect(ui->sbAddressAreaWidth, QOverload<int>::of(&QSpinBox::valueChanged), this, &OptionsDialog::on_spinBoxValueChanged);
-    connect(ui->sbBytesPerLine, QOverload<int>::of(&QSpinBox::valueChanged), this, &OptionsDialog::on_spinBoxValueChanged);
+    // sbAddressAreaWidth and sbBytesPerLine replaced by combos in initThemesTab
     connect(ui->leNonPrintableNoTableChar, &QLineEdit::textChanged, this, [this]()
             {
         // Only trim to 1 char while editing; don't fill empty — that's done on focus loss
@@ -118,8 +131,7 @@ OptionsDialog::OptionsDialog(QWidget *parent) : QDialog(parent), ui(new Ui::Opti
     // Connect Default button
     connect(ui->pbDefault, &QPushButton::clicked, this, &OptionsDialog::on_pbDefault_clicked);
 
-    // Connect Bytes per Line label disable
-    connect(ui->cbDynamicSize, &QCheckBox::toggled, ui->lbBytesPerLine, &QLabel::setDisabled);
+    // lbBytesPerLine and cbDynamicSize replaced by m_cbBytesPerLine combo
 
     ui->leNonPrintableNoTableChar->setMaxLength(1);
     ui->leNotInTableChar->setMaxLength(1);
@@ -149,6 +161,11 @@ void OptionsDialog::show()
     m_suppressUpdate = true;
     readSettings();
     readHotkeySettings();
+    // Sync dark mode checkbox with current setting
+    if (m_cbDarkMode) {
+        QSettings s;
+        m_cbDarkMode->setChecked(s.value(QStringLiteral("DarkTheme"), false).toBool());
+    }
     saveCurrentSettings(); // Save original settings for potential rollback
     updateAreaControls();
     m_suppressUpdate = false;
@@ -170,13 +187,17 @@ void OptionsDialog::reject()
 void OptionsDialog::saveCurrentSettings()
 {
     m_originalSettings.addressArea = ui->cbAddressArea->isChecked();
-    m_originalSettings.addressAreaWidth = ui->sbAddressAreaWidth->value();
+    m_originalSettings.addressAreaWidth = 4; // managed by hex editor drag
     m_originalSettings.asciiArea = ui->cbAsciiArea->isChecked();
     m_originalSettings.hexGridShow = ui->cbShowHexGrid->isChecked();
     m_originalSettings.highlighting = ui->cbHighlighting->isChecked();
-    m_originalSettings.autosize = ui->cbDynamicSize->isChecked();
+    m_originalSettings.autosize = m_cbBytesPerLine ? (m_cbBytesPerLine->currentIndex() == 0) : true;
     m_originalSettings.autoLoadRecentFile = ui->cbAutoLoadRecentFile->isChecked();
-    m_originalSettings.bytesPerLine = ui->sbBytesPerLine->value();
+    {
+        const int bplIdx = m_cbBytesPerLine ? m_cbBytesPerLine->currentIndex() : 0;
+        m_originalSettings.bytesPerLine =
+            (bplIdx >= 1 && bplIdx <= kBplCount) ? kBplValues[bplIdx - 1] : 32;
+    }
     m_originalSettings.highlightingColor = ui->lbHighlightingColor->palette().color(ui->lbHighlightingColor->backgroundRole());
     m_originalSettings.addressAreaColor = ui->lbAddressAreaColor->palette().color(ui->lbAddressAreaColor->backgroundRole());
     m_originalSettings.addressFontColor = ui->lbAddressFontColor->palette().color(ui->lbAddressFontColor->backgroundRole());
@@ -220,13 +241,22 @@ void OptionsDialog::restoreSettings()
 {
     m_suppressUpdate = true;
     ui->cbAddressArea->setChecked(m_originalSettings.addressArea);
-    ui->sbAddressAreaWidth->setValue(m_originalSettings.addressAreaWidth);
+    // addressAreaWidth managed by hex editor drag
     ui->cbAsciiArea->setChecked(m_originalSettings.asciiArea);
     ui->cbShowHexGrid->setChecked(m_originalSettings.hexGridShow);
     ui->cbHighlighting->setChecked(m_originalSettings.highlighting);
-    ui->cbDynamicSize->setChecked(m_originalSettings.autosize);
+    if (m_cbBytesPerLine) {
+        if (m_originalSettings.autosize) {
+            m_cbBytesPerLine->setCurrentIndex(0);
+        } else {
+            int idx = 0;
+            for (int i = 0; i < kBplCount; ++i) {
+                if (kBplValues[i] == m_originalSettings.bytesPerLine) { idx = i + 1; break; }
+            }
+            m_cbBytesPerLine->setCurrentIndex(idx);
+        }
+    }
     ui->cbAutoLoadRecentFile->setChecked(m_originalSettings.autoLoadRecentFile);
-    ui->sbBytesPerLine->setValue(m_originalSettings.bytesPerLine);
     setColor(ui->lbHighlightingColor, m_originalSettings.highlightingColor);
     setColor(ui->lbAddressAreaColor, m_originalSettings.addressAreaColor);
     setColor(ui->lbAddressFontColor, m_originalSettings.addressFontColor);
@@ -297,12 +327,27 @@ void OptionsDialog::applySettings()
 
 void OptionsDialog::readSettings()
 {
+    m_suppressUpdate = true;
     QSettings settings;
+
+    // Set combos before other widgets (so any signals see correct combo state)
+    if (m_cbBytesPerLine) {
+        if (settings.value("Autosize", true).toBool()) {
+            m_cbBytesPerLine->setCurrentIndex(0);
+        } else {
+            const int bpl = settings.value("BytesPerLine", 32).toInt();
+            int idx = 0;
+            for (int i = 0; i < kBplCount; ++i) {
+                if (kBplValues[i] == bpl) { idx = i + 1; break; }
+            }
+            m_cbBytesPerLine->setCurrentIndex(idx);
+        }
+    }
 
     ui->cbAddressArea->setChecked(settings.value("AddressArea", true).toBool());
     ui->cbAsciiArea->setChecked(settings.value("AsciiArea", true).toBool());
     ui->cbHighlighting->setChecked(settings.value("Highlighting", true).toBool());
-    ui->cbDynamicSize->setChecked(settings.value("Autosize", true).toBool());
+    // cbDynamicSize replaced by m_cbBytesPerLine combo
     ui->cbShowHexGrid->setChecked(settings.value("ShowHexGrid", true).toBool());
     ui->cbShowMultibyteFrame->setChecked(settings.value("ShowMultibyteFrame", true).toBool());
     ui->cbAutoLoadRecentFile->setChecked(settings.value("AutoLoadRecentFile", true).toBool());
@@ -348,8 +393,11 @@ void OptionsDialog::readSettings()
     ui->leNonPrintableNoTableChar->setText(sanitizeSingleChar(settings.value("NonPrintableNoTableChar", QString(kDefaultNonPrintableNoTableChar)).toString(), kDefaultNonPrintableNoTableChar));
     ui->leNotInTableChar->setText(sanitizeSingleChar(settings.value("NotInTableChar", QString(kDefaultNotInTableChar)).toString(), kDefaultNotInTableChar));
 
-    ui->sbAddressAreaWidth->setValue(settings.value("AddressAreaWidth", 8).toInt() / 2);
-    ui->sbBytesPerLine->setValue(settings.value("BytesPerLine", 32).toInt());
+    // m_cbBytesPerLine already set above
+    // AddressArea and AddressAreaWidth are managed by hex editor drag
+    m_suppressUpdate = false;
+    updateAreaControls();
+    updateSettings();
 }
 
 void OptionsDialog::writeSettings()
@@ -357,10 +405,17 @@ void OptionsDialog::writeSettings()
     QSettings settings;
     
     // Write all boolean settings
-    settings.setValue("AddressArea", ui->cbAddressArea->isChecked());
+    // AddressArea and AddressAreaWidth managed by hex editor drag (not written here)
     settings.setValue("AsciiArea", ui->cbAsciiArea->isChecked());
     settings.setValue("Highlighting", ui->cbHighlighting->isChecked());
-    settings.setValue("Autosize", ui->cbDynamicSize->isChecked());
+    if (m_cbBytesPerLine) {
+        const int bplIdx = m_cbBytesPerLine->currentIndex();
+        settings.setValue("Autosize", bplIdx == 0);
+        settings.setValue("BytesPerLine",
+            (bplIdx >= 1 && bplIdx <= kBplCount) ? kBplValues[bplIdx - 1] : 32);
+    } else {
+        settings.setValue("Autosize", true);
+    }
     settings.setValue("ShowHexGrid", ui->cbShowHexGrid->isChecked());
     settings.setValue("ShowMultibyteFrame", ui->cbShowMultibyteFrame->isChecked());
     settings.setValue("AutoLoadRecentFile", ui->cbAutoLoadRecentFile->isChecked());
@@ -398,8 +453,7 @@ void OptionsDialog::writeSettings()
     settings.setValue("WidgetFont", ui->pbWidgetFont->font());
     settings.setValue("NonPrintableNoTableChar", sanitizeSingleChar(ui->leNonPrintableNoTableChar->text(), kDefaultNonPrintableNoTableChar));
     settings.setValue("NotInTableChar", sanitizeSingleChar(ui->leNotInTableChar->text(), kDefaultNotInTableChar));
-    settings.setValue("AddressAreaWidth", ui->sbAddressAreaWidth->value() * 2);
-    settings.setValue("BytesPerLine", ui->sbBytesPerLine->value());
+    // AddressAreaWidth and BytesPerLine written above from combos
     
     // Ensure settings are persisted to disk
     settings.sync();
@@ -562,12 +616,6 @@ void OptionsDialog::on_pbPointerFrameBgColor_clicked()
     }
 }
 
-void OptionsDialog::on_cbDynamicSize_stateChanged(int)
-{
-    ui->sbBytesPerLine->setDisabled(ui->cbDynamicSize->isChecked());
-    updateSettings();
-}
-
 void OptionsDialog::on_pbHexAreaBackground_clicked()
 {
     QColor color = QColorDialog::getColor(currentSwatchColor(ui->lbHexAreaBackground), this);
@@ -700,11 +748,9 @@ void OptionsDialog::updateFontButtonText(const QFont &font)
 void OptionsDialog::updateAreaControls()
 {
     // Enable/disable Address Area controls based on checkbox
-    bool addressEnabled = ui->cbAddressArea->isChecked();
-    ui->sbAddressAreaWidth->setEnabled(addressEnabled);
+    const bool addressEnabled = ui->cbAddressArea->isChecked();
     ui->pbAddressAreaColor->setEnabled(addressEnabled);
     ui->pbAddressFontColor->setEnabled(addressEnabled);
-    ui->lbAddressAreaWidthLabel->setEnabled(addressEnabled);
 
     // Enable/disable ASCII Area controls based on checkbox
     bool asciiEnabled = ui->cbAsciiArea->isChecked();
@@ -721,15 +767,17 @@ void OptionsDialog::updateAreaControls()
     ui->pbMultibyteFrameColor->setEnabled(frameEnabled);
     ui->lbMultibyteFrameColor->setEnabled(frameEnabled);
 
-    // Disable Bytes per Line label if autosize is checked
-    ui->lbBytesPerLine->setDisabled(ui->cbDynamicSize->isChecked());
+    // Bytes per line label replaced by m_cbBytesPerLine combo
 }
 
 void OptionsDialog::on_pbDefault_clicked()
 {
     if (ui->tabWidget->currentWidget() == ui->pageHotkeys)
         resetHotkeysToDefaults();
-    else
+    else if (ui->tabWidget->currentWidget() == m_pageThemes) {
+        EditorTheme light = EditorTheme::defaultLight();
+        applyThemeToUi(light);
+    } else
         resetToDefaults();
 }
 
@@ -737,14 +785,13 @@ void OptionsDialog::resetToDefaults()
 {
     m_suppressUpdate = true;
     ui->cbAddressArea->setChecked(true);
-    ui->sbAddressAreaWidth->setValue(4);
+    // addressAreaWidth managed by hex editor drag
     ui->cbAsciiArea->setChecked(true);
     ui->cbShowHexGrid->setChecked(true);
     ui->cbShowMultibyteFrame->setChecked(true);
     ui->cbHighlighting->setChecked(true);
-    ui->cbDynamicSize->setChecked(true);
+    if (m_cbBytesPerLine) m_cbBytesPerLine->setCurrentIndex(0); // Auto
     ui->cbAutoLoadRecentFile->setChecked(true);
-    ui->sbBytesPerLine->setValue(16);
 
     setColor(ui->lbHighlightingColor, QColor(0xff, 0xff, 0x99, 0xff));
     setColor(ui->lbAddressAreaColor, this->palette().alternateBase().color());
@@ -835,7 +882,7 @@ void OptionsDialog::initHotkeysTab()
     auto *inner = new QWidget();
     auto *form  = new QFormLayout(inner);
     form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    form->setFieldGrowthPolicy(QFormLayout::FieldsStayAtSizeHint);
     form->setRowWrapPolicy(QFormLayout::DontWrapRows);
 
     // Conflict notice label (hidden until a conflict occurs)
@@ -852,7 +899,7 @@ void OptionsDialog::initHotkeysTab()
         e.label  = new QLabel(QCoreApplication::translate("MainWindow", e.displayKey));
         e.editor = new QKeySequenceEdit(
             settings.value(e.settingsKey, e.defaultSeq).value<QKeySequence>());
-        e.editor->setMaximumWidth(220);
+        e.editor->setFixedWidth(73);
 
         // Capture by value to avoid dangling references to QList elements
         QString key    = e.settingsKey;
@@ -938,4 +985,390 @@ void OptionsDialog::resolveShortcutConflict(const QString &sourceKey, const QKey
     // No conflict — hide the notice
     if (m_conflictLabel)
         m_conflictLabel->setVisible(false);
+}
+
+// ---------------------------------------------------------------------------
+// Themes tab
+// ---------------------------------------------------------------------------
+
+void OptionsDialog::initThemesTab()
+{
+    // --- Restructure the Appearance tab ---
+    // Extract pbWidgetFont and non-printable char fields from gbAuxiliary
+    auto *auxGrid = qobject_cast<QGridLayout*>(ui->gbAuxiliary->layout());
+    if (auxGrid) {
+        auxGrid->removeWidget(ui->pbWidgetFont);
+        auxGrid->removeWidget(ui->lbNonPrintableNoTableChar);
+        auxGrid->removeWidget(ui->leNonPrintableNoTableChar);
+        auxGrid->removeWidget(ui->lbNotInTableChar);
+        auxGrid->removeWidget(ui->leNotInTableChar);
+    }
+    ui->gbAuxiliary->hide();
+
+    // Delete the old Appearance tab layout
+    if (auto *hl = ui->pageFontsColors->layout()) {
+        QLayoutItem *child;
+        while ((child = hl->takeAt(0)) != nullptr) {
+            if (child->layout()) {
+                QLayoutItem *inner;
+                while ((inner = child->layout()->takeAt(0)) != nullptr) {
+                    if (inner->widget() == nullptr)
+                        delete inner;
+                }
+            }
+            if (child->widget() == nullptr)
+                delete child;
+        }
+        delete hl;
+    }
+
+    // Create address area combo: Hidden, 1 byte, 2 bytes … 8 bytes — removed (controlled by dragging)
+
+    // Create bytes-per-line combo: Auto, 4, 8, 16 … 80
+    m_cbBytesPerLine = new QComboBox();
+    m_cbBytesPerLine->addItem(tr("Auto"));
+    for (int v : kBplValues)
+        m_cbBytesPerLine->addItem(QString::number(v));
+
+    // Build "Common" QGroupBox with two-column FormLayout
+    auto *commonGroup = new QGroupBox(tr("Common"));
+    commonGroup->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Maximum);
+    auto *formLayout = new QFormLayout(commonGroup);
+    formLayout->setContentsMargins(8, 8, 8, 8);
+    formLayout->setSpacing(6);
+    formLayout->addRow(tr("Bytes per line"), m_cbBytesPerLine);
+    formLayout->addRow(ui->lbNonPrintableNoTableChar, ui->leNonPrintableNoTableChar);
+    formLayout->addRow(ui->lbNotInTableChar, ui->leNotInTableChar);
+
+    // Build Appearance tab layout
+    auto *appLayout = new QVBoxLayout(ui->pageFontsColors);
+    appLayout->setContentsMargins(8, 8, 8, 8);
+    appLayout->setSpacing(0);
+    appLayout->addWidget(commonGroup);
+    appLayout->addStretch(1);
+
+    // Connect combos for live preview
+    connect(m_cbBytesPerLine, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int) { updateSettings(); });
+
+    // --- Create the Themes tab ---
+    m_pageThemes = new QWidget();
+    ui->tabWidget->insertTab(2, m_pageThemes, tr("Themes"));
+
+    auto *mainLayout = new QHBoxLayout(m_pageThemes);
+    mainLayout->setContentsMargins(8, 8, 8, 8);
+    mainLayout->setSpacing(8);
+
+    // LEFT: Presets panel
+    auto *presetsGroup = new QGroupBox(tr("Presets"));
+    presetsGroup->setMaximumWidth(200);
+    auto *presetsVL = new QVBoxLayout(presetsGroup);
+
+    m_themeList = new QListWidget();
+    presetsVL->addWidget(m_themeList);
+
+    auto *btnApply = new QPushButton(tr("Apply"));
+    presetsVL->addWidget(btnApply);
+
+    auto *btnRow = new QHBoxLayout();
+    auto *btnImport = new QPushButton(tr("Import..."));
+    m_btnExport = new QPushButton(tr("Export..."));
+    btnRow->addWidget(btnImport);
+    btnRow->addWidget(m_btnExport);
+    presetsVL->addLayout(btnRow);
+
+    auto *btnRow2 = new QHBoxLayout();
+    auto *btnSave = new QPushButton(tr("Save..."));
+    m_btnDelete = new QPushButton(tr("Delete"));
+    btnRow2->addWidget(btnSave);
+    btnRow2->addWidget(m_btnDelete);
+    presetsVL->addLayout(btnRow2);
+
+    mainLayout->addWidget(presetsGroup);
+
+    // RIGHT: scroll area with all color/font controls
+    auto *scrollArea = new QScrollArea();
+    scrollArea->setWidgetResizable(true);
+    scrollArea->setFrameShape(QFrame::NoFrame);
+
+    auto *scrollInner = new QWidget();
+    auto *rightVL = new QVBoxLayout(scrollInner);
+    rightVL->setContentsMargins(4, 4, 4, 4);
+    rightVL->setSpacing(6);
+
+    // Dark mode checkbox
+    m_cbDarkMode = new QCheckBox(tr("Dark mode"));
+    {
+        QSettings s;
+        m_cbDarkMode->setChecked(s.value(QStringLiteral("DarkTheme"), false).toBool());
+    }
+    rightVL->addWidget(m_cbDarkMode);
+
+    // Font group
+    auto *fontGroup = new QGroupBox(tr("Font"));
+    fontGroup->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    auto *fontHL = new QHBoxLayout(fontGroup);
+    fontHL->addWidget(ui->pbWidgetFont);
+    rightVL->addWidget(fontGroup);
+
+    // Reparent color groups from old Appearance tab
+    rightVL->addWidget(ui->gbAddressArea);
+    rightVL->addWidget(ui->gbHexArea);
+    rightVL->addWidget(ui->gbAsciiArea);
+    rightVL->addWidget(ui->gbColors);
+    rightVL->addWidget(ui->gbPointers);
+    rightVL->addWidget(ui->gbMaps);
+    rightVL->addStretch(1);
+
+    scrollArea->setWidget(scrollInner);
+    mainLayout->addWidget(scrollArea, 1);
+
+    // Connect preset buttons
+    connect(btnApply, &QPushButton::clicked, this, &OptionsDialog::applySelectedTheme);
+    connect(btnSave, &QPushButton::clicked, this, &OptionsDialog::saveCurrentAsTheme);
+    connect(btnImport, &QPushButton::clicked, this, &OptionsDialog::importTheme);
+    connect(m_btnExport, &QPushButton::clicked, this, &OptionsDialog::exportTheme);
+    connect(m_btnDelete, &QPushButton::clicked, this, &OptionsDialog::deleteSelectedTheme);
+
+    // Connect dark mode checkbox
+    connect(m_cbDarkMode, &QCheckBox::toggled, this, [this](bool checked) {
+        auto *mw = qobject_cast<MainWindow*>(parent());
+        if (mw)
+            mw->toggleDarkTheme(checked);
+    });
+
+    // Disable delete/export for built-in themes
+    connect(m_themeList, &QListWidget::currentItemChanged, this,
+            [this](QListWidgetItem *current, QListWidgetItem *) {
+        const bool builtin = !current ||
+            current->data(Qt::UserRole).toString().startsWith(QLatin1String("__builtin_"));
+        if (m_btnDelete) m_btnDelete->setEnabled(!builtin);
+        if (m_btnExport) m_btnExport->setEnabled(!builtin);
+    });
+
+    populateThemeList();
+}
+
+void OptionsDialog::populateThemeList()
+{
+    m_themeList->clear();
+
+    // Built-in presets
+    auto *lightItem = new QListWidgetItem(tr("Default Light"));
+    lightItem->setData(Qt::UserRole, QStringLiteral("__builtin_light__"));
+    m_themeList->addItem(lightItem);
+
+    auto *darkItem = new QListWidgetItem(tr("Default Dark"));
+    darkItem->setData(Qt::UserRole, QStringLiteral("__builtin_dark__"));
+    m_themeList->addItem(darkItem);
+
+    // User presets
+    const QStringList userNames = EditorTheme::userPresetNames();
+    for (const QString &name : userNames) {
+        auto *item = new QListWidgetItem(name);
+        item->setData(Qt::UserRole, name);
+        m_themeList->addItem(item);
+    }
+
+    if (m_themeList->count() > 0)
+        m_themeList->setCurrentRow(0);
+}
+
+void OptionsDialog::applySelectedTheme()
+{
+    auto *item = m_themeList->currentItem();
+    if (!item) return;
+
+    const QString id = item->data(Qt::UserRole).toString();
+    EditorTheme theme;
+    if (id == QLatin1String("__builtin_light__"))
+        theme = EditorTheme::defaultLight();
+    else if (id == QLatin1String("__builtin_dark__"))
+        theme = EditorTheme::defaultDark();
+    else
+        theme = EditorTheme::loadUserPreset(id);
+
+    applyThemeToUi(theme);
+}
+
+void OptionsDialog::saveCurrentAsTheme()
+{
+    static const QStringList kBuiltinNames = { tr("Default Light"), tr("Default Dark") };
+
+    bool ok = false;
+    QString name = QInputDialog::getText(this, tr("Save Theme"),
+                                         tr("Theme name:"), QLineEdit::Normal,
+                                         QString(), &ok);
+    if (!ok || name.trimmed().isEmpty()) return;
+    name = name.trimmed();
+
+    // Prevent overwriting built-in presets
+    if (kBuiltinNames.contains(name, Qt::CaseSensitive)) {
+        QMessageBox::warning(this, tr("Save Theme"),
+            tr("\u201c%1\u201d is a built-in theme and cannot be overwritten.\nChoose a different name.").arg(name));
+        return;
+    }
+
+    // Warn before overwriting an existing user preset
+    const QStringList existing = EditorTheme::userPresetNames();
+    if (existing.contains(name)) {
+        auto btn = QMessageBox::question(this, tr("Save Theme"),
+            tr("Theme \u201c%1\u201d already exists. Replace it?").arg(name),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (btn != QMessageBox::Yes) return;
+    }
+
+    EditorTheme theme = captureThemeFromUi();
+    theme.name = name;
+    EditorTheme::saveUserPreset(theme);
+    populateThemeList();
+}
+
+void OptionsDialog::importTheme()
+{
+    static const QStringList kBuiltinNames = { tr("Default Light"), tr("Default Dark") };
+
+    const QString path = QFileDialog::getOpenFileName(
+        this, tr("Import Theme"), QString(),
+        tr("RTHextion Theme (*.rtheme);;JSON Files (*.json);;All Files (*)"));
+    if (path.isEmpty()) return;
+
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return;
+
+    QJsonParseError err;
+    QJsonDocument doc = QJsonDocument::fromJson(f.readAll(), &err);
+    f.close();
+    if (doc.isNull()) return;
+
+    EditorTheme theme = EditorTheme::fromJson(doc.object());
+
+    // Block overwriting built-in preset names
+    if (kBuiltinNames.contains(theme.name, Qt::CaseSensitive)) {
+        QMessageBox::warning(this, tr("Import Theme"),
+            tr("\u201c%1\u201d is a built-in theme and cannot be overwritten.\nRename the theme in the file and try again.").arg(theme.name));
+        return;
+    }
+
+    // Warn before overwriting an existing user preset — then save and apply
+    const QStringList existing = EditorTheme::userPresetNames();
+    if (existing.contains(theme.name)) {
+        auto btn = QMessageBox::question(this, tr("Import Theme"),
+            tr("Theme \u201c%1\u201d already exists. Replace it?").arg(theme.name),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (btn != QMessageBox::Yes) return;
+    }
+
+    EditorTheme::saveUserPreset(theme);
+    populateThemeList();
+    applyThemeToUi(theme);
+}
+
+void OptionsDialog::exportTheme()
+{
+    const QString path = QFileDialog::getSaveFileName(
+        this, tr("Export Theme"), QString(),
+        tr("RTHextion Theme (*.rtheme);;JSON Files (*.json)"));
+    if (path.isEmpty()) return;
+
+    EditorTheme theme = captureThemeFromUi();
+    QJsonDocument doc(theme.toJson());
+
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly)) return;
+    f.write(doc.toJson(QJsonDocument::Indented));
+    f.close();
+}
+
+void OptionsDialog::deleteSelectedTheme()
+{
+    auto *item = m_themeList->currentItem();
+    if (!item) return;
+
+    const QString id = item->data(Qt::UserRole).toString();
+    // Don't allow deleting built-in presets
+    if (id.startsWith(QLatin1String("__builtin_"))) return;
+
+    EditorTheme::deleteUserPreset(id);
+    populateThemeList();
+}
+
+void OptionsDialog::applyThemeToUi(const EditorTheme &theme)
+{
+    m_suppressUpdate = true;
+
+    // Dark mode
+    if (m_cbDarkMode)
+        m_cbDarkMode->setChecked(theme.darkMode);
+
+    // Font
+    ui->pbWidgetFont->setFont(theme.hexFont);
+    updateFontButtonText(theme.hexFont);
+    applyPlaceholderFieldFont(ui->leNonPrintableNoTableChar, ui->leNotInTableChar, theme.hexFont);
+
+    // Booleans
+    ui->cbHighlighting->setChecked(theme.highlighting);
+    ui->cbShowHexGrid->setChecked(theme.showHexGrid);
+    ui->cbShowMultibyteFrame->setChecked(theme.showMultibyteFrame);
+
+    // Colors
+    setColor(ui->lbHighlightingColor, theme.highlightingColor);
+    setColor(ui->lbSelectionColor, theme.selectionColor);
+    setColor(ui->lbChangesColor, theme.changesColor);
+    setColor(ui->lbCursorCharColor, theme.cursorCharColor);
+    setColor(ui->lbCursorFrameColor, theme.cursorFrameColor);
+    setColor(ui->lbAddressAreaColor, theme.addressAreaColor);
+    setColor(ui->lbAddressFontColor, theme.addressFontColor);
+    setColor(ui->lbHexAreaBackground, theme.hexAreaBgColor);
+    setColor(ui->lbHexFontColor, theme.hexFontColor);
+    setColor(ui->lbZeroByteFontColor, theme.zeroByteFontColor);
+    setColor(ui->lbHexAreaGrid, theme.hexAreaGridColor);
+    setColor(ui->lbMultibyteFrameColor, theme.multibyteFrameColor);
+    setColor(ui->lbAsciiAreaColor, theme.asciiAreaColor);
+    setColor(ui->lbAsciiFontColor, theme.asciiFontColor);
+    setColor(ui->lbPointedColor, theme.pointedColor);
+    setColor(ui->lbPointedFontColor, theme.pointedFontColor);
+    setColor(ui->lbPointerFontColor, theme.pointerFontColor);
+    setColor(ui->lbPointerFrameColor, theme.pointerFrameColor);
+    setColor(ui->lbPointerFrameBgColor, theme.pointerFrameBgColor);
+    setColor(ui->lbScrollMapPtrBgColor, theme.scrollMapPtrBgColor);
+    setColor(ui->lbScrollMapTargetBgColor, theme.scrollMapTargetBgColor);
+
+    updateAreaControls();
+    m_suppressUpdate = false;
+    updateSettings();
+}
+
+EditorTheme OptionsDialog::captureThemeFromUi() const
+{
+    EditorTheme t;
+    t.name = QStringLiteral("Current");
+    t.darkMode = m_cbDarkMode ? m_cbDarkMode->isChecked() : false;
+    t.hexFont = ui->pbWidgetFont->font();
+    t.highlighting = ui->cbHighlighting->isChecked();
+    t.showHexGrid = ui->cbShowHexGrid->isChecked();
+    t.showMultibyteFrame = ui->cbShowMultibyteFrame->isChecked();
+
+    t.highlightingColor = currentSwatchColor(ui->lbHighlightingColor);
+    t.selectionColor = currentSwatchColor(ui->lbSelectionColor);
+    t.changesColor = currentSwatchColor(ui->lbChangesColor);
+    t.cursorCharColor = currentSwatchColor(ui->lbCursorCharColor);
+    t.cursorFrameColor = currentSwatchColor(ui->lbCursorFrameColor);
+    t.addressAreaColor = currentSwatchColor(ui->lbAddressAreaColor);
+    t.addressFontColor = currentSwatchColor(ui->lbAddressFontColor);
+    t.hexAreaBgColor = currentSwatchColor(ui->lbHexAreaBackground);
+    t.hexFontColor = currentSwatchColor(ui->lbHexFontColor);
+    t.zeroByteFontColor = currentSwatchColor(ui->lbZeroByteFontColor);
+    t.hexAreaGridColor = currentSwatchColor(ui->lbHexAreaGrid);
+    t.multibyteFrameColor = currentSwatchColor(ui->lbMultibyteFrameColor);
+    t.asciiAreaColor = currentSwatchColor(ui->lbAsciiAreaColor);
+    t.asciiFontColor = currentSwatchColor(ui->lbAsciiFontColor);
+    t.pointedColor = currentSwatchColor(ui->lbPointedColor);
+    t.pointedFontColor = currentSwatchColor(ui->lbPointedFontColor);
+    t.pointerFontColor = currentSwatchColor(ui->lbPointerFontColor);
+    t.pointerFrameColor = currentSwatchColor(ui->lbPointerFrameColor);
+    t.pointerFrameBgColor = currentSwatchColor(ui->lbPointerFrameBgColor);
+    t.scrollMapPtrBgColor = currentSwatchColor(ui->lbScrollMapPtrBgColor);
+    t.scrollMapTargetBgColor = currentSwatchColor(ui->lbScrollMapTargetBgColor);
+    return t;
 }

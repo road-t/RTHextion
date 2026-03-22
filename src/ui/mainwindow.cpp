@@ -24,6 +24,10 @@
 #include <QLocale>
 #include <QTimer>
 #include <QTabWidget>
+#include <QStyleFactory>
+#ifdef Q_OS_MAC
+#include "macostheme.h"
+#endif
 #include <algorithm>
 
 #include "QtWidgets/qpushbutton.h"
@@ -1584,6 +1588,8 @@ void MainWindow::retranslateUi()
     showAddressAreaAct->setText(tr("Address area"));
     showAsciiAreaAct->setText(tr("ASCII area"));
     showAddressGridAct->setText(tr("Show grid"));
+    if (showDarkThemeAct)
+        showDarkThemeAct->setText(tr("Dark theme"));
     if (showStatusBarAct)
         showStatusBarAct->setText(tr("Status bar"));
 
@@ -1856,7 +1862,7 @@ void MainWindow::init()
     // Tables dock widget (right side)
     m_tablesDock = new TablesDockWidget(this);
     addDockWidget(Qt::RightDockWidgetArea, m_tablesDock);
-    m_tablesDock->hide();  // hidden until tables are loaded/created
+    m_tablesDock->show();  // visible by default
     connect(m_tablesDock, &TablesDockWidget::activeTableChanged,
             this, &MainWindow::onDockTableChanged);
     connect(m_tablesDock, &TablesDockWidget::tableContentChanged,
@@ -1872,7 +1878,7 @@ void MainWindow::init()
     m_pointersDock = new PointersDockWidget(this);
     m_pointersDock->setHexEdit(hexEdit);
     addDockWidget(Qt::BottomDockWidgetArea, m_pointersDock);
-    m_pointersDock->hide();
+    m_pointersDock->show();
     connect(m_pointersDock, &PointersDockWidget::findPointersRequested,
             this, &MainWindow::showPointersDialog);
 
@@ -1893,7 +1899,7 @@ void MainWindow::init()
             break;
         }
     }
-    m_changesDock->hide();
+    m_changesDock->show();
 
     // Ctrl+1..9 shortcuts for switching table tabs
     for (int i = 1; i <= 9; ++i) {
@@ -1959,6 +1965,7 @@ void MainWindow::init()
         hexEdit->ensureVisible();
         hexEdit->setFocus();
     });
+    
     createToolBars();
     createMenus();
 
@@ -2064,6 +2071,7 @@ void MainWindow::saveCurrentSession()
     m_currentSession->tableSnapshot = m_tablesDock->takeSnapshot();
     m_currentSession->tableActiveIndex = m_tablesDock->currentIndex();
     m_currentSession->tablesDockVisible = m_tablesDock->isVisible();
+    m_currentSession->tablesDockVisibilityInitialized = true;
     if (m_document)
         m_document->useTable = useTableAct && useTableAct->isChecked();
 }
@@ -2096,7 +2104,14 @@ void MainWindow::restoreSession(EditorSession *session)
     tb = m_tablesDock->currentTable();
     session->table = tb;  // keep in sync after pointer recreation
     const bool hasTables = m_tablesDock->count() > 0;
-    m_tablesDock->setVisible(session->tablesDockVisible && hasTables);
+    if (!session->tablesDockVisibilityInitialized) {
+        session->tablesDockVisible = hasTables;
+        session->tablesDockVisibilityInitialized = true;
+    }
+    if (session->tablesDockVisible)
+        m_tablesDock->show();
+    else
+        m_tablesDock->hide();
 
     useTableAct->setEnabled(hasTables);
     editTableAct->setEnabled(hasTables);
@@ -2742,6 +2757,11 @@ void MainWindow::createActions()
     showAddressGridAct->setCheckable(true);
     showAddressGridAct->setChecked(true);
 
+    showDarkThemeAct = new QAction(tr("Dark theme"), this);
+    showDarkThemeAct->setCheckable(true);
+    showDarkThemeAct->setChecked(false);
+    connect(showDarkThemeAct, &QAction::toggled, this, &MainWindow::toggleDarkTheme);
+
     connect(showStatusEndianAct, &QAction::toggled, this, [this](bool)
             { updateStatusBarVisibility(); });
     connect(showStatusByteAct, &QAction::toggled, this, [this](bool)
@@ -2957,6 +2977,8 @@ void MainWindow::createMenus()
     pointersMenu->addAction(showPointersAct);
 
     viewMenu = menuBar()->addMenu(tr("View"));
+    viewMenu->addAction(showDarkThemeAct);
+    viewMenu->addSeparator();
 
     panelsMenu = viewMenu->addMenu(tr("Panels"));
     panelsMenu->addAction(showAddressAreaAct);
@@ -3029,9 +3051,19 @@ void MainWindow::createMenus()
 
     // Dock submenu
     dockMenu = viewMenu->addMenu(tr("Dock"));
-    dockMenu->addAction(m_tablesDock->toggleViewAction());
-    dockMenu->addAction(m_pointersDock->toggleViewAction());
-    dockMenu->addAction(m_changesDock->toggleViewAction());
+    
+    // Store references to dock toggle actions and set proper text
+    tablesDockToggleAct = m_tablesDock->toggleViewAction();
+    tablesDockToggleAct->setText(tr("Tables"));
+    dockMenu->addAction(tablesDockToggleAct);
+    
+    pointersDockToggleAct = m_pointersDock->toggleViewAction();
+    pointersDockToggleAct->setText(tr("Pointers"));
+    dockMenu->addAction(pointersDockToggleAct);
+    
+    changesDockToggleAct = m_changesDock->toggleViewAction();
+    changesDockToggleAct->setText(tr("Changes"));
+    dockMenu->addAction(changesDockToggleAct);
 
     viewMenu->addSeparator();
 
@@ -3237,7 +3269,6 @@ void MainWindow::openProjectFile(const QString &path)
         hexEdit->removeTranslationTable();
         tb = nullptr;
         m_tablesDock->clearAll();
-        m_tablesDock->hide();
         useTableAct->setChecked(false);
         useTableAct->setEnabled(false);
         editTableAct->setEnabled(false);
@@ -3347,12 +3378,7 @@ void MainWindow::openProjectFile(const QString &path)
     doc.restorePointers(hexEdit->pointers());
     pointersUpdated();
 
-    // 6. Navigation history
-    navigationHistory = doc.navigationHistory;
-    navigationHistoryIndex = doc.navigationHistoryIndex;
-    updateNavigationActions();
-
-    // 6.5. Cursor position
+    // 6. Cursor position
     if (doc.cursorPosition > 0) {
         hexEdit->setCursorPosition(doc.cursorPosition);
         hexEdit->ensureVisible();
@@ -3383,17 +3409,18 @@ void MainWindow::openProjectFile(const QString &path)
     m_changesDock->setHexMode(doc.changesHexMode);
     toggleShowChanges();
 
-    // Restore dock visibility snapshot from project file.
-    m_tablesDock->setVisible(hasTables && doc.tablesDockVisible);
-    m_pointersDock->setVisible(doc.pointersDockVisible);
-    m_changesDock->setVisible(doc.changesDockVisible && !m_document->originalBytes.isEmpty());
+    // Restore dock layout (positions/sizes) from project, then ensure all docks are always visible.
+    if (!doc.dockLayoutState.isEmpty())
+        restoreState(doc.dockLayoutState);
+    m_tablesDock->show();
+    m_pointersDock->show();
+    m_changesDock->show();
 
     m_restoringProjectUi = false;
     m_projectModified = false;
     if (!m_document->originalBytes.isEmpty()) {
         refreshChangesView();
-        if (m_changesDock->isVisible())
-            enforceBottomDockEqualWidth();
+        enforceBottomDockEqualWidth();
     }
 
     // Keep the current tab session snapshot in sync with the just-loaded project.
@@ -3450,16 +3477,12 @@ bool MainWindow::saveProjectImpl(const QString &path)
     m_document->currentEncoding = m_currentEncoding;
     m_document->romType = m_detectedRomType;
     m_document->byteOrder = hexEdit->byteOrder;
-    m_document->navigationHistory = navigationHistory;
-    m_document->navigationHistoryIndex = navigationHistoryIndex;
     m_document->cursorPosition = hexEdit->cursorPosition();
     m_document->snapshotPointers(hexEdit->pointers());
     m_document->showPointers = showPointersAct && showPointersAct->isChecked();
     m_document->showChanges  = showChangesAct  && showChangesAct->isChecked();
     m_document->changesHexMode = m_changesDock && m_changesDock->hexMode();
-    m_document->tablesDockVisible = m_tablesDock && m_tablesDock->isVisible();
-    m_document->pointersDockVisible = m_pointersDock && m_pointersDock->isVisible();
-    m_document->changesDockVisible = m_changesDock && m_changesDock->isVisible();
+    m_document->dockLayoutState = saveState();
 
     // Recompute tracked diffs byte-by-byte.
     // If project already has an original baseline (e.g. loaded via "Load original"),
@@ -3741,6 +3764,12 @@ void MainWindow::readSettings()
     move(pos);
     resize(size);
 
+    const bool darkTheme = settings.value("DarkTheme", false).toBool();
+    if (showDarkThemeAct)
+        showDarkThemeAct->setChecked(darkTheme);
+    else
+        applyDarkTheme(darkTheme);
+
 
     hexEdit->setAddressArea(settings.value("AddressArea", true).toBool());
     hexEdit->setAsciiArea(settings.value("AsciiArea", true).toBool());
@@ -3791,6 +3820,11 @@ void MainWindow::readSettings()
     const QByteArray windowState = settings.value(kMainWindowStateKey).toByteArray();
     if (!windowState.isEmpty())
         restoreState(windowState);
+
+    // Always show all dock panels regardless of saved state
+    if (m_tablesDock) m_tablesDock->show();
+    if (m_pointersDock) m_pointersDock->show();
+    if (m_changesDock) m_changesDock->show();
 
     // Restore dock column states
     if (m_pointersDock)
@@ -3964,6 +3998,54 @@ void MainWindow::updateNavigationActions()
         toFileBeginningAct->setEnabled(hexEdit && hexEdit->data().size() > 0);
     if (toFileEndAct)
         toFileEndAct->setEnabled(hexEdit && hexEdit->data().size() > 0);
+}
+
+void MainWindow::toggleDarkTheme(bool enabled)
+{
+    applyDarkTheme(enabled);
+    QSettings settings;
+    settings.setValue("DarkTheme", enabled);
+}
+
+void MainWindow::applyDarkTheme(bool enabled)
+{
+#ifdef Q_OS_MAC
+    setMacOSDarkMode(enabled);
+#else
+    if (!m_lightPaletteCaptured) {
+        m_lightPalette = qApp->palette();
+        m_lightStyleName = qApp->style()->objectName();
+        m_lightPaletteCaptured = true;
+    }
+
+    if (enabled) {
+        QApplication::setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
+        QPalette dark;
+        dark.setColor(QPalette::Window, QColor(53, 53, 53));
+        dark.setColor(QPalette::WindowText, Qt::white);
+        dark.setColor(QPalette::Base, QColor(35, 35, 35));
+        dark.setColor(QPalette::AlternateBase, QColor(53, 53, 53));
+        dark.setColor(QPalette::ToolTipBase, Qt::white);
+        dark.setColor(QPalette::ToolTipText, Qt::white);
+        dark.setColor(QPalette::Text, Qt::white);
+        dark.setColor(QPalette::Button, QColor(53, 53, 53));
+        dark.setColor(QPalette::ButtonText, Qt::white);
+        dark.setColor(QPalette::BrightText, Qt::red);
+        dark.setColor(QPalette::Highlight, QColor(42, 130, 218));
+        dark.setColor(QPalette::HighlightedText, Qt::black);
+        qApp->setPalette(dark);
+    } else {
+        if (!m_lightStyleName.isEmpty())
+            QApplication::setStyle(QStyleFactory::create(m_lightStyleName));
+        qApp->setPalette(m_lightPalette);
+    }
+#endif
+    if (m_tabWidget)
+        m_tabWidget->update();
+    if (statusBar())
+        statusBar()->update();
+    if (hexEdit)
+        hexEdit->update();
 }
 
 void MainWindow::updateHexEditorSettings()

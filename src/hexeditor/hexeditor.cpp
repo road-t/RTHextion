@@ -11,6 +11,7 @@
 #include <QProgressDialog>
 #include <QTimer>
 #include <QSet>
+#include <QSettings>
 #include <QUndoCommand>
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 #include <QStringDecoder>
@@ -35,7 +36,6 @@ namespace
     const int kAsciiColumnGapWidePx = 3;   // spacing for wide/multi-byte glyphs
     const int kPointerByteSize = 4;
     const int kScrollMapWidth = 12;   // width of the side-bar scroll map strip in pixels
-    const int kAddressCollapsedStubPx = 10; // visible width of address area when collapsed
 
     // Returns true for encodings that are always one-byte-per-character
     bool isSingleByteEncoding(const QString &enc)
@@ -1600,24 +1600,6 @@ bool HexEditor::showChanges()
     return _showChanges;
 }
 
-void HexEditor::setAddressCollapsed(bool collapsed)
-{
-    if (_addressCollapsed == collapsed)
-        return;
-    _addressCollapsed = collapsed;
-    if (_dynamicBytesPerLine)
-        resizeEvent(nullptr);
-    else
-        adjust();
-    viewport()->update();
-    emit addressCollapsedChanged(collapsed);
-}
-
-bool HexEditor::addressCollapsed() const
-{
-    return _addressCollapsed;
-}
-
 void HexEditor::setOriginalData(const QByteArray &data)
 {
     _originalData = data;
@@ -2649,6 +2631,32 @@ void HexEditor::mouseMoveEvent(QMouseEvent *event)
     _blink = false;
     viewport()->update();
 
+    // Handle address area boundary drag (resize by 1 byte per step)
+    if (_addrDragging && _addressArea)
+    {
+        const int pixelDelta = event->x() - _addrDragStartX;
+        const int pixelsPerByte = 2 * _pxCharWidth;  // 2 hex digits per byte
+        const int byteDelta = pixelDelta / pixelsPerByte;
+        if (byteDelta != 0)
+        {
+            const int currentBytes = _addressWidth / 2;
+            const int newBytes = qBound(1, currentBytes + byteDelta, 8);
+            const int newWidth = newBytes * 2;  // hex digits
+            if (newWidth != _addressWidth)
+            {
+                _addrDragStartX += byteDelta * pixelsPerByte;
+                _addressWidth = newWidth;
+                if (_dynamicBytesPerLine)
+                    resizeEvent(nullptr);
+                else
+                    adjust();
+                viewport()->update();
+            }
+        }
+        viewport()->setCursor(Qt::SizeHorCursor);
+        return;
+    }
+
     // Handle separator dragging (only when autosize is OFF and ASCII area visible)
     if (_separatorDragging && !_dynamicBytesPerLine && _asciiArea)
     {
@@ -2769,14 +2777,16 @@ void HexEditor::mousePressEvent(QMouseEvent *event)
     _blink = false;
     viewport()->update();
 
-    // Address/hex boundary: click collapses or expands the address area
+    // Address/hex boundary: start drag to resize address area by 1 byte per step
     if (_addressArea && event->button() == Qt::LeftButton)
     {
         const int pxOfsX = horizontalScrollBar()->value();
         const int addrSepX = _pxPosHexX - _pxGapAdrHex - pxOfsX;
         if (std::abs(event->x() - addrSepX) < 8)
         {
-            setAddressCollapsed(!_addressCollapsed);
+            _addrDragging = true;
+            _addrDragStartX = event->x();
+            viewport()->setCursor(Qt::SizeHorCursor);
             return;
         }
     }
@@ -2851,6 +2861,18 @@ void HexEditor::mousePressEvent(QMouseEvent *event)
 
 void HexEditor::mouseReleaseEvent(QMouseEvent *event)
 {
+    // End address area drag
+    if (_addrDragging)
+    {
+        _addrDragging = false;
+        viewport()->setCursor(Qt::ArrowCursor);
+        // Persist the new address width to QSettings
+        QSettings s;
+        s.setValue(QStringLiteral("AddressAreaWidth"), _addressWidth);
+        event->accept();
+        return;
+    }
+
     // End separator dragging
     if (_separatorDragging)
     {
@@ -2936,22 +2958,6 @@ void HexEditor::paintEvent(QPaintEvent *event)
         {
             painter.fillRect(QRect(-pxOfsX, event->rect().top(), _pxPosHexX - _pxGapAdrHex, height()), _addressAreaColor);
 
-            if (_addressCollapsed)
-            {
-                // Draw a small right-pointing triangle as expand indicator
-                const int midY = viewport()->height() / 2;
-                const int aw = kAddressCollapsedStubPx - 4;
-                const int ah = kAddressCollapsedStubPx - 4;
-                QPolygon tri;
-                tri << QPoint(-pxOfsX + 1,      midY - ah / 2)
-                    << QPoint(-pxOfsX + 1,      midY + ah / 2)
-                    << QPoint(-pxOfsX + aw + 1, midY);
-                painter.setBrush(QBrush(_addressFontColor));
-                painter.setPen(Qt::NoPen);
-                painter.drawPolygon(tri);
-                painter.setPen(viewport()->palette().color(QPalette::WindowText));
-            }
-            else
             {
                 QString address;
                 auto rowsCount = (_dataShown.size() / _bytesPerLine);
@@ -2961,9 +2967,16 @@ void HexEditor::paintEvent(QPaintEvent *event)
                 boldFont.setBold(true);
                 painter.setFont(boldFont);
 
+                // Mask to lower _addrDigits hex digits so wide addresses wrap gracefully
+                const int maskBitsCount = _addrDigits * 4;
+                const quint64 addrMask = (maskBitsCount >= 64) ? ~quint64(0)
+                                                                : ((quint64(1) << maskBitsCount) - 1);
+
                 for (int row = 0, pxPosY = _pxCharHeight; row <= rowsCount; row++, pxPosY += rowStridePx)
                 {
-                    address = QString("%1").arg(_bPosFirst + row * _bytesPerLine + _addressOffset, _addrDigits, 16, QChar('0'));
+                    const qint64 rawAddr = _bPosFirst + row * _bytesPerLine + _addressOffset;
+                    const quint64 maskedAddr = static_cast<quint64>(rawAddr) & addrMask;
+                    address = QString("%1").arg(maskedAddr, _addrDigits, 16, QChar('0'));
                     painter.setPen(QPen(_addressFontColor));
                     painter.drawText(_pxPosAdrX - pxOfsX, pxPosY, hexCaps() ? address.toUpper() : address);
                 }
@@ -3547,9 +3560,7 @@ void HexEditor::resizeEvent(QResizeEvent *)
         {
             const int addrDigits = _addressArea ? addressWidth() : 0;
             const int pxPosHexX = _addressArea
-                                      ? (_addressCollapsed
-                                             ? (kAddressCollapsedStubPx + _pxGapAdrHex)
-                                             : (_pxGapAdr + addrDigits * _pxCharWidth + _pxGapAdrHex + kAddressRightPaddingPx))
+                                      ? (_pxGapAdr + addrDigits * _pxCharWidth + _pxGapAdrHex + kAddressRightPaddingPx)
                                       : _pxGapAdrHex;
             const int candidateHexCharsInLine = candidateBpl * 3 - 1;
             const int pxHexEndX = pxPosHexX + candidateHexCharsInLine * _pxCharWidth + (candidateBpl - 1) * kHexColumnExtraGapPx;
@@ -3670,16 +3681,8 @@ void HexEditor::adjust()
     // recalc Graphics
     if (_addressArea)
     {
-        if (_addressCollapsed)
-        {
-            _addrDigits = addressWidth(); // keep digits accurate for restore
-            _pxPosHexX = kAddressCollapsedStubPx + _pxGapAdrHex;
-        }
-        else
-        {
-            _addrDigits = addressWidth();
-            _pxPosHexX = _pxGapAdr + _addrDigits * _pxCharWidth + _pxGapAdrHex + kAddressRightPaddingPx;
-        }
+        _addrDigits = addressWidth();
+        _pxPosHexX = _pxGapAdr + _addrDigits * _pxCharWidth + _pxGapAdrHex + kAddressRightPaddingPx;
     }
     else
         _pxPosHexX = _pxGapAdrHex;

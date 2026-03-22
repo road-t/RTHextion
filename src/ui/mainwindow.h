@@ -4,6 +4,7 @@
 #include <QMainWindow>
 #include <QByteArray>
 #include <QVector>
+#include <QPalette>
 
 #include "langtranslator.h"
 #include "translationtable.h"
@@ -121,6 +122,9 @@ private slots:
     void onTabChanged(int index);
     void onTabCloseRequested(int index);
 
+public slots:
+    void toggleDarkTheme(bool enabled);
+
 public:
     void loadFile(const QString &fileName);
     void loadFileInNewTab(const QString &fileName);
@@ -182,6 +186,7 @@ private:
     QString detectSystemLanguage();
     void applyLanguage(const QString &language);
     bool saveProjectImpl(const QString &path);
+    void applyDarkTheme(bool enabled);
 
     // ---- Tab / session management ----
     QTabWidget *m_tabWidget = nullptr;
@@ -325,8 +330,14 @@ private:
     QAction *showAddressAreaAct;
     QAction *showAsciiAreaAct;
     QAction *showAddressGridAct;
+    QAction *showDarkThemeAct = nullptr;
     QAction *showMapPointersAct;
     QAction *showMapTargetsAct;
+
+    // Dock visibility toggle actions
+    QAction *tablesDockToggleAct = nullptr;
+    QAction *pointersDockToggleAct = nullptr;
+    QAction *changesDockToggleAct = nullptr;
 
     HexEditor *hexEdit;
     OptionsDialog *optionsDialog;
@@ -353,6 +364,10 @@ private:
     QLabel *lbEncoding = nullptr;
 
     RomType m_detectedRomType = RomType::Unknown;
+
+    QPalette m_lightPalette;
+    QString m_lightStyleName;
+    bool m_lightPaletteCaptured = false;
     QString m_currentEncoding = QStringLiteral("ASCII");
     QString m_readyText;
     QVector<qint64> navigationHistory;

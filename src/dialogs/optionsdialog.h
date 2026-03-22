@@ -9,6 +9,10 @@
 
 class QLabel;
 class QKeySequenceEdit;
+class QListWidget;
+class QPushButton;
+class QCheckBox;
+class QComboBox;
 
 namespace Ui {
     class OptionsDialog;
@@ -48,7 +52,6 @@ private slots:
     void on_pbCursorCharColor_clicked();
     void on_pbCursorFrameColor_clicked();
     void on_pbChangesColor_clicked();
-    void on_cbDynamicSize_stateChanged(int);
     void on_pbHexAreaBackground_clicked();
     void on_pbHexAreaGrid_clicked();
     void on_cbShowMultibyteFrame_stateChanged(int);
@@ -88,6 +91,24 @@ private:
     void resetHotkeysToDefaults();
     void retranslateHotkeys();
     void resolveShortcutConflict(const QString &sourceKey, const QKeySequence &seq);
+
+    // Themes tab
+    void initThemesTab();
+    void populateThemeList();
+    void applySelectedTheme();
+    void saveCurrentAsTheme();
+    void importTheme();
+    void exportTheme();
+    void deleteSelectedTheme();
+    void applyThemeToUi(const struct EditorTheme &theme);
+    struct EditorTheme captureThemeFromUi() const;
+
+    QWidget     *m_pageThemes = nullptr;
+    QListWidget *m_themeList = nullptr;
+    QCheckBox   *m_cbDarkMode = nullptr;
+    QComboBox   *m_cbBytesPerLine = nullptr;
+    QPushButton *m_btnDelete = nullptr;
+    QPushButton *m_btnExport = nullptr;
 
     QList<HotkeyEntry>          m_hotkeys;
     QMap<QString, QKeySequence> m_originalHotkeys;
