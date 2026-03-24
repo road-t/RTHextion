@@ -96,6 +96,31 @@ inline RomType detectN64ByHeader(const QByteArray &header)
     return RomType::Unknown;
 }
 
+inline RomType detectSnesMapperByHeader(const QByteArray &header, bool hasCopierHeader)
+{
+    const int loMapModeOffset = hasCopierHeader ? 0x81D5 : 0x7FD5;
+    const int hiMapModeOffset = hasCopierHeader ? 0x101D5 : 0xFFD5;
+
+    auto readMode = [&header](int offset) -> int {
+        if (offset < 0 || offset >= header.size())
+            return -1;
+        return static_cast<unsigned char>(header.at(offset));
+    };
+
+    const int loMode = readMode(loMapModeOffset);
+    const int hiMode = readMode(hiMapModeOffset);
+
+    const bool loLooksLoROM = (loMode == 0x20 || loMode == 0x30);
+    const bool hiLooksHiROM = (hiMode == 0x21 || hiMode == 0x31);
+
+    if (hiLooksHiROM && !loLooksLoROM)
+        return hasCopierHeader ? RomType::SNES_HIROM_SMC : RomType::SNES_HIROM;
+    if (loLooksLoROM && !hiLooksHiROM)
+        return hasCopierHeader ? RomType::SNES_SMC : RomType::SNES;
+
+    return RomType::Unknown;
+}
+
 /// Detect ROM type from filename extension and (optionally) header bytes.
 /// @param filePath  Full path to file being opened.
 /// @param header    First ≥ 512 bytes of the file (as much as available).
@@ -117,9 +142,11 @@ inline RomType detectRomType(const QString &filePath, const QByteArray &header)
     case RomExt::FIG: {
         // A 512-byte copier header is present when file size % 1024 == 512
         const qint64 fileSize = QFileInfo(filePath).size();
-        if (fileSize > 512 && (fileSize % 1024) == 512)
-            return RomType::SNES_SMC;
-        return RomType::SNES;
+        const bool hasCopierHeader = (fileSize > 512 && (fileSize % 1024) == 512);
+        const RomType mapper = detectSnesMapperByHeader(header, hasCopierHeader);
+        if (mapper != RomType::Unknown)
+            return mapper;
+        return hasCopierHeader ? RomType::SNES_SMC : RomType::SNES;
     }
 
     case RomExt::GB:
@@ -301,6 +328,7 @@ inline int defaultPointerSize(RomType type)
 inline qint64 defaultPointerOffset(RomType type)
 {
     switch (type) {
+    case RomType::Unknown:          return 0x10;
     case RomType::NES:              return -0x7FF0;  // -($8000 - $10) — iNES 16-byte header
     case RomType::SNES:             return -0x8000;    // LoROM headerless (.sfc)
     case RomType::SNES_SMC:         return -0x7E00;    // LoROM + 512-byte copier header (-$8000 + $200)
@@ -325,7 +353,7 @@ inline qint64 defaultPointerOffset(RomType type)
     case RomType::Atari2600:        return -0xF000;  // 4K ROM at $F000
     case RomType::Atari5200:        return 0;
     case RomType::Atari7800:        return 0;
-    default:                        return 0;
+    default:                        return 0x10;
     }
 }
 
