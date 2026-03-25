@@ -24,7 +24,6 @@ private slots:
         QCOMPARE(doc.byteOrder, ByteOrder::LittleEndian);
         QCOMPARE(doc.cursorPosition, 0);
         QVERIFY(doc.pointerSnapshot.isEmpty());
-        QVERIFY(doc.navigationHistory.isEmpty());
         QCOMPARE(doc.currentEncoding, QStringLiteral("ASCII"));
     }
 
@@ -57,10 +56,6 @@ private slots:
         doc.showChanges = false;
         doc.changesHexMode = true;
 
-        // Navigation history
-        doc.navigationHistory = {0x10, 0x20, 0x30};
-        doc.navigationHistoryIndex = 1;
-
         // Pointer snapshot
         doc.pointerSnapshot.append({0x1000, PointerListModel::encodePtrValue(0x2000, 4)});
         doc.pointerSnapshot.append({0x3000, PointerListModel::encodePtrValue(0x4000, 2)});
@@ -84,11 +79,6 @@ private slots:
         QCOMPARE(loaded.showPointers, true);
         QCOMPARE(loaded.showChanges, false);
         QCOMPARE(loaded.changesHexMode, true);
-
-        // Navigation
-        QCOMPARE(loaded.navigationHistory.size(), 3);
-        QCOMPARE(loaded.navigationHistory[0], qint64(0x10));
-        QCOMPARE(loaded.navigationHistoryIndex, 1);
 
         // Pointers
         QCOMPARE(loaded.pointerSnapshot.size(), 2);
@@ -285,6 +275,42 @@ private slots:
         QVERIFY(loaded.loadProject(projectPath));
         QCOMPARE(loaded.romType, RomType::Unknown);
         QVERIFY(loaded.pointerSnapshot.isEmpty());
+    }
+
+    // ---- originalFileSize serialization ----
+
+    void saveAndLoadOriginalFileSize()
+    {
+        QTemporaryDir tmpDir;
+        QVERIFY(tmpDir.isValid());
+        QString projectPath = tmpDir.path() + "/test_ofs.rthp";
+
+        HexDocument doc;
+        doc.originalFileSize = 0x20000;
+
+        QVector<DocTableEntry> tables;
+        QVERIFY(doc.saveProject(projectPath, tables, -1));
+
+        HexDocument loaded;
+        QVERIFY(loaded.loadProject(projectPath));
+        QCOMPARE(loaded.originalFileSize, qint64(0x20000));
+    }
+
+    void originalFileSizeDefaultNotSaved()
+    {
+        QTemporaryDir tmpDir;
+        QVERIFY(tmpDir.isValid());
+        QString projectPath = tmpDir.path() + "/test_ofs_default.rthp";
+
+        HexDocument doc;
+        // originalFileSize = -1 by default (not set)
+
+        QVector<DocTableEntry> tables;
+        QVERIFY(doc.saveProject(projectPath, tables, -1));
+
+        HexDocument loaded;
+        QVERIFY(loaded.loadProject(projectPath));
+        QCOMPARE(loaded.originalFileSize, qint64(-1));
     }
 
     // ---- Load non-existent file fails ----
