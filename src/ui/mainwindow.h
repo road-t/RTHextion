@@ -14,7 +14,6 @@
 #include "searchdialog.h"
 #include "pointersdialog.h"
 #include "JumpToDialog.h"
-#include "TableEditDialog.h"
 #include "TablesDockWidget.h"
 #include "PointersDockWidget.h"
 #include "ChangesDockWidget.h"
@@ -50,6 +49,7 @@ protected:
     void changeEvent(QEvent *event) override;
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dropEvent(QDropEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private slots:
     void about();
@@ -107,6 +107,7 @@ private slots:
     void openRecentProject();
     void openProject();
     void openProjectFile(const QString &path);
+    void restoreDockLayout();
     bool saveProject();
     bool saveProjectAs();
     void toggleShowChanges();
@@ -131,8 +132,10 @@ public:
     void updateHexEditorSettings();
     void applyShortcutsFromSettings();
     RomType currentRomType() const { return m_detectedRomType; }
-    int currentPointerSize() const { return defaultPointerSize(m_detectedRomType); }
-    qint64 currentPointerOffset() const { return defaultPointerOffset(m_detectedRomType); }
+    int currentPointerSize() const { return m_pointerSize; }
+    qint64 currentPointerOffset() const { return m_pointerOffset; }
+    void setCurrentPointerOffset(qint64 offset);
+    void setCurrentPointerSize(int size);
 
 private:
     void init();
@@ -179,6 +182,7 @@ private:
     void repopulateRomTypeCombo();
     void syncRomTypeMenu(int index);
     void syncEncodingMenu();
+    void openEncodingSelectionDialog();
     void pushNavigationPosition(qint64 position);
     void resetNavigationHistory();
     void navigateToHistoryIndex(int index);
@@ -187,6 +191,9 @@ private:
     void applyLanguage(const QString &language);
     bool saveProjectImpl(const QString &path);
     void applyDarkTheme(bool enabled);
+    void setDockAreaCollapsed(Qt::DockWidgetArea area, bool collapsed);
+    bool isDockAreaCollapsed(Qt::DockWidgetArea area) const;
+    void updateDockAreaActions();
 
     // ---- Tab / session management ----
     QTabWidget *m_tabWidget = nullptr;
@@ -333,6 +340,10 @@ private:
     QAction *showDarkThemeAct = nullptr;
     QAction *showMapPointersAct;
     QAction *showMapTargetsAct;
+    QAction *restoreDockLayoutAct = nullptr;
+    QAction *collapseLeftDockAreaAct = nullptr;
+    QAction *collapseRightDockAreaAct = nullptr;
+    QAction *collapseBottomDockAreaAct = nullptr;
 
     // Dock visibility toggle actions
     QAction *tablesDockToggleAct = nullptr;
@@ -344,7 +355,6 @@ private:
     SearchDialog *searchDialog;
     JumpToDialog *jumpToDialog;
     PointersDialog *pointersDialog;
-    TableEditDialog *tableEditDialog;
     SemiAutoTableDialog *semiAutoTableDialog;
     DumpScriptDialog *dumpScriptDialog;
     InsertScriptDialog *insertScriptDialog;
@@ -364,6 +374,8 @@ private:
     QLabel *lbEncoding = nullptr;
 
     RomType m_detectedRomType = RomType::Unknown;
+    qint64 m_pointerOffset = defaultPointerOffset(RomType::Unknown);
+    int m_pointerSize = 4;
 
     QPalette m_lightPalette;
     QString m_lightStyleName;

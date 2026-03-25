@@ -5,7 +5,6 @@
 #include <QTableView>
 #include <QToolBar>
 #include <QAction>
-#include <QLabel>
 #include <QToolButton>
 #include <QPointer>
 
@@ -32,6 +31,9 @@ public:
     /// Refresh the view (e.g. after external model changes).
     void refreshView();
 
+    void setCollapsed(bool collapsed);
+    bool isCollapsed() const;
+
     void retranslateUi();
 
 signals:
@@ -51,6 +53,10 @@ private slots:
     void addPointer();
     void deleteSelectedPointers();
     void cleanAllPointers();
+    void showContextMenu(const QPoint &pos);
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
     void updateButtonStates();
@@ -64,9 +70,10 @@ private:
     QAction            *m_addAct     = nullptr;
     QAction            *m_deleteAct  = nullptr;
     QAction            *m_cleanAllAct = nullptr;
-    QLabel             *m_titleLabel = nullptr;
-    QToolButton        *m_collapseBtn = nullptr;
     QToolButton        *m_showPointersBtn = nullptr;
+    bool                m_collapsed = false;
+    int                 m_savedExpandedWidth = -1;
+    int                 m_savedExpandedHeight = -1;
 };
 
 #endif // POINTERSDOCKWIDGET_H

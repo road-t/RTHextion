@@ -303,6 +303,8 @@ public:
      */
     bool isModified();
 
+    void setModified(bool modified);
+
     bool canUndo();
     bool canRedo();
 
@@ -485,6 +487,8 @@ public:
 
     void setChangedPositions(const QSet<qint64> &positions);
     void clearChangedPositions();
+    void setChangedRange(qint64 start, qint64 end);
+    void clearChangedRange();
 
     bool showPointers();
     void setShowPointers(bool mode);
@@ -696,6 +700,7 @@ private:
     int           _scrollMapCurrentMargin = 0;     // currently applied right viewport margin
     QTimer       *_scrollMapTimer   = nullptr;  // debounce before launching computation
     QFutureWatcher<ScrollMapMarkers> *_scrollMapWatcher = nullptr;  // background computation
+    bool _baseModified = false;                  // Externally modified (IPS patch, etc.) — survives undo stack reset
     bool _modified;                             // Is any data in editor modified?
     int _rowsShown;                             // lines of text shown
     UndoStack * _undoStack;                     // Stack to store edit actions for undo/redo
@@ -717,6 +722,8 @@ private:
     QChar _nonPrintableNoTableChar = QChar(0x25AA); // ▪
     QChar _notInTableChar = QChar(0x25A1);          // □
     QSet<qint64> _changedPositions;                 // byte positions with project-level changes
+    qint64 _changedRangeStart = -1;
+    qint64 _changedRangeEnd = -1;
     /*! \endcond docNever */
 };
 

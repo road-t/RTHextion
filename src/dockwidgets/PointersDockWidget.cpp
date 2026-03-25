@@ -1,6 +1,7 @@
 #include "PointersDockWidget.h"
 #include "PointerListModel.h"
 #include "hexeditor/hexeditor.h"
+#include "DockTitleBar.h"
 
 #include <QPainter>
 #include <QPainterPath>
@@ -12,6 +13,9 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QItemSelectionModel>
+#include <QMainWindow>
+#include <QMenu>
+#include <QKeyEvent>
 
 PointersDockWidget::PointersDockWidget(QWidget *parent)
     : QDockWidget(parent)
@@ -19,27 +23,6 @@ PointersDockWidget::PointersDockWidget(QWidget *parent)
     setWindowTitle(tr("Pointers"));
     setObjectName(QStringLiteral("PointersDockWidget"));
     setFeatures(QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetFloatable | QDockWidget::DockWidgetMovable);
-
-    // Custom title bar with collapse button
-    auto *titleBar = new QWidget(this);
-    titleBar->setObjectName(QStringLiteral("dockTitleBar"));
-    titleBar->setFixedHeight(16);
-    auto *titleLayout = new QHBoxLayout(titleBar);
-    titleLayout->setContentsMargins(4, 0, 2, 0);
-    titleLayout->setSpacing(1);
-    m_titleLabel = new QLabel(tr("Pointers"), titleBar);
-    QFont smallFont = m_titleLabel->font();
-    smallFont.setPointSizeF(smallFont.pointSizeF() * 0.8);
-    m_titleLabel->setFont(smallFont);
-    titleLayout->addWidget(m_titleLabel);
-    titleLayout->addStretch();
-    m_collapseBtn = new QToolButton(titleBar);
-    m_collapseBtn->setArrowType(Qt::DownArrow);
-    m_collapseBtn->setAutoRaise(true);
-    m_collapseBtn->setFixedSize(14, 14);
-    m_collapseBtn->setToolTip(tr("Collapse / Expand"));
-    titleLayout->addWidget(m_collapseBtn);
-    setTitleBarWidget(titleBar);
 
     auto *container = new QWidget(this);
     m_contentWidget = container;
@@ -97,7 +80,7 @@ PointersDockWidget::PointersDockWidget(QWidget *parent)
     m_toolbar->addSeparator();
     m_addAct     = m_toolbar->addAction(tr("Add"),       this, &PointersDockWidget::addPointer);
     m_deleteAct  = m_toolbar->addAction(tr("Delete"),    this, &PointersDockWidget::deleteSelectedPointers);
-    m_cleanAllAct = m_toolbar->addAction(tr("Clean all"), this, &PointersDockWidget::cleanAllPointers);
+    m_cleanAllAct = m_toolbar->addAction(tr("Drop all"), this, &PointersDockWidget::cleanAllPointers);
     layout->addWidget(m_toolbar);
 
     // Table view
@@ -108,18 +91,16 @@ PointersDockWidget::PointersDockWidget(QWidget *parent)
     m_view->setSortingEnabled(true);
     m_view->setAlternatingRowColors(true);
     m_view->verticalHeader()->setDefaultSectionSize(22);
+    m_view->setContextMenuPolicy(Qt::CustomContextMenu);
+    m_view->installEventFilter(this);
     connect(m_view, &QTableView::doubleClicked,
             this, &PointersDockWidget::onDoubleClicked);
+    connect(m_view, &QTableView::customContextMenuRequested,
+            this, &PointersDockWidget::showContextMenu);
     layout->addWidget(m_view);
 
     setWidget(container);
     updateButtonStates();
-
-    connect(m_collapseBtn, &QToolButton::clicked, this, [this]() {
-        const bool visible = m_contentWidget->isVisible();
-        m_contentWidget->setVisible(!visible);
-        m_collapseBtn->setArrowType(visible ? Qt::RightArrow : Qt::DownArrow);
-    });
 }
 
 void PointersDockWidget::setHexEdit(HexEditor *hexEdit)
@@ -139,7 +120,7 @@ void PointersDockWidget::setHexEdit(HexEditor *hexEdit)
     m_hexEdit = hexEdit;
     m_model = m_hexEdit ? m_hexEdit->pointers() : nullptr;
     if (m_model)
-        m_model->setSectionNames(QStringList() << tr("#") << tr("Pointer") << tr("Offset") << tr("Data"));
+        m_model->setSectionNames(QStringList() << tr("#") << tr("Offset") << tr("Pointer") << tr("Data"));
     m_view->setModel(m_model);
 
     // Column widths: narrow row# col, two fixed, last stretches
@@ -194,19 +175,81 @@ void PointersDockWidget::refreshView()
     updateButtonStates();
 }
 
+void PointersDockWidget::setCollapsed(bool collapsed)
+{
+    if (m_collapsed == collapsed)
+        return;
+    m_collapsed = collapsed;
+
+    Qt::DockWidgetArea area = Qt::NoDockWidgetArea;
+    QMainWindow *mw = qobject_cast<QMainWindow *>(parentWidget());
+    if (mw)
+        area = mw->dockWidgetArea(this);
+    const bool sideArea = (area == Qt::LeftDockWidgetArea || area == Qt::RightDockWidgetArea);
+
+    int collapsedExtent = 30;
+    if (auto *titleBar = static_cast<DockTitleBar *>(titleBarWidget())) {
+        collapsedExtent = titleBar->collapsedExtent(sideArea);
+    }
+
+    if (collapsed) {
+        if (sideArea) {
+            m_savedExpandedWidth = width();
+            setMinimumWidth(collapsedExtent);
+            setMaximumWidth(collapsedExtent);
+            if (mw)
+                mw->resizeDocks({this}, {collapsedExtent}, Qt::Horizontal);
+            else
+                resize(collapsedExtent, height());
+        } else {
+            m_savedExpandedHeight = height();
+            setMinimumHeight(collapsedExtent);
+            setMaximumHeight(collapsedExtent);
+            if (mw)
+                mw->resizeDocks({this}, {collapsedExtent}, Qt::Vertical);
+            else
+                resize(width(), collapsedExtent);
+        }
+    } else {
+        if (sideArea) {
+            setMinimumWidth(0);
+            setMaximumWidth(QWIDGETSIZE_MAX);
+            const int target = m_savedExpandedWidth > 0 ? m_savedExpandedWidth : 320;
+            if (mw)
+                mw->resizeDocks({this}, {target}, Qt::Horizontal);
+            else
+                resize(target, height());
+        } else {
+            setMinimumHeight(0);
+            setMaximumHeight(QWIDGETSIZE_MAX);
+            const int target = m_savedExpandedHeight > 0 ? m_savedExpandedHeight : 220;
+            if (mw)
+                mw->resizeDocks({this}, {target}, Qt::Vertical);
+            else
+                resize(width(), target);
+        }
+    }
+
+    if (m_contentWidget)
+        m_contentWidget->setVisible(!collapsed);
+    if (auto *titleBar = static_cast<DockTitleBar *>(titleBarWidget()))
+        titleBar->setCollapsed(collapsed);
+}
+
+bool PointersDockWidget::isCollapsed() const
+{
+    return m_contentWidget && !m_contentWidget->isVisible();
+}
+
 void PointersDockWidget::retranslateUi()
 {
     setWindowTitle(tr("Pointers"));
-    if (m_titleLabel)
-        m_titleLabel->setText(tr("Pointers"));
-    if (m_collapseBtn)
-        m_collapseBtn->setToolTip(tr("Collapse / Expand"));
     m_findAct->setText(tr("Find pointers"));
     m_addAct->setText(tr("Add"));
     m_deleteAct->setText(tr("Delete"));
-    m_cleanAllAct->setText(tr("Clean all"));
+    m_cleanAllAct->setText(tr("Drop all"));
     if (m_model)
-        m_model->setSectionNames(QStringList() << tr("#") << tr("Pointer") << tr("Offset") << tr("Data"));
+        m_model->setSectionNames(QStringList() << tr("#") << tr("Offset") << tr("Pointer") << tr("Data"));
 }
 
 void PointersDockWidget::onHexSelectionChanged(qint64 start, qint64 end)
@@ -222,9 +265,19 @@ void PointersDockWidget::onListSelectionChanged()
 void PointersDockWidget::onDoubleClicked(const QModelIndex &index)
 {
     if (!m_hexEdit || !m_model) return;
-    const qint64 selectedOffset = index.data(PointerListModel::ValueRole).toLongLong();
-    m_hexEdit->setCursorPosition(selectedOffset * 2);
-    m_hexEdit->ensureVisible();
+
+    // Column 1 (Offset): go to pointer offset
+    if (index.column() == 1) {
+        const qint64 pointerOffset = index.data(PointerListModel::KeyRole).toLongLong();
+        m_hexEdit->setCursorPosition(pointerOffset * 2);
+        m_hexEdit->ensureVisible();
+    }
+    // Column 2 (Pointer): go to pointer target
+    else if (index.column() == 2) {
+        const qint64 targetOffset = index.data(PointerListModel::ValueRole).toLongLong();
+        m_hexEdit->setCursorPosition(targetOffset * 2);
+        m_hexEdit->ensureVisible();
+    }
 }
 
 void PointersDockWidget::addPointer()
@@ -307,11 +360,11 @@ void PointersDockWidget::updateButtonStates()
     else
         m_findAct->setEnabled(false);
 
-    if (m_titleLabel) {
+    {
         const int count = hasModel ? m_model->rowCount() : 0;
         const QString title = tr("Pointers") +
             (count > 0 ? QStringLiteral(" \u2013 %1").arg(count) : QString());
-        m_titleLabel->setText(title);
+        setWindowTitle(title);
     }
 }
 
@@ -336,4 +389,52 @@ void PointersDockWidget::restoreColumnsState(const QByteArray &state)
 {
     if (!state.isEmpty())
         m_view->horizontalHeader()->restoreState(state);
+}
+
+bool PointersDockWidget::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == m_view && event->type() == QEvent::KeyPress) {
+        QKeyEvent *ke = static_cast<QKeyEvent *>(event);
+        if (ke->key() == Qt::Key_Delete) {
+            deleteSelectedPointers();
+            return true;
+        }
+    }
+    return QDockWidget::eventFilter(watched, event);
+}
+
+void PointersDockWidget::showContextMenu(const QPoint &pos)
+{
+    if (!m_hexEdit || !m_model) return;
+
+    const QModelIndex index = m_view->indexAt(pos);
+    const bool hasSelection = m_view->selectionModel() &&
+                              !m_view->selectionModel()->selectedRows().isEmpty();
+
+    QMenu menu(this);
+    QAction *jumpToPointerAct = menu.addAction(tr("Go to pointer"));
+    QAction *jumpToDataAct    = menu.addAction(tr("Go to data"));
+    menu.addSeparator();
+    QAction *removeAct        = menu.addAction(tr("Remove pointer"));
+
+    const bool singleValid = index.isValid();
+    jumpToPointerAct->setEnabled(singleValid);
+    jumpToDataAct->setEnabled(singleValid);
+    removeAct->setEnabled(hasSelection);
+
+    QAction *chosen = menu.exec(m_view->viewport()->mapToGlobal(pos));
+    if (!chosen)
+        return;
+
+    if (chosen == jumpToPointerAct && singleValid) {
+        const qint64 ptrOffset = index.data(PointerListModel::KeyRole).toLongLong();
+        m_hexEdit->setCursorPosition(ptrOffset * 2);
+        m_hexEdit->ensureVisible();
+    } else if (chosen == jumpToDataAct && singleValid) {
+        const qint64 targetOffset = index.data(PointerListModel::ValueRole).toLongLong();
+        m_hexEdit->setCursorPosition(targetOffset * 2);
+        m_hexEdit->ensureVisible();
+    } else if (chosen == removeAct && hasSelection) {
+        deleteSelectedPointers();
+    }
 }

@@ -195,6 +195,11 @@ bool HexDocument::saveProject(const QString &path,
 
     // ROM type & byte order
     out << "rom_type: " << romTypeName(romType) << "\n";
+    if (pointerOffset < 0)
+        out << "pointer_offset: -0x" << QString::number(-pointerOffset, 16).toUpper() << "\n";
+    else
+        out << "pointer_offset: 0x" << QString::number(pointerOffset, 16).toUpper() << "\n";
+    out << "pointer_size: " << pointerSize << "\n";
     switch (byteOrder) {
     case ByteOrder::BigEndian:    out << "byte_order: BE\n"; break;
     case ByteOrder::SwappedBytes: out << "byte_order: BS\n"; break;
@@ -211,14 +216,6 @@ bool HexDocument::saveProject(const QString &path,
         }
     }
 
-    // Navigation history
-    if (!navigationHistory.isEmpty()) {
-        out << "\nnavigation_history:\n";
-        for (qint64 pos : navigationHistory)
-            out << "  - 0x" << QString::number(pos, 16).toUpper() << "\n";
-        out << "navigation_index: " << navigationHistoryIndex << "\n";
-    }
-
     // Cursor position
     out << "\ncursor_position: 0x" << QString::number(cursorPosition, 16).toUpper() << "\n";
 
@@ -226,9 +223,10 @@ bool HexDocument::saveProject(const QString &path,
     out << "show_pointers: " << (showPointers ? "true" : "false") << "\n";
     out << "show_changes: "  << (showChanges  ? "true" : "false") << "\n";
     out << "changes_hex_mode: " << (changesHexMode ? "true" : "false") << "\n";
-    out << "tables_dock_visible: " << (tablesDockVisible ? "true" : "false") << "\n";
-    out << "pointers_dock_visible: " << (pointersDockVisible ? "true" : "false") << "\n";
-    out << "changes_dock_visible: " << (changesDockVisible ? "true" : "false") << "\n";
+    if (!dockLayoutState.isEmpty())
+        out << "dock_layout_state: " << QString::fromLatin1(dockLayoutState.toBase64()) << "\n";
+    if (!tablesColumnsState.isEmpty())
+        out << "tables_columns_state: " << QString::fromLatin1(tablesColumnsState.toBase64()) << "\n";
 
     // Original bytes
     if (!originalBytes.isEmpty()) {
@@ -238,6 +236,9 @@ bool HexDocument::saveProject(const QString &path,
                 << ": " << entry.second.toHex().toUpper() << "\n";
         }
     }
+
+    if (originalFileSize >= 0)
+        out << "original_file_size: " << originalFileSize << "\n";
 
     f.close();
     projectFilePath = path;
@@ -298,6 +299,11 @@ bool HexDocument::saveProject(const QString &path, const TranslationTable *table
 
     // ROM type & byte order
     out << "rom_type: " << romTypeName(romType) << "\n";
+    if (pointerOffset < 0)
+        out << "pointer_offset: -0x" << QString::number(-pointerOffset, 16).toUpper() << "\n";
+    else
+        out << "pointer_offset: 0x" << QString::number(pointerOffset, 16).toUpper() << "\n";
+    out << "pointer_size: " << pointerSize << "\n";
     switch (byteOrder) {
     case ByteOrder::BigEndian:    out << "byte_order: BE\n"; break;
     case ByteOrder::SwappedBytes: out << "byte_order: BS\n"; break;
@@ -314,14 +320,6 @@ bool HexDocument::saveProject(const QString &path, const TranslationTable *table
         }
     }
 
-    // Navigation history
-    if (!navigationHistory.isEmpty()) {
-        out << "\nnavigation_history:\n";
-        for (qint64 pos : navigationHistory)
-            out << "  - 0x" << QString::number(pos, 16).toUpper() << "\n";
-        out << "navigation_index: " << navigationHistoryIndex << "\n";
-    }
-
     // Cursor position
     out << "\ncursor_position: 0x" << QString::number(cursorPosition, 16).toUpper() << "\n";
 
@@ -329,9 +327,10 @@ bool HexDocument::saveProject(const QString &path, const TranslationTable *table
     out << "show_pointers: " << (showPointers ? "true" : "false") << "\n";
     out << "show_changes: "  << (showChanges  ? "true" : "false") << "\n";
     out << "changes_hex_mode: " << (changesHexMode ? "true" : "false") << "\n";
-    out << "tables_dock_visible: " << (tablesDockVisible ? "true" : "false") << "\n";
-    out << "pointers_dock_visible: " << (pointersDockVisible ? "true" : "false") << "\n";
-    out << "changes_dock_visible: " << (changesDockVisible ? "true" : "false") << "\n";
+    if (!dockLayoutState.isEmpty())
+        out << "dock_layout_state: " << QString::fromLatin1(dockLayoutState.toBase64()) << "\n";
+    if (!tablesColumnsState.isEmpty())
+        out << "tables_columns_state: " << QString::fromLatin1(tablesColumnsState.toBase64()) << "\n";
 
     // Original bytes (pre-modification data for IPS/diff)
     if (!originalBytes.isEmpty()) {
@@ -341,6 +340,9 @@ bool HexDocument::saveProject(const QString &path, const TranslationTable *table
                 << ": " << entry.second.toHex().toUpper() << "\n";
         }
     }
+
+    if (originalFileSize >= 0)
+        out << "original_file_size: " << originalFileSize << "\n";
 
     f.close();
     projectFilePath = path;
@@ -373,19 +375,18 @@ bool HexDocument::loadProject(const QString &path)
     currentEncoding = QStringLiteral("ASCII");
     romType = RomType::Unknown;
     byteOrder = ByteOrder::LittleEndian;
+    pointerOffset = defaultPointerOffset(RomType::Unknown);
     pointerSnapshot.clear();
-    navigationHistory.clear();
-    navigationHistoryIndex = -1;
+    dockLayoutState.clear();
+    tablesColumnsState.clear();
     cursorPosition = 0;
     showPointers = true;
     showChanges = false;
     changesHexMode = false;
-    tablesDockVisible = true;
-    pointersDockVisible = false;
-    changesDockVisible = false;
     originalBytes.clear();
+    originalFileSize = -1;
 
-    enum class Section { Root, Pointers, NavHistory, TableEntries, Original, Tables, TablesEntries };
+    enum class Section { Root, Pointers, TableEntries, Original, Tables, TablesEntries };
     Section section = Section::Root;
 
     // Temp for building a pointer entry
@@ -395,6 +396,7 @@ bool HexDocument::loadProject(const QString &path)
 
     // Temp for table entries
     bool hasEmbeddedTable = false;
+    bool pointerOffsetExplicit = false;
 
     auto flushPointer = [&]() {
         if (ptrOffset >= 0 && ptrTarget >= 0) {
@@ -423,10 +425,6 @@ bool HexDocument::loadProject(const QString &path)
         // Detect section headers
         if (stripped == QLatin1String("pointers:")) {
             switchSection(Section::Pointers);
-            continue;
-        }
-        if (stripped == QLatin1String("navigation_history:")) {
-            switchSection(Section::NavHistory);
             continue;
         }
         if (stripped == QLatin1String("table_entries:")) {
@@ -596,16 +594,6 @@ bool HexDocument::loadProject(const QString &path)
             }
         }
 
-        // Handle NavHistory list items (format "- 0xHEX" has no colon)
-        if (section == Section::NavHistory && stripped.startsWith(QLatin1String("- "))) {
-            QString navVal = stripped.mid(2).trimmed();
-            bool ok = false;
-            qint64 pos = navVal.startsWith(QLatin1String("0x"), Qt::CaseInsensitive)
-                ? navVal.mid(2).toLongLong(&ok, 16) : navVal.toLongLong(&ok);
-            if (ok)
-                navigationHistory.append(pos);
-            continue;
-        }
 
         // Parse key: value
         int colonPos = stripped.indexOf(QLatin1Char(':'));
@@ -628,25 +616,19 @@ bool HexDocument::loadProject(const QString &path)
                 bool ok = false;
                 ptrOffset = val.startsWith(QLatin1String("0x"), Qt::CaseInsensitive)
                     ? val.mid(2).toLongLong(&ok, 16) : val.toLongLong(&ok);
+                continue;
             } else if (key == QLatin1String("target")) {
                 bool ok = false;
                 ptrTarget = val.startsWith(QLatin1String("0x"), Qt::CaseInsensitive)
                     ? val.mid(2).toLongLong(&ok, 16) : val.toLongLong(&ok);
+                continue;
             } else if (key == QLatin1String("size")) {
                 ptrSize = val.toInt();
                 if (ptrSize < 2 || ptrSize > 4) ptrSize = 4;
-            }
-            continue;
-        }
-
-        if (section == Section::NavHistory) {
-            if (key == QLatin1String("navigation_index")) {
-                navigationHistoryIndex = val.toInt();
-            } else {
-                section = Section::Root;
-            }
-            if (section == Section::NavHistory)
                 continue;
+            }
+            // Non-pointer key: exit pointers section, fall through to root parsing
+            switchSection(Section::Root);
         }
 
         // Root section
@@ -695,8 +677,30 @@ bool HexDocument::loadProject(const QString &path)
                 if (bo >= 0 && bo <= 2)
                     byteOrder = static_cast<ByteOrder>(bo);
             }
-        } else if (key == QLatin1String("navigation_index")) {
-            navigationHistoryIndex = val.toInt();
+        } else if (key == QLatin1String("pointer_offset")) {
+            pointerOffsetExplicit = true;
+            bool negative = false;
+            QString off = val.trimmed();
+            if (off.startsWith('-')) {
+                negative = true;
+                off.remove(0, 1);
+            } else if (off.startsWith('+')) {
+                off.remove(0, 1);
+            }
+
+            bool ok = false;
+            qint64 parsed = 0;
+            if (off.startsWith(QLatin1String("0x"), Qt::CaseInsensitive))
+                parsed = off.mid(2).toLongLong(&ok, 16);
+            else
+                parsed = off.toLongLong(&ok, 16);
+
+            if (ok)
+                pointerOffset = negative ? -parsed : parsed;
+        } else if (key == QLatin1String("pointer_size")) {
+            const int sz = val.toInt();
+            if (sz == 2 || sz == 4)
+                pointerSize = sz;
         } else if (key == QLatin1String("active_table")) {
             activeTableIndex = val.toInt();
         } else if (key == QLatin1String("cursor_position")) {
@@ -709,18 +713,24 @@ bool HexDocument::loadProject(const QString &path)
             showChanges = (val == QLatin1String("true"));
         } else if (key == QLatin1String("changes_hex_mode")) {
             changesHexMode = (val == QLatin1String("true"));
-        } else if (key == QLatin1String("tables_dock_visible")) {
-            tablesDockVisible = (val == QLatin1String("true"));
-        } else if (key == QLatin1String("pointers_dock_visible")) {
-            pointersDockVisible = (val == QLatin1String("true"));
-        } else if (key == QLatin1String("changes_dock_visible")) {
-            changesDockVisible = (val == QLatin1String("true"));
+        } else if (key == QLatin1String("dock_layout_state")) {
+            dockLayoutState = QByteArray::fromBase64(val.toLatin1());
+        } else if (key == QLatin1String("tables_columns_state")) {
+            tablesColumnsState = QByteArray::fromBase64(val.toLatin1());
+        } else if (key == QLatin1String("original_file_size")) {
+            bool ok = false;
+            qint64 v = val.toLongLong(&ok);
+            if (ok && v >= 0)
+                originalFileSize = v;
         }
     }
 
     // Flush last pointer if any
     if (section == Section::Pointers)
         flushPointer();
+
+    if (!pointerOffsetExplicit)
+        pointerOffset = defaultPointerOffset(romType);
 
     // Build fallback decode entries for embedded table (legacy)
     if (hasEmbeddedTable && translationTable)

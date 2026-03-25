@@ -328,7 +328,7 @@ inline int defaultPointerSize(RomType type)
 inline qint64 defaultPointerOffset(RomType type)
 {
     switch (type) {
-    case RomType::Unknown:          return 0x10;
+    case RomType::Unknown:          return 0;
     case RomType::NES:              return -0x7FF0;  // -($8000 - $10) — iNES 16-byte header
     case RomType::SNES:             return -0x8000;    // LoROM headerless (.sfc)
     case RomType::SNES_SMC:         return -0x7E00;    // LoROM + 512-byte copier header (-$8000 + $200)

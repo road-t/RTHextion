@@ -47,9 +47,7 @@ HEADERS = \
     dialogs/pointersdialog.h \
     dialogs/searchdialog.h \
     dialogs/SemiAutoTableDialog.h \
-    dialogs/TableEditDialog.h \
     # dockwidgets
-    dockwidgets/DockTitleBar.h \
     dockwidgets/TablesDockWidget.h \
     dockwidgets/PointersDockWidget.h \
     dockwidgets/ChangesDockWidget.h \
@@ -81,7 +79,6 @@ SOURCES = \
     dialogs/pointersdialog.cpp \
     dialogs/searchdialog.cpp \
     dialogs/SemiAutoTableDialog.cpp \
-    dialogs/TableEditDialog.cpp \
     # dockwidgets
     dockwidgets/TablesDockWidget.cpp \
     dockwidgets/PointersDockWidget.cpp \
@@ -96,10 +93,8 @@ FORMS += \
     dialogs/DumpScriptdialog.ui \
     dialogs/InsertScriptDialog.ui \
     dialogs/JumpToDialog.ui \
-    dialogs/TableEditDialog.ui \
     dialogs/optionsdialog.ui \
-    dialogs/pointersdialog.ui \
-    dialogs/searchdialog.ui
+    dialogs/pointersdialog.ui
 
 DEFINES += HEXEDITOR_EXPORTS
 

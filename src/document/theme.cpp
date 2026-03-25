@@ -62,21 +62,21 @@ EditorTheme EditorTheme::defaultLight()
     t.hexFont = defaultEditorFont();
     t.highlighting = true;
     t.highlightingColor = QColor(0xff, 0xff, 0x99);
-    t.selectionColor = qApp->palette().highlight().color();
+    t.selectionColor = QColor(42, 130, 218);
     t.changesColor = QColor(0x99, 0xff, 0x99);
     t.cursorCharColor = QColor(0x00, 0x60, 0xFF, 0x80);
     t.cursorFrameColor = QColor(Qt::black);
-    t.addressAreaColor = qApp->palette().alternateBase().color();
-    t.addressFontColor = qApp->palette().color(QPalette::WindowText);
+    t.addressAreaColor = QColor(240, 240, 240);
+    t.addressFontColor = QColor(Qt::black);
     t.hexAreaBgColor = QColor(Qt::white);
-    t.hexFontColor = qApp->palette().color(QPalette::WindowText);
+    t.hexFontColor = QColor(Qt::black);
     t.zeroByteFontColor = QColor(0xCC, 0xCC, 0xCC);
     t.showHexGrid = true;
     t.hexAreaGridColor = QColor(0x99, 0x99, 0x99);
     t.showMultibyteFrame = true;
     t.multibyteFrameColor = QColor(0x20, 0x20, 0x20);
-    t.asciiAreaColor = qApp->palette().alternateBase().color();
-    t.asciiFontColor = qApp->palette().color(QPalette::WindowText);
+    t.asciiAreaColor = QColor(240, 240, 240);
+    t.asciiFontColor = QColor(Qt::black);
     t.pointedColor = QColor(0xc0, 0x80, 0x00);
     t.pointedFontColor = QColor(Qt::black);
     t.pointerFontColor = QColor(Qt::black);
@@ -205,7 +205,7 @@ void EditorTheme::applyToSettings() const
     QSettings s;
     s.setValue(QStringLiteral("DarkTheme"), darkMode);
     s.setValue(QStringLiteral("WidgetFont"), hexFont);
-    s.setValue(QStringLiteral("Highlighting"), highlighting);
+    s.setValue(QStringLiteral("Highlighting"), true);
     s.setValue(QStringLiteral("ShowHexGrid"), showHexGrid);
     s.setValue(QStringLiteral("ShowMultibyteFrame"), showMultibyteFrame);
 

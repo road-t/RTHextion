@@ -8,8 +8,8 @@
 #include <QLineEdit>
 #include <QVector>
 #include <QUndoStack>
-#include <QLabel>
 #include <QToolButton>
+#include <QMenu>
 
 #include "translationtable.h"
 
@@ -79,6 +79,10 @@ public:
     /// Retranslate UI strings.
     void retranslateUi();
 
+    /// Collapse or expand the dock content (hides inner widget, keeps dock visible).
+    void setCollapsed(bool collapsed);
+    bool isCollapsed() const { return m_collapsed; }
+
     /// Undo stack (exposed so main window can connect undo/redo actions).
     QUndoStack *undoStack() const { return m_undoStack; }
 
@@ -106,15 +110,28 @@ signals:
     /// Emitted when the eye (use-table) toggle button is clicked.
     void useTableToggled(bool checked);
 
+    /// Emitted when user requests semi-auto table generation from the dock toolbar.
+    void generateTableRequested();
+
 private slots:
     void onTabChanged(int index);
+    void onTabMoved(int from, int to);
     void onTabDoubleClicked(int index);
     void onCellChanged(int row, int col);
     void onTabContextMenu(const QPoint &pos);
+    void onGridContextMenu(QTableWidget *grid, const QPoint &pos);
 
 private:
     void populateGrid(QTableWidget *grid, TranslationTable *table);
     void syncTableFromGrid(int tabIndex);
+    void ensurePlaceholderRow(QTableWidget *grid);
+    bool isPlaceholderRow(QTableWidget *grid, int row) const;
+    void activatePlaceholderRow(QTableWidget *grid, int row);
+    bool isValidHexKeyText(const QString &hexText) const;
+    QVector<int> selectedEditableRows(QTableWidget *grid) const;
+    void copyRowsToClipboard(QTableWidget *grid, const QVector<int> &rows) const;
+    void deleteRows(QTableWidget *grid, const QVector<int> &rows);
+    void pasteRowsFromClipboard(QTableWidget *grid);
     void updateButtonStates();
     QTableWidget *currentGrid() const;
     QTableWidget *gridAt(int index) const;
@@ -128,12 +145,13 @@ private:
     QToolBar *m_toolbar = nullptr;
     QUndoStack *m_undoStack = nullptr;
     QString m_projectName;
-    QLabel *m_titleLabel = nullptr;
-    QToolButton *m_collapseBtn = nullptr;
     QToolButton *m_useTableBtn = nullptr;
+    QToolButton *m_addBtn = nullptr;
+    QMenu *m_addMenu = nullptr;
 
     QAction *m_addAct = nullptr;
     QAction *m_duplicateAct = nullptr;
+    QAction *m_generateAct = nullptr;
     QAction *m_removeAct = nullptr;
     QAction *m_exportAct = nullptr;
     QAction *m_importAct = nullptr;
@@ -143,6 +161,9 @@ private:
     QVector<TableTab> m_tables;
     int m_nextTableNumber = 1;
     bool m_ignoreChanges = false;  // guard for programmatic edits
+    bool m_collapsed = false;
+    int m_savedExpandedWidth = -1;
+    int m_savedExpandedHeight = -1;
 
     // Snapshot stored before a destructive operation so undo can restore it
     QVector<TableTab> m_pendingSnapshot;

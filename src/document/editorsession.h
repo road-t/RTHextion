@@ -33,17 +33,21 @@ public:
     /// Per-tab snapshot of the entire TablesDockWidget content (deep copy).
     QVector<TableTab> tableSnapshot;
     int tableActiveIndex = -1;
-    bool tablesDockVisible = false;
 
     bool projectModified = false;
     QByteArray changeTrackingSnapshot;
 
     RomType detectedRomType = RomType::Unknown;
+    qint64 pointerOffset = defaultPointerOffset(RomType::Unknown);
+    int pointerSize = 4;
     QString currentEncoding = QStringLiteral("ASCII");
 
     QVector<qint64> navigationHistory;
     int navigationHistoryIndex = -1;
     bool navigationJumpInProgress = false;
+
+    bool tablesDockVisible = false;
+    bool tablesDockVisibilityInitialized = false;
 
 private:
     EditorSession(const EditorSession &) = delete;

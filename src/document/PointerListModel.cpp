@@ -59,13 +59,17 @@ QVariant PointerListModel::data(const QModelIndex &index, int role) const
 
     if (index.column() == 1)
     {
+        // Offset (where pointer is located)
+        return QStringLiteral("0x") + QString::number(key, 16).toUpper().rightJustified(8, QLatin1Char('0'));
+    }
+
+    if (index.column() == 2)
+    {
+        // Pointer value (target address)
         const int ptrSize = getPointerSize(key);
         const int hexChars = ptrSize * 2;
         return QStringLiteral("0x") + QString::number(decodePtrTarget(value), 16).toUpper().rightJustified(hexChars, QLatin1Char('0'));
     }
-
-    if (index.column() == 2)
-        return QStringLiteral("0x") + QString::number(key, 16).toUpper().rightJustified(8, QLatin1Char('0'));
 
     if (index.column() == 3)
         return getOffsetText(key);
@@ -116,19 +120,16 @@ quint32 PointerListModel::addPointer(const qint64 ptrOffset, qint64 offset, int 
     const qint64 oldOffset = (oldStored != -1) ? decodePtrTarget(oldStored) : -1;
 
     beginResetModel();
-    if (oldOffset != -1 && oldOffset != offset)
-    {
-        if (!--_offsets[oldOffset])
-            _offsets.remove(oldOffset);
-    }
+    if (oldOffset != -1)
+        _offsets.remove(oldOffset, ptrOffset);
 
     _pointers.insert(ptrOffset, encodedValue);
-    ++_offsets[offset];
+    _offsets.insert(offset, ptrOffset);
     rebuildRowOrder();
     endResetModel();
     emit pointersChanged();
 
-    return _offsets[offset];
+    return static_cast<quint32>(_offsets.count(offset));
 }
 
 quint32 PointerListModel::addPointersBatch(const QVector<QPair<qint64, qint64>> &pointers)
@@ -148,14 +149,11 @@ quint32 PointerListModel::addPointersBatch(const QVector<QPair<qint64, qint64>> 
         const qint64 oldStored = _pointers.value(ptrOffset, -1);
         const qint64 oldOffset = (oldStored != -1) ? decodePtrTarget(oldStored) : -1;
 
-        if (oldOffset != -1 && oldOffset != offset)
-        {
-            if (!--_offsets[oldOffset])
-                _offsets.remove(oldOffset);
-        }
+        if (oldOffset != -1)
+            _offsets.remove(oldOffset, ptrOffset);
 
         _pointers.insert(ptrOffset, encodedValue);
-        ++_offsets[offset];
+        _offsets.insert(offset, ptrOffset);
         ++added;
     }
     rebuildRowOrder();
@@ -171,8 +169,7 @@ bool PointerListModel::dropPointer(const qint64 offset)
     {
         const qint64 pointedOffset = decodePtrTarget(_pointers.value(offset));
         beginResetModel();
-        if (!--_offsets[pointedOffset])
-            _offsets.remove(pointedOffset);
+        _offsets.remove(pointedOffset, offset);
 
         _pointers.remove(offset);
         rebuildRowOrder();
@@ -198,8 +195,7 @@ quint32 PointerListModel::dropPointersBatch(const QVector<qint64> &ptrOffsets)
         if (_pointers.contains(offset))
         {
             const qint64 pointedOffset = decodePtrTarget(_pointers.value(offset));
-            if (!--_offsets[pointedOffset])
-                _offsets.remove(pointedOffset);
+            _offsets.remove(pointedOffset, offset);
 
             _pointers.remove(offset);
             ++dropped;
@@ -221,14 +217,7 @@ quint32 PointerListModel::dropOffset(const qint64 offset)
     {
         beginResetModel();
 
-        // Find all pointer keys whose decoded target matches offset
-        QList<qint64> ptrs;
-        for (auto it = _pointers.cbegin(); it != _pointers.cend(); ++it)
-        {
-            if (decodePtrTarget(it.value()) == offset)
-                ptrs.append(it.key());
-        }
-
+        const QList<qint64> ptrs = _offsets.values(offset);
         for (const qint64 key : ptrs)
             _pointers.remove(key);
 
@@ -245,16 +234,7 @@ quint32 PointerListModel::dropOffset(const qint64 offset)
 
 QList<qint64> PointerListModel::getPointers(qint64 dataOffset)
 {
-    if (!_offsets.contains(dataOffset))
-        return QList<qint64>();
-
-    QList<qint64> result;
-    for (auto it = _pointers.cbegin(); it != _pointers.cend(); ++it)
-    {
-        if (decodePtrTarget(it.value()) == dataOffset)
-            result.append(it.key());
-    }
-    return result;
+    return _offsets.values(dataOffset);
 }
 
 qint64 PointerListModel::getOffset(qint64 ptrOffset)

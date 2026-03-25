@@ -47,6 +47,8 @@ public:
     // --- ROM / endianness ---
     RomType   romType   = RomType::Unknown;
     ByteOrder byteOrder = ByteOrder::LittleEndian;
+    qint64    pointerOffset = 0;
+    int       pointerSize = 4; // 2 или 4, размер указателя для поиска/проекта
 
     // --- Pointers ---
     /// Serialisable snapshot of the pointer list.
@@ -55,10 +57,6 @@ public:
     /// (see PointerListModel::encodePtrValue).
     QVector<QPair<qint64, qint64>> pointerSnapshot;
 
-    // --- Navigation history ---
-    QVector<qint64> navigationHistory;
-    int  navigationHistoryIndex = -1;
-
     // --- Cursor position ---
     qint64 cursorPosition = 0;              // last active cursor offset in the editor
 
@@ -66,15 +64,19 @@ public:
     bool showPointers = true;               // whether pointer highlighting is visible
     bool showChanges  = false;              // whether change highlighting is visible
     bool changesHexMode = false;            // true = changes list shows hex, false = text
-    bool tablesDockVisible = true;          // tables dock visibility in UI
-    bool pointersDockVisible = false;       // pointers dock visibility in UI
-    bool changesDockVisible = false;        // changes dock visibility in UI
+    QByteArray dockLayoutState;             // QMainWindow::saveState() snapshot for this project
+    QByteArray tablesColumnsState;          // Tables dock column widths/state for this project
 
     // --- Original bytes (pre-modification snapshots) ---
     /// Groups of original bytes before user modifications.
     /// Each entry: (offset, contiguousOriginalBytes).
     /// Used for IPS patch generation and diff display.
     QVector<QPair<qint64, QByteArray>> originalBytes;
+
+    /// True original file size before IPS expansion or "Load original" comparison.
+    /// -1 means "not set / same as current file size".
+    /// Used by updateChangedBytesHighlight() to place changedRange correctly.
+    qint64 originalFileSize = -1;
 
     // --- Project file ---
     QString projectFilePath;                // path to the .rthp file (empty = unsaved)

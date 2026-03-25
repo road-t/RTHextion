@@ -84,6 +84,7 @@ private:
     QTimer *_uiUpdateTimer = nullptr;
     QFutureWatcher<void> _futureWatcher;
     bool _searchFinishPending = false;
+    bool _profileInitialized = false;
 
     // ROM profile widgets
     QGroupBox  *_gbProfile = nullptr;

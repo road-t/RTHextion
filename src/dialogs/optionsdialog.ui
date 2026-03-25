@@ -705,23 +705,51 @@
          <item>
           <widget class="QGroupBox" name="gbColors">
            <property name="title">
-            <string>Highlighing</string>
+            <string>Colors</string>
            </property>
            <layout class="QGridLayout" name="gridLayout_colors">
             <item row="0" column="0">
-             <widget class="QCheckBox" name="cbHighlighting">
+             <widget class="QPushButton" name="pbSelectionColor">
               <property name="text">
-               <string>Highlight changes</string>
+               <string>Selection color</string>
               </property>
-              <property name="checked">
-               <bool>true</bool>
+             </widget>
+            </item>
+            <item row="0" column="1">
+             <widget class="QLabel" name="lbSelectionColor">
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+                <horstretch>20</horstretch>
+                <verstretch>20</verstretch>
+               </sizepolicy>
+              </property>
+              <property name="minimumSize">
+               <size>
+                <width>20</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>20</width>
+                <height>20</height>
+               </size>
+              </property>
+              <property name="frameShape">
+               <enum>QFrame::Panel</enum>
+              </property>
+              <property name="frameShadow">
+               <enum>QFrame::Sunken</enum>
+              </property>
+              <property name="text">
+               <string/>
               </property>
              </widget>
             </item>
             <item row="1" column="0">
              <widget class="QPushButton" name="pbHighlightingColor">
               <property name="text">
-               <string>Highlighting color</string>
+               <string>Unsaved changes color</string>
               </property>
              </widget>
             </item>
@@ -757,51 +785,13 @@
              </widget>
             </item>
             <item row="2" column="0">
-             <widget class="QPushButton" name="pbSelectionColor">
+             <widget class="QPushButton" name="pbChangesColor">
               <property name="text">
-               <string>Selection color</string>
+               <string>Saved changes color</string>
               </property>
              </widget>
             </item>
             <item row="2" column="1">
-             <widget class="QLabel" name="lbSelectionColor">
-              <property name="sizePolicy">
-               <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-                <horstretch>20</horstretch>
-                <verstretch>20</verstretch>
-               </sizepolicy>
-              </property>
-              <property name="minimumSize">
-               <size>
-                <width>20</width>
-                <height>20</height>
-               </size>
-              </property>
-              <property name="maximumSize">
-               <size>
-                <width>20</width>
-                <height>20</height>
-               </size>
-              </property>
-              <property name="frameShape">
-               <enum>QFrame::Panel</enum>
-              </property>
-              <property name="frameShadow">
-               <enum>QFrame::Sunken</enum>
-              </property>
-              <property name="text">
-               <string/>
-              </property>
-             </widget>
-            </item>
-            <item row="3" column="0">
-             <widget class="QPushButton" name="pbChangesColor">
-              <property name="text">
-               <string>Changes color</string>
-              </property>
-             </widget>
-            </item>
-            <item row="3" column="1">
              <widget class="QLabel" name="lbChangesColor">
               <property name="sizePolicy">
                <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
@@ -832,14 +822,14 @@
               </property>
              </widget>
             </item>
-            <item row="4" column="0">
+            <item row="3" column="0">
              <widget class="QPushButton" name="pbCursorCharColor">
               <property name="text">
                <string>Cursor font color</string>
               </property>
              </widget>
             </item>
-            <item row="4" column="1">
+            <item row="3" column="1">
              <widget class="QLabel" name="lbCursorCharColor">
               <property name="sizePolicy">
                <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
@@ -870,14 +860,14 @@
               </property>
              </widget>
             </item>
-            <item row="5" column="0">
+            <item row="4" column="0">
              <widget class="QPushButton" name="pbCursorFrameColor">
               <property name="text">
                <string>Cursor frame color</string>
               </property>
              </widget>
             </item>
-            <item row="5" column="1">
+            <item row="4" column="1">
              <widget class="QLabel" name="lbCursorFrameColor">
               <property name="sizePolicy">
                <sizepolicy hsizetype="Fixed" vsizetype="Fixed">

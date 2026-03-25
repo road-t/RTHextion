@@ -3,7 +3,6 @@
 
 #include <QDockWidget>
 #include <QTableWidget>
-#include <QLabel>
 #include <QToolButton>
 #include <QButtonGroup>
 #include <QVector>
@@ -44,6 +43,9 @@ public:
     void setShowOriginalChecked(bool checked);
     void setShowOriginalEnabled(bool enabled);
 
+    void setCollapsed(bool collapsed);
+    bool isCollapsed() const;
+
     QByteArray saveColumnsState() const;
     void restoreColumnsState(const QByteArray &state);
 
@@ -60,8 +62,6 @@ private slots:
 private:
     QWidget     *m_contentWidget  = nullptr;
     QTableWidget *m_table         = nullptr;
-    QLabel       *m_titleLabel    = nullptr;
-    QToolButton  *m_collapseBtn   = nullptr;
     QToolButton  *m_showChangesBtn = nullptr;
     QToolButton  *m_currentBtn    = nullptr;
     QToolButton  *m_originalBtn   = nullptr;
@@ -70,6 +70,9 @@ private:
     QToolButton  *m_hexBtn        = nullptr;
     QButtonGroup *m_displayModeGroup = nullptr;
     bool          m_hexMode       = false;
+    bool          m_collapsed     = false;
+    int           m_savedExpandedWidth = -1;
+    int           m_savedExpandedHeight = -1;
 
     // Stored parameters for re-rendering when display mode is toggled
     QVector<QPair<qint64, QByteArray>> m_lastOriginals;

@@ -25,6 +25,9 @@
 #include <QTimer>
 #include <QTabWidget>
 #include <QStyleFactory>
+#include <QMouseEvent>
+#include <QInputDialog>
+#include <QFile>
 #ifdef Q_OS_MAC
 #include "macostheme.h"
 #endif
@@ -52,6 +55,52 @@ namespace
     const int kMaxRecentFiles = 10;
     const int kMaxRecentTables = 10;
     const int kMaxRecentProjects = 10;
+
+    bool isTableLikeFilePath(const QString &path)
+    {
+        const QString ext = QFileInfo(path).suffix().toLower();
+        return ext == QStringLiteral("tbl")
+            || ext == QStringLiteral("tab")
+            || ext == QStringLiteral("table");
+    }
+
+    QString chooseTableImportEncoding(QWidget *parent, const QString &fileName, bool *accepted = nullptr)
+    {
+        if (accepted)
+            *accepted = true;
+
+        QFile rawFile(fileName);
+        if (!rawFile.open(QIODevice::ReadOnly))
+            return QString();
+
+        const QByteArray raw = rawFile.readAll();
+        rawFile.close();
+
+        if (!TranslationTable::hasNonAsciiValueBytes(raw))
+            return QString();
+
+        const QStringList encodings = TranslationTable::supportedImportEncodings();
+        if (encodings.isEmpty())
+            return QString();
+
+        const QString guessed = TranslationTable::guessImportEncoding(raw);
+        const int defaultIndex = qMax(0, encodings.indexOf(guessed));
+
+        bool ok = false;
+        const QString selected = QInputDialog::getItem(
+            parent,
+            MainWindow::tr("Table encoding"),
+            MainWindow::tr("Select encoding for imported table:"),
+            encodings,
+            defaultIndex,
+            false,
+            &ok);
+
+        if (accepted)
+            *accepted = ok;
+
+        return ok ? selected : QString();
+    }
 
     QChar readSingleCharSetting(const QSettings &settings, const char *key, const QChar &fallback)
     {
@@ -112,6 +161,71 @@ namespace
         runs.insert(runIdx + 1, {rightStart, right});
     }
 
+    // Adjust originalBytes run offsets when bytes are inserted or deleted.
+    // `changeOffset` is the position where the size change occurred and
+    // `delta` is positive for insertion (new bytes added) or negative for
+    // deletion (bytes removed).
+    void adjustOriginalBytesForSizeChange(QVector<QPair<qint64, QByteArray>> &runs,
+                                          qint64 changeOffset, qint64 delta)
+    {
+        if (delta == 0 || runs.isEmpty())
+            return;
+
+        if (delta > 0) {
+            // Insertion: shift entries at/after changeOffset by +delta.
+            // An entry that spans the insert point is split: the left part
+            // stays in place, the right part is shifted.
+            for (int i = runs.size() - 1; i >= 0; --i) {
+                auto &entry = runs[i];
+                if (entry.first >= changeOffset) {
+                    entry.first += delta;
+                } else if (entry.first + entry.second.size() > changeOffset) {
+                    const int splitPos = static_cast<int>(changeOffset - entry.first);
+                    QByteArray rightPart = entry.second.mid(splitPos);
+                    entry.second.truncate(splitPos);
+                    runs.insert(i + 1, {changeOffset + delta, rightPart});
+                    if (entry.second.isEmpty())
+                        runs.removeAt(i);
+                }
+            }
+        } else {
+            const qint64 absDelta = -delta;
+            const qint64 delEnd = changeOffset + absDelta;
+
+            for (int i = runs.size() - 1; i >= 0; --i) {
+                auto &entry = runs[i];
+                const qint64 entryEnd = entry.first + entry.second.size();
+
+                if (entry.first >= delEnd) {
+                    // Entirely after deleted range: shift left.
+                    entry.first -= absDelta;
+                } else if (entry.first >= changeOffset) {
+                    if (entryEnd <= delEnd) {
+                        // Entirely inside deleted range: remove.
+                        runs.removeAt(i);
+                    } else {
+                        // Starts inside deleted range, extends past it: trim front.
+                        const int trimFront = static_cast<int>(delEnd - entry.first);
+                        entry.second.remove(0, trimFront);
+                        entry.first = changeOffset;
+                    }
+                } else if (entryEnd > changeOffset) {
+                    if (entryEnd <= delEnd) {
+                        // Starts before, ends inside deleted range: trim tail.
+                        entry.second.truncate(static_cast<int>(changeOffset - entry.first));
+                    } else {
+                        // Spans entire deleted range: remove middle.
+                        const int keepLeft = static_cast<int>(changeOffset - entry.first);
+                        const int removeLen = static_cast<int>(absDelta);
+                        entry.second.remove(keepLeft, removeLen);
+                    }
+                    if (entry.second.isEmpty())
+                        runs.removeAt(i);
+                }
+            }
+        }
+    }
+
     void applyIncrementalOriginalByteChange(QVector<QPair<qint64, QByteArray>> &runs,
                                             qint64 offset,
                                             char oldByte,
@@ -161,7 +275,7 @@ namespace
 /* Public methods */
 /*****************************************************************************/
 MainWindow::MainWindow()
-    : hexEdit(nullptr), optionsDialog(nullptr), searchDialog(nullptr), jumpToDialog(nullptr), pointersDialog(nullptr), tableEditDialog(nullptr), semiAutoTableDialog(nullptr), dumpScriptDialog(nullptr), insertScriptDialog(nullptr)
+    : hexEdit(nullptr), optionsDialog(nullptr), searchDialog(nullptr), jumpToDialog(nullptr), pointersDialog(nullptr), semiAutoTableDialog(nullptr), dumpScriptDialog(nullptr), insertScriptDialog(nullptr)
 {
     setAcceptDrops( true );
     init();
@@ -183,6 +297,14 @@ void MainWindow::closeEvent(QCloseEvent *event)
             event->ignore();
             return;
         }
+    }
+
+    // Silently persist cursor position for each project that was not
+    // otherwise saved (e.g. when only the cursor moved but nothing else changed).
+    for (int i = 0; i < m_sessions.size(); ++i) {
+        m_tabWidget->setCurrentIndex(i);
+        if (m_document && !m_document->projectFilePath.isEmpty())
+            saveProjectImpl(m_document->projectFilePath);
     }
 
     m_closing = true;
@@ -212,6 +334,19 @@ void MainWindow::dropEvent(QDropEvent *event)
         }
         event->accept();
     }
+}
+
+bool MainWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == lbEncoding && event && event->type() == QEvent::MouseButtonRelease) {
+        auto *mouseEvent = static_cast<QMouseEvent *>(event);
+        if (mouseEvent && mouseEvent->button() == Qt::LeftButton) {
+            openEncodingSelectionDialog();
+            return true;
+        }
+    }
+
+    return QMainWindow::eventFilter(watched, event);
 }
 
 /*****************************************************************************/
@@ -287,15 +422,32 @@ void MainWindow::onHexDataChangedAt(qint64 offset)
     const qint64 oldSize = m_changeTrackingSnapshot.size();
     const qint64 newSize = currentData.size();
 
-    // Fast path: single-byte overwrite at known offset.
-    if (oldSize == newSize && offset >= 0 && offset < newSize && offset < oldSize) {
+    if (oldSize == newSize && offset >= 0 && offset < newSize) {
         const char oldByte = m_changeTrackingSnapshot.at(static_cast<int>(offset));
         const char newByte = currentData.at(static_cast<int>(offset));
-        if (oldByte != newByte)
+        if (oldByte != newByte) {
             applyIncrementalOriginalByteChange(m_document->originalBytes, offset, oldByte, newByte);
-        m_changeTrackingSnapshot[static_cast<int>(offset)] = newByte;
+            m_changeTrackingSnapshot[static_cast<int>(offset)] = newByte;
+        }
+        // A macro (e.g. multi-byte overwrite from script insert) fires
+        // dataChangedAt only once with the last byte's offset.  Detect by
+        // checking whether snapshot and current still disagree elsewhere.
+        if (memcmp(m_changeTrackingSnapshot.constData(), currentData.constData(), newSize) != 0) {
+            for (qint64 i = 0; i < newSize; ++i) {
+                const char ob = m_changeTrackingSnapshot.at(static_cast<int>(i));
+                const char nb = currentData.at(static_cast<int>(i));
+                if (ob != nb) {
+                    applyIncrementalOriginalByteChange(m_document->originalBytes, i, ob, nb);
+                    m_changeTrackingSnapshot[static_cast<int>(i)] = nb;
+                }
+            }
+        }
     } else {
-        // Insert/delete or unknown complex edit: resync snapshot and defer to full UI rebuild.
+        // Insert/delete: adjust tracked original-byte offsets so they stay
+        // aligned with the shifted data, then resync snapshot.
+        const qint64 delta = newSize - oldSize;
+        if (delta != 0 && offset >= 0 && !m_document->originalBytes.isEmpty())
+            adjustOriginalBytesForSizeChange(m_document->originalBytes, offset, delta);
         m_changeTrackingSnapshot = currentData;
     }
 
@@ -327,6 +479,7 @@ void MainWindow::closeFile()
     m_document->projectName.clear();
     m_projectModified = false;
     m_document->originalBytes.clear();
+    m_document->originalFileSize = -1;
     hexEdit->setData(QByteArray());
     m_changeTrackingSnapshot = QByteArray();
     hexEdit->clearPointers();
@@ -340,7 +493,6 @@ void MainWindow::closeFile()
             hexEdit->removeTranslationTable();
             tb = nullptr;
             m_tablesDock->clearAll();
-            m_tablesDock->hide();
             useTableAct->setChecked(false);
             useTableAct->setEnabled(false);
             editTableAct->setEnabled(false);
@@ -393,6 +545,7 @@ void MainWindow::revert()
         if (QMessageBox::warning(this, tr("Clear data"), tr("Clear all data and changes?"), QMessageBox::Yes | QMessageBox::Cancel) == QMessageBox::Yes)
         {
             m_document->originalBytes.clear();
+            m_document->originalFileSize = -1;
             hexEdit->setData(QByteArray());
             m_changeTrackingSnapshot = QByteArray();
             hexEdit->clearPointers();
@@ -443,9 +596,9 @@ void MainWindow::findNext()
     else
         searchDialog->setHexEdit(hexEdit);
 
-    if (useTableAct)
-        searchDialog->setUseTableChecked(useTableAct->isChecked());
-
+    searchDialog->setAvailableTables(m_tablesDock->allTables(),
+                                     m_tablesDock->currentIndex(),
+                                     useTableAct && useTableAct->isChecked());
     searchDialog->findNext();
 }
 
@@ -660,9 +813,9 @@ void MainWindow::showSearchDialog()
     else
         searchDialog->setHexEdit(hexEdit);
 
-    if (useTableAct)
-        searchDialog->setUseTableChecked(useTableAct->isChecked());
-
+    searchDialog->setAvailableTables(m_tablesDock->allTables(),
+                                     m_tablesDock->currentIndex(),
+                                     useTableAct && useTableAct->isChecked());
     searchDialog->show();
 }
 
@@ -691,26 +844,46 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
     const bool isReadOnly    = hexEdit->isReadOnly();
     const bool clickedAscii  = hexEdit->editAreaIsAscii();
 
-    bool canAddAsPointer = false;
-    qint64 addAsPointerTarget = -1;
-
-    const int ptrSize = currentPointerSize();
     const qint64 ptrOffset = currentPointerOffset();
 
-    if (bytePos >= 0 && bytePos + ptrSize <= fileSize)
+    struct PointerLengthOption {
+        int size = 0;
+        qint64 target = -1;
+    };
+
+    QVector<PointerLengthOption> addPointerOptions;
+    addPointerOptions.reserve(2);
+    for (int size : {2, 4})
     {
-        const QByteArray rawPointer = hexEdit->dataAt(bytePos, ptrSize);
-        if (rawPointer.size() == ptrSize)
-        {
-            const quint64 decodedPointer = decodePointer(reinterpret_cast<const uchar *>(rawPointer.constData()), ptrSize, hexEdit->byteOrder);
-            const qint64 fileTarget = static_cast<qint64>(decodedPointer) + ptrOffset;
-            if (fileTarget >= 0 && fileTarget <= fileSize)
-            {
-                canAddAsPointer = true;
-                addAsPointerTarget = fileTarget;
-            }
-        }
+        if (bytePos < 0 || bytePos + size > fileSize)
+            continue;
+
+        const QByteArray rawPointer = hexEdit->dataAt(bytePos, size);
+        if (rawPointer.size() != size)
+            continue;
+
+        const quint64 decodedPointer = decodePointer(reinterpret_cast<const uchar *>(rawPointer.constData()), size, hexEdit->byteOrder);
+        const qint64 fileTarget = static_cast<qint64>(decodedPointer) + ptrOffset;
+        addPointerOptions.append({size, fileTarget});
     }
+
+    auto addPointerLengthMenu = [&](QMenu &menu) -> QMap<QAction *, PointerLengthOption>
+    {
+        QMap<QAction *, PointerLengthOption> actions;
+        QMenu *sub = menu.addMenu(tr("Add as pointer"));
+        for (const PointerLengthOption &opt : addPointerOptions)
+        {
+            const bool valid = (opt.target >= 0 && opt.target <= fileSize);
+            const QString targetStr = valid
+                ? QStringLiteral("0x") + QString::number(opt.target, 16).toUpper()
+                : tr("out of range");
+            QAction *act = sub->addAction(tr("%1-byte \u2192 %2").arg(opt.size).arg(targetStr));
+            act->setEnabled(valid);
+            actions.insert(act, opt);
+        }
+        sub->setEnabled(!addPointerOptions.isEmpty());
+        return actions;
+    };
 
     auto refreshPointersUi = [this]()
     {
@@ -1014,18 +1187,30 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
             dropSelectionPtrsAct->setEnabled(!dropSelectionPtrs.isEmpty());
         }
         menu.addSeparator();
-        QAction *addAsPointerAct = menu.addAction(tr("Add as pointer"));
-        addAsPointerAct->setEnabled(canAddAsPointer);
+        QAction *editScriptAct1 = nullptr;
+        QMap<QAction *, PointerLengthOption> addPointerActs;
+        if (!hasSelection)
+            addPointerActs = addPointerLengthMenu(menu);
 
         auto clipActs = addClipboardActions(menu);
+
+        if (hasSelection) {
+            menu.addSeparator();
+            editScriptAct1 = menu.addAction(tr("Edit script..."));
+        }
 
         QAction *chosen = menu.exec(globalPos);
         if (handleClipboardAction(chosen, clipActs))
             return;
 
-        if (chosen == addAsPointerAct)
+        if (editScriptAct1 && chosen == editScriptAct1)
         {
-            if (canAddAsPointer && hexEdit->addPointerUndoable(bytePos, addAsPointerTarget, ptrSize))
+            dumpScript();
+        }
+        else if (addPointerActs.contains(chosen))
+        {
+            const PointerLengthOption opt = addPointerActs.value(chosen);
+            if (hexEdit->addPointerUndoable(bytePos, opt.target, opt.size))
                 refreshPointersUi();
         }
         else if (chosen == jumpAct)
@@ -1077,10 +1262,17 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
             dropSelectionPtrsAct = menu.addAction(tr("Drop pointers"));
             dropSelectionPtrsAct->setEnabled(!dropSelectionPtrs.isEmpty());
         }
-        QAction *addAsPointerAct = menu.addAction(tr("Add as pointer"));
-        addAsPointerAct->setEnabled(canAddAsPointer);
+        QAction *editScriptAct2 = nullptr;
+        QMap<QAction *, PointerLengthOption> addPointerActs;
+        if (!hasSelection)
+            addPointerActs = addPointerLengthMenu(menu);
 
         auto clipActs = addClipboardActions(menu);
+
+        if (hasSelection) {
+            menu.addSeparator();
+            editScriptAct2 = menu.addAction(tr("Edit script..."));
+        }
 
         QAction *chosen = menu.exec(globalPos);
         if (!chosen)
@@ -1089,9 +1281,16 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         if (handleClipboardAction(chosen, clipActs))
             return;
 
-        if (chosen == addAsPointerAct)
+        if (editScriptAct2 && chosen == editScriptAct2)
         {
-            if (canAddAsPointer && hexEdit->addPointerUndoable(bytePos, addAsPointerTarget, ptrSize))
+            dumpScript();
+            return;
+        }
+
+        if (addPointerActs.contains(chosen))
+        {
+            const PointerLengthOption opt = addPointerActs.value(chosen);
+            if (hexEdit->addPointerUndoable(bytePos, opt.target, opt.size))
                 refreshPointersUi();
             return;
         }
@@ -1131,8 +1330,9 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
 
     QAction *quickSearchAct = menu.addAction(tr("Quick pointer search"));
     QAction *findPtrAct     = menu.addAction(tr("Find pointers") + QString("..."));
-    QAction *addAsPointerAct = menu.addAction(tr("Add as pointer"));
-    addAsPointerAct->setEnabled(canAddAsPointer);
+    QMap<QAction *, PointerLengthOption> addPointerActs;
+    if (!hasSelection)
+        addPointerActs = addPointerLengthMenu(menu);
     QAction *dropSelectionPtrsAct = nullptr;
     QVector<qint64> dropSelectionPtrs;
     if (hasSelection)
@@ -1169,6 +1369,12 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
                 break;
             }
         }
+    }
+
+    QAction *editScriptAct3 = nullptr;
+    if (hasSelection) {
+        menu.addSeparator();
+        editScriptAct3 = menu.addAction(tr("Edit script..."));
     }
 
     QAction *chosen = menu.exec(globalPos);
@@ -1213,9 +1419,10 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
             updateChangedBytesHighlight();
         updateActionStates();
     }
-    else if (chosen == addAsPointerAct)
+    else if (addPointerActs.contains(chosen))
     {
-        if (canAddAsPointer && hexEdit->addPointerUndoable(bytePos, addAsPointerTarget, ptrSize))
+        const PointerLengthOption opt = addPointerActs.value(chosen);
+        if (hexEdit->addPointerUndoable(bytePos, opt.target, opt.size))
             refreshPointersUi();
     }
     else if (dropSelectionPtrsAct && chosen == dropSelectionPtrsAct)
@@ -1224,6 +1431,10 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
             refreshPointersUi();
     }
     else if (saveAsDumpAct && chosen == saveAsDumpAct)
+    {
+        dumpScript();
+    }
+    else if (editScriptAct3 && chosen == editScriptAct3)
     {
         dumpScript();
     }
@@ -1293,7 +1504,12 @@ bool MainWindow::loadTable()
 
     if (!fileName.isEmpty())
     {
-        const TranslationTable newTable(fileName);
+        bool encodingAccepted = true;
+        const QString importEncoding = chooseTableImportEncoding(this, fileName, &encodingAccepted);
+        if (!encodingAccepted)
+            return true;
+
+        const TranslationTable newTable(fileName, importEncoding);
 
         // Add to dock widget
         m_tablesDock->addTable(QFileInfo(fileName).completeBaseName(), &newTable);
@@ -1490,8 +1706,8 @@ void MainWindow::retranslateUi()
     saveSelectionReadable->setStatusTip(tr("Save selection as dump"));
 
     // Actions - Table
-    loadTableAct->setText(tr("Load table"));
-    loadTableAct->setStatusTip(tr("Load translation table"));
+    loadTableAct->setText(tr("Import"));
+    loadTableAct->setStatusTip(tr("Import table"));
     useTableAct->setText(tr("Use table"));
     useTableAct->setStatusTip(tr("Use translation table"));
     editTableAct->setText(tr("Edit table"));
@@ -1507,10 +1723,10 @@ void MainWindow::retranslateUi()
     createTableMenu->setTitle(tr("Create table"));
 
     // Actions - Script
-    dumpScriptAct->setText(tr("Dump script"));
-    dumpScriptAct->setStatusTip(tr("Dump text script"));
-    insertScriptAct->setText(tr("Insert script"));
-    insertScriptAct->setStatusTip(tr("Insert text script"));
+    dumpScriptAct->setText(tr("Edit script"));
+    dumpScriptAct->setStatusTip(tr("Edit text script"));
+    insertScriptAct->setText(tr("Import script"));
+    insertScriptAct->setStatusTip(tr("Import text script"));
 
     // Actions - Pointers
     findPointersAct->setText(tr("Find pointers"));
@@ -1537,6 +1753,22 @@ void MainWindow::retranslateUi()
     toFileBeginningAct->setStatusTip(tr("Go to beginning of file"));
     toFileEndAct->setText(tr("To file end"));
     toFileEndAct->setStatusTip(tr("Go to end of file"));
+    if (restoreDockLayoutAct) {
+        restoreDockLayoutAct->setText(tr("Restore"));
+        restoreDockLayoutAct->setStatusTip(tr("Restore default dock layout"));
+    }
+    if (collapseLeftDockAreaAct) {
+        collapseLeftDockAreaAct->setText(tr("Collapse left panel"));
+        collapseLeftDockAreaAct->setStatusTip(tr("Collapse or expand all docks in the left panel"));
+    }
+    if (collapseRightDockAreaAct) {
+        collapseRightDockAreaAct->setText(tr("Collapse right panel"));
+        collapseRightDockAreaAct->setStatusTip(tr("Collapse or expand all docks in the right panel"));
+    }
+    if (collapseBottomDockAreaAct) {
+        collapseBottomDockAreaAct->setText(tr("Collapse bottom panel"));
+        collapseBottomDockAreaAct->setStatusTip(tr("Collapse or expand all docks in the bottom panel"));
+    }
 
     // Actions - Help/Options
     aboutAct->setText(tr("About %1").arg(AppInfo::Name));
@@ -1642,12 +1874,12 @@ void MainWindow::retranslateUi()
     toolbarLastPositionAct->setStatusTip(tr("Go to last cursor position in history"));
 
     // Toolbar script actions
-    toolbarDumpScriptAct->setText(tr("Dump script"));
-    toolbarDumpScriptAct->setToolTip(tr("Dump script"));
-    toolbarDumpScriptAct->setStatusTip(tr("Dump text script"));
-    toolbarInsertScriptAct->setText(tr("Insert script"));
-    toolbarInsertScriptAct->setToolTip(tr("Insert script"));
-    toolbarInsertScriptAct->setStatusTip(tr("Insert text script"));
+    toolbarDumpScriptAct->setText(tr("Edit script"));
+    toolbarDumpScriptAct->setToolTip(tr("Edit script"));
+    toolbarDumpScriptAct->setStatusTip(tr("Edit text script"));
+    toolbarInsertScriptAct->setText(tr("Import script"));
+    toolbarInsertScriptAct->setToolTip(tr("Import script"));
+    toolbarInsertScriptAct->setStatusTip(tr("Import text script"));
 
     // Status bar labels
     lbSizeName->setText(tr("Size") + QString(":"));
@@ -1817,6 +2049,9 @@ void MainWindow::dumpScript()
         dumpScriptDialog = new DumpScriptDialog(hexEdit, this);
 
     dumpScriptDialog->setRomProfile(currentPointerSize(), currentPointerOffset());
+    dumpScriptDialog->setAvailableTables(m_tablesDock->allTables(),
+                                         m_tablesDock->currentIndex(),
+                                         useTableAct->isChecked());
     dumpScriptDialog->show();
 }
 
@@ -1867,6 +2102,8 @@ void MainWindow::init()
             this, &MainWindow::onDockTableChanged);
     connect(m_tablesDock, &TablesDockWidget::tableContentChanged,
             this, &MainWindow::onDockTableContentChanged);
+    connect(m_tablesDock, &TablesDockWidget::generateTableRequested,
+            this, &MainWindow::showSemiAutoTableDialog);
     connect(m_tablesDock, &TablesDockWidget::useTableToggled, this, [this](bool checked) {
         if (useTableAct->isEnabled()) {
             useTableAct->setChecked(checked);
@@ -1964,6 +2201,10 @@ void MainWindow::init()
         hexEdit->setCursorPosition(offset * 2);
         hexEdit->ensureVisible();
         hexEdit->setFocus();
+    });
+    connect(m_changesDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
+        if (visible && m_document)
+            refreshChangesView();
     });
     
     createToolBars();
@@ -2064,6 +2305,8 @@ void MainWindow::saveCurrentSession()
     m_currentSession->projectModified = m_projectModified;
     m_currentSession->changeTrackingSnapshot = m_changeTrackingSnapshot;
     m_currentSession->detectedRomType = m_detectedRomType;
+    m_currentSession->pointerOffset = m_pointerOffset;
+    m_currentSession->pointerSize = m_pointerSize;
     m_currentSession->currentEncoding = m_currentEncoding;
     m_currentSession->navigationHistory = navigationHistory;
     m_currentSession->navigationHistoryIndex = navigationHistoryIndex;
@@ -2088,6 +2331,8 @@ void MainWindow::restoreSession(EditorSession *session)
     m_projectModified = session->projectModified;
     m_changeTrackingSnapshot = session->changeTrackingSnapshot;
     m_detectedRomType = session->detectedRomType;
+    m_pointerOffset = session->pointerOffset;
+    m_pointerSize = session->pointerSize;
     m_currentEncoding = session->currentEncoding;
     navigationHistory = session->navigationHistory;
     navigationHistoryIndex = session->navigationHistoryIndex;
@@ -2104,14 +2349,11 @@ void MainWindow::restoreSession(EditorSession *session)
     tb = m_tablesDock->currentTable();
     session->table = tb;  // keep in sync after pointer recreation
     const bool hasTables = m_tablesDock->count() > 0;
-    if (!session->tablesDockVisibilityInitialized) {
-        session->tablesDockVisible = hasTables;
-        session->tablesDockVisibilityInitialized = true;
-    }
-    if (session->tablesDockVisible)
-        m_tablesDock->show();
-    else
-        m_tablesDock->hide();
+    
+    // Always show the tables dock regardless of previous session state
+    // The tables dock should only be hidden by explicit user action, never automatically
+    m_tablesDock->show();
+    m_tablesDock->setCollapsed(false);
 
     useTableAct->setEnabled(hasTables);
     editTableAct->setEnabled(hasTables);
@@ -2169,6 +2411,8 @@ void MainWindow::restoreSession(EditorSession *session)
         setOverwriteMode(hexEdit->overwriteMode());
         updateValuePanels();
     }
+
+    updateDockAreaActions();
 }
 
 void MainWindow::updateTabTitle(int index)
@@ -2177,7 +2421,9 @@ void MainWindow::updateTabTitle(int index)
         return;
     const EditorSession *s = m_sessions[index];
     QString title;
-    if (s->curFile.isEmpty())
+    if (s->document && !s->document->projectName.isEmpty())
+        title = s->document->projectName;
+    else if (s->curFile.isEmpty())
         title = tr("New file");
     else
         title = QFileInfo(s->curFile).fileName();
@@ -2238,7 +2484,8 @@ void MainWindow::onTabCloseRequested(int index)
 
         // Clear dock widgets: their content belongs to the closed project
         m_tablesDock->clearAll();
-        m_tablesDock->hide();
+        m_tablesDock->show();
+        m_tablesDock->setCollapsed(false);
         m_changesDock->clear();
         m_changesDock->hide();
         m_pointersDock->setHexEdit(nullptr);
@@ -2249,6 +2496,7 @@ void MainWindow::onTabCloseRequested(int index)
 
         updateWindowTitle();
         updateActionStates();
+        updateDockAreaActions();
     }
     // else: removeTab triggered onTabChanged → restoreSession handles the rest
 }
@@ -2497,8 +2745,8 @@ void MainWindow::createActions()
     saveSelectionReadable->setEnabled(false);
     connect(saveSelectionReadable, SIGNAL(triggered()), this, SLOT(saveSelectionToReadableFile()));
 
-    loadTableAct = new QAction(tr("Open..."), this);
-    loadTableAct->setStatusTip(tr("Open translation table"));
+    loadTableAct = new QAction(tr("Import"), this);
+    loadTableAct->setStatusTip(tr("Import table"));
     connect(loadTableAct, SIGNAL(triggered()), this, SLOT(loadTable()));
 
     useTableAct = new QAction(tr("Use table"), this);
@@ -2538,13 +2786,14 @@ void MainWindow::createActions()
     saveTableAsAct->setStatusTip(tr("Save translation table to a new file"));
     connect(saveTableAsAct, &QAction::triggered, this, &MainWindow::saveTableAs);
 
-    dumpScriptAct = new QAction(QIcon(":/images/dump.png"), tr("Dump script"), this);
-    dumpScriptAct->setStatusTip(tr("Dump text script"));
+    dumpScriptAct = new QAction(QIcon(":/images/dump.png"), tr("Edit script"), this);
+    dumpScriptAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_E));
+    dumpScriptAct->setStatusTip(tr("Edit text script"));
     dumpScriptAct->setEnabled(false);
     connect(dumpScriptAct, SIGNAL(triggered()), this, SLOT(dumpScript()));
 
-    insertScriptAct = new QAction(QIcon(":/images/insert_script.png"), tr("Insert script"), this);
-    insertScriptAct->setStatusTip(tr("Insert text script"));
+    insertScriptAct = new QAction(QIcon(":/images/insert_script.png"), tr("Import script"), this);
+    insertScriptAct->setStatusTip(tr("Import text script"));
     insertScriptAct->setEnabled(true);
     connect(insertScriptAct, SIGNAL(triggered()), this, SLOT(insertScript()));
 
@@ -2807,6 +3056,28 @@ void MainWindow::createActions()
     connect(showMapTargetsAct, &QAction::toggled, this, [this](bool checked)
             { hexEdit->setScrollMapTargetVisible(checked); });
 
+    restoreDockLayoutAct = new QAction(tr("Restore"), this);
+    restoreDockLayoutAct->setStatusTip(tr("Restore default dock layout"));
+    connect(restoreDockLayoutAct, &QAction::triggered, this, &MainWindow::restoreDockLayout);
+
+    collapseLeftDockAreaAct = new QAction(tr("Collapse left panel"), this);
+    collapseLeftDockAreaAct->setCheckable(true);
+    connect(collapseLeftDockAreaAct, &QAction::toggled, this, [this](bool checked) {
+        setDockAreaCollapsed(Qt::LeftDockWidgetArea, checked);
+    });
+
+    collapseRightDockAreaAct = new QAction(tr("Collapse right panel"), this);
+    collapseRightDockAreaAct->setCheckable(true);
+    connect(collapseRightDockAreaAct, &QAction::toggled, this, [this](bool checked) {
+        setDockAreaCollapsed(Qt::RightDockWidgetArea, checked);
+    });
+
+    collapseBottomDockAreaAct = new QAction(tr("Collapse bottom panel"), this);
+    collapseBottomDockAreaAct->setCheckable(true);
+    connect(collapseBottomDockAreaAct, &QAction::toggled, this, [this](bool checked) {
+        setDockAreaCollapsed(Qt::BottomDockWidgetArea, checked);
+    });
+
     updateNavigationActions();
 
 }
@@ -3065,6 +3336,10 @@ void MainWindow::createMenus()
     changesDockToggleAct->setText(tr("Changes"));
     dockMenu->addAction(changesDockToggleAct);
 
+    dockMenu->addSeparator();
+    dockMenu->addAction(restoreDockLayoutAct);
+    updateDockAreaActions();
+
     viewMenu->addSeparator();
 
     helpMenu = menuBar()->addMenu(tr("Help"));
@@ -3080,6 +3355,9 @@ void MainWindow::createStatusBar()
     lbEncoding->setMinimumWidth(90);
     lbEncoding->setAlignment(Qt::AlignCenter);
     lbEncoding->setText(m_currentEncoding);
+    lbEncoding->setCursor(Qt::PointingHandCursor);
+    lbEncoding->setToolTip(tr("Select current encoding:"));
+    lbEncoding->installEventFilter(this);
     statusBar()->addPermanentWidget(lbEncoding);
 
     // Value labels (separate panels)
@@ -3148,6 +3426,153 @@ void MainWindow::createStatusBar()
         if (msg.isEmpty())
             statusBar()->showMessage(m_readyText);
     });
+}
+
+void MainWindow::restoreDockLayout()
+{
+    if (!defaultWindowState.isEmpty())
+        restoreState(defaultWindowState);
+
+    const auto defaultFeatures = QDockWidget::DockWidgetClosable
+                               | QDockWidget::DockWidgetFloatable
+                               | QDockWidget::DockWidgetMovable;
+
+    if (m_tablesDock) {
+        m_tablesDock->setFeatures(defaultFeatures);
+        m_tablesDock->show();
+        m_tablesDock->setCollapsed(false);
+        m_tablesDock->raise();
+        resizeDocks({m_tablesDock}, {360}, Qt::Horizontal);
+    }
+
+    if (m_pointersDock) {
+        m_pointersDock->setFeatures(defaultFeatures);
+        m_pointersDock->show();
+        m_pointersDock->setCollapsed(false);
+    }
+
+    if (m_changesDock) {
+        m_changesDock->setFeatures(defaultFeatures);
+        m_changesDock->show();
+        m_changesDock->setCollapsed(false);
+    }
+
+    setDockAreaCollapsed(Qt::LeftDockWidgetArea, false);
+    setDockAreaCollapsed(Qt::RightDockWidgetArea, false);
+    setDockAreaCollapsed(Qt::BottomDockWidgetArea, false);
+
+    if (m_pointersDock && m_changesDock)
+        resizeDocks({m_pointersDock, m_changesDock}, {220, 220}, Qt::Vertical);
+
+    if (m_currentSession) {
+        m_currentSession->tablesDockVisible = true;
+        m_currentSession->tablesDockVisibilityInitialized = true;
+    }
+
+    enforceBottomDockEqualWidth();
+
+    if (m_document)
+        m_document->dockLayoutState = saveState();
+
+    updateDockAreaActions();
+}
+
+void MainWindow::setDockAreaCollapsed(Qt::DockWidgetArea area, bool collapsed)
+{
+    auto docksInArea = [this, area]() {
+        QList<QDockWidget *> result;
+        const auto allDocks = findChildren<QDockWidget *>();
+        for (QDockWidget *dock : allDocks) {
+            if (!dock)
+                continue;
+            if (dockWidgetArea(dock) == area)
+                result.append(dock);
+        }
+        return result;
+    };
+
+    if (area == Qt::RightDockWidgetArea) {
+        if (m_tablesDock && dockWidgetArea(m_tablesDock) == Qt::RightDockWidgetArea && !m_tablesDock->isFloating())
+            m_tablesDock->setCollapsed(collapsed);
+    } else if (area == Qt::BottomDockWidgetArea) {
+        if (m_pointersDock && dockWidgetArea(m_pointersDock) == Qt::BottomDockWidgetArea && !m_pointersDock->isFloating())
+            m_pointersDock->setCollapsed(collapsed);
+        if (m_changesDock && dockWidgetArea(m_changesDock) == Qt::BottomDockWidgetArea && !m_changesDock->isFloating())
+            m_changesDock->setCollapsed(collapsed);
+    } else {
+        for (QDockWidget *dock : docksInArea()) {
+            if (!dock || dock->isFloating())
+                continue;
+            if (collapsed)
+                dock->hide();
+            else
+                dock->show();
+        }
+    }
+
+    updateDockAreaActions();
+}
+
+bool MainWindow::isDockAreaCollapsed(Qt::DockWidgetArea area) const
+{
+    QList<QDockWidget *> docksInArea;
+    const auto allDocks = findChildren<QDockWidget *>();
+    for (QDockWidget *dock : allDocks) {
+        if (!dock)
+            continue;
+        if (dockWidgetArea(dock) == area)
+            docksInArea.append(dock);
+    }
+    if (docksInArea.isEmpty())
+        return false;
+
+    bool hasTrackedDock = false;
+    for (QDockWidget *dock : docksInArea) {
+        if (!dock || dock->isFloating())
+            continue;
+
+        hasTrackedDock = true;
+
+        if (dock == m_tablesDock) {
+            if (!m_tablesDock->isCollapsed())
+                return false;
+        } else if (dock == m_pointersDock) {
+            if (!m_pointersDock->isCollapsed())
+                return false;
+        } else if (dock == m_changesDock) {
+            if (!m_changesDock->isCollapsed())
+                return false;
+        } else if (dock->isVisible()) {
+            return false;
+        }
+    }
+
+    return hasTrackedDock;
+}
+
+void MainWindow::updateDockAreaActions()
+{
+    auto hasAreaDocks = [this](Qt::DockWidgetArea area) {
+        const auto allDocks = findChildren<QDockWidget *>();
+        for (QDockWidget *dock : allDocks) {
+            if (dock && dockWidgetArea(dock) == area)
+                return true;
+        }
+        return false;
+    };
+
+    const auto syncAction = [this, &hasAreaDocks](QAction *act, Qt::DockWidgetArea area) {
+        if (!act)
+            return;
+        const bool hasDocks = hasAreaDocks(area);
+        act->setEnabled(hasDocks);
+        const QSignalBlocker blocker(act);
+        act->setChecked(hasDocks && isDockAreaCollapsed(area));
+    };
+
+    syncAction(collapseLeftDockAreaAct, Qt::LeftDockWidgetArea);
+    syncAction(collapseRightDockAreaAct, Qt::RightDockWidgetArea);
+    syncAction(collapseBottomDockAreaAct, Qt::BottomDockWidgetArea);
 }
 
 void MainWindow::createToolBars()
@@ -3263,6 +3688,7 @@ void MainWindow::openProjectFile(const QString &path)
         m_document->projectName.clear();
         m_projectModified = false;
         m_document->originalBytes.clear();
+        m_document->originalFileSize = -1;
         hexEdit->setData(QByteArray());
         m_changeTrackingSnapshot = QByteArray();
         hexEdit->clearPointers();
@@ -3366,6 +3792,8 @@ void MainWindow::openProjectFile(const QString &path)
 
     // 4. ROM type + byte order
     m_detectedRomType = doc.romType;
+    m_pointerOffset = doc.pointerOffset;
+    m_pointerSize = doc.pointerSize;
     {
         const QSignalBlocker blocker(cbRomType);
         cbRomType->setCurrentIndex(static_cast<int>(doc.romType));
@@ -3376,7 +3804,8 @@ void MainWindow::openProjectFile(const QString &path)
 
     // 5. Pointers
     doc.restorePointers(hexEdit->pointers());
-    pointersUpdated();
+    if (!m_restoringProjectUi)
+        pointersUpdated();
 
     // 6. Cursor position
     if (doc.cursorPosition > 0) {
@@ -3415,6 +3844,9 @@ void MainWindow::openProjectFile(const QString &path)
     m_tablesDock->show();
     m_pointersDock->show();
     m_changesDock->show();
+    if (!doc.tablesColumnsState.isEmpty())
+        m_tablesDock->restoreColumnsState(doc.tablesColumnsState);
+    updateDockAreaActions();
 
     m_restoringProjectUi = false;
     m_projectModified = false;
@@ -3476,13 +3908,16 @@ bool MainWindow::saveProjectImpl(const QString &path)
     m_document->useTable = (useTableAct && useTableAct->isChecked());
     m_document->currentEncoding = m_currentEncoding;
     m_document->romType = m_detectedRomType;
+    m_document->pointerOffset = m_pointerOffset;
+    m_document->pointerSize = m_pointerSize;
     m_document->byteOrder = hexEdit->byteOrder;
-    m_document->cursorPosition = hexEdit->cursorPosition();
     m_document->snapshotPointers(hexEdit->pointers());
     m_document->showPointers = showPointersAct && showPointersAct->isChecked();
     m_document->showChanges  = showChangesAct  && showChangesAct->isChecked();
     m_document->changesHexMode = m_changesDock && m_changesDock->hexMode();
     m_document->dockLayoutState = saveState();
+    m_document->tablesColumnsState = m_tablesDock ? m_tablesDock->saveColumnsState() : QByteArray();
+    m_document->cursorPosition = hexEdit->cursorPosition();
 
     // Recompute tracked diffs byte-by-byte.
     // If project already has an original baseline (e.g. loaded via "Load original"),
@@ -3491,6 +3926,7 @@ bool MainWindow::saveProjectImpl(const QString &path)
     const QVector<QPair<qint64, QByteArray>> previousOriginalBytes = m_document->originalBytes;
     const QByteArray currentData = hexEdit->data();
     m_document->originalBytes.clear();
+    m_document->originalFileSize = -1;
 
     auto appendGroupedDiffs = [this](const QVector<QPair<qint64, QByteArray>> &flatDiffs) {
         if (flatDiffs.isEmpty())
@@ -3656,7 +4092,13 @@ void MainWindow::loadFile(const QString &fileName)
     hexEdit->setShowOriginal(false);
     if (m_changesDock)
         m_changesDock->setShowOriginalChecked(false);
-    applyTranslationTableForViewMode();
+
+    if (isTableLikeFilePath(fileName) && useTableAct) {
+        useTableAct->setChecked(false);
+        hexEdit->removeTranslationTable();
+    } else {
+        applyTranslationTableForViewMode();
+    }
 
     resetNavigationHistory();
     setCurrentFile(fileName);
@@ -3678,8 +4120,8 @@ void MainWindow::loadFile(const QString &fileName)
     if (resetTable && !hadSavedProject) {
         hexEdit->removeTranslationTable();
         tb = nullptr;
+        tableFilePath.clear();
         m_tablesDock->clearAll();
-        m_tablesDock->hide();
         useTableAct->setChecked(false);
         useTableAct->setEnabled(false);
         editTableAct->setEnabled(false);
@@ -3689,8 +4131,8 @@ void MainWindow::loadFile(const QString &fileName)
         // Silently clear table when switching file within a project context
         hexEdit->removeTranslationTable();
         tb = nullptr;
+        tableFilePath.clear();
         m_tablesDock->clearAll();
-        m_tablesDock->hide();
         useTableAct->setChecked(false);
         useTableAct->setEnabled(false);
         editTableAct->setEnabled(false);
@@ -3705,6 +4147,7 @@ void MainWindow::loadFile(const QString &fileName)
         rom = detectRomType(fileName, header);
     }
     m_detectedRomType = rom;
+    m_pointerOffset = defaultPointerOffset(rom);
 
     {
         const QSignalBlocker blocker(cbRomType);
@@ -3773,7 +4216,7 @@ void MainWindow::readSettings()
 
     hexEdit->setAddressArea(settings.value("AddressArea", true).toBool());
     hexEdit->setAsciiArea(settings.value("AsciiArea", true).toBool());
-    hexEdit->setHighlighting(settings.value("Highlighting", true).toBool());
+    hexEdit->setHighlighting(true);
     hexEdit->setOverwriteMode(settings.value("OverwriteMode", true).toBool());
 
 
@@ -3916,6 +4359,7 @@ void MainWindow::applyShortcutsFromSettings()
     gotoAct->setShortcut(s.value("hotkey_Goto",          QKeySequence(QKeySequence::FindNext)).value<QKeySequence>());
     useTableAct->setShortcut(s.value("hotkey_UseTable",  QKeySequence(QKeySequence::AddTab)).value<QKeySequence>());
     findPointersAct->setShortcut(s.value("hotkey_FindPointers", QKeySequence(QKeySequence::New)).value<QKeySequence>());
+    dumpScriptAct->setShortcut(s.value("hotkey_EditScript", QKeySequence(Qt::CTRL | Qt::Key_E)).value<QKeySequence>());
     if (previousPositionAct)
         previousPositionAct->setShortcut(s.value("hotkey_PrevPos",
             QKeySequence(Qt::CTRL | Qt::Key_BracketLeft)).value<QKeySequence>());
@@ -4065,7 +4509,7 @@ void MainWindow::updateHexEditorSettings()
 
         editor->setAddressArea(settings.value("AddressArea", true).toBool());
         editor->setAsciiArea(settings.value("AsciiArea", true).toBool());
-        editor->setHighlighting(settings.value("Highlighting").toBool());
+        editor->setHighlighting(true);
         editor->setHighlightingColor(settings.value("HighlightingColor").value<QColor>());
         editor->setPointedColor(settings.value("PointedColor").value<QColor>());
         editor->setPointedFontColor(settings.value("PointedFontColor", QColor(Qt::black)).value<QColor>());
@@ -4322,7 +4766,6 @@ void MainWindow::writeSettings()
     {
         settings.setValue("AddressArea", hexEdit->addressArea());
         settings.setValue("AsciiArea", hexEdit->asciiArea());
-        settings.setValue("Highlighting", hexEdit->highlighting());
         settings.setValue("OverwriteMode", hexEdit->overwriteMode());
         settings.setValue("ShowHexGrid", hexEdit->showHexGrid());
         settings.setValue("Autosize", hexEdit->dynamicBytesPerLine());
@@ -4495,7 +4938,12 @@ void MainWindow::openRecentTable()
 
         try
         {
-            const TranslationTable newTable(fileName);
+            bool encodingAccepted = true;
+            const QString importEncoding = chooseTableImportEncoding(this, fileName, &encodingAccepted);
+            if (!encodingAccepted)
+                return;
+
+            const TranslationTable newTable(fileName, importEncoding);
             m_tablesDock->addTable(QFileInfo(fileName).completeBaseName(), &newTable);
             m_tablesDock->show();
             tb = m_tablesDock->currentTable();
@@ -4610,11 +5058,23 @@ void MainWindow::updateChangedBytesHighlight()
 {
     QSet<qint64> positions;
     if (!m_document || m_document->originalBytes.isEmpty()) {
+        hexEdit->clearChangedRange();
         hexEdit->setChangedPositions(positions);
         return;
     }
 
     const QByteArray currentData = hexEdit->data();
+
+    // Mark the expansion tail as changed only when the original file size is
+    // explicitly known (set by IPS patch / Load Original).  For regular edits
+    // originalFileSize stays -1 and no range highlight is needed.
+    if (m_document->originalFileSize >= 0 && currentData.size() > m_document->originalFileSize) {
+        hexEdit->setChangedRange(m_document->originalFileSize, currentData.size());
+    } else {
+        hexEdit->clearChangedRange();
+    }
+
+    // Compare original bytes with current data for the overlapping portion
     for (const auto &entry : m_document->originalBytes) {
         const qint64 offset = entry.first;
         const QByteArray &origBytes = entry.second;
@@ -4623,8 +5083,6 @@ void MainWindow::updateChangedBytesHighlight()
             if (pos < currentData.size()) {
                 if (currentData.at(pos) != origBytes.at(i))
                     positions.insert(pos);
-            } else {
-                positions.insert(pos);
             }
         }
     }
@@ -4928,30 +5386,30 @@ void MainWindow::loadIpsPatch()
         return;
     }
 
-    // Store originals before applying
+    // Work entirely in memory to avoid per-byte undo stack overhead.
     QByteArray currentData = hexEdit->data();
+    const qint64 originalSize = currentData.size();
     QVector<QPair<qint64, QByteArray>> origGroups;
 
+    // Single pass: parse IPS records, collect original bytes, and apply
+    // patches directly to currentData.
     int pos = 5; // after "PATCH"
     while (pos + 3 <= ipsData.size()) {
-        // Check for EOF marker
         if (ipsData.mid(pos, 3) == QByteArray("EOF"))
             break;
-
         if (pos + 5 > ipsData.size())
             break;
 
-        // 3-byte offset
         quint32 ofs = (static_cast<quint8>(ipsData.at(pos)) << 16)
                     | (static_cast<quint8>(ipsData.at(pos + 1)) << 8)
                     | static_cast<quint8>(ipsData.at(pos + 2));
         pos += 3;
 
-        // 2-byte size
         quint16 sz = (static_cast<quint8>(ipsData.at(pos)) << 8)
                    | static_cast<quint8>(ipsData.at(pos + 1));
         pos += 2;
 
+        QByteArray patchData;
         if (sz == 0) {
             // RLE record
             if (pos + 3 > ipsData.size()) break;
@@ -4959,33 +5417,51 @@ void MainWindow::loadIpsPatch()
                            | static_cast<quint8>(ipsData.at(pos + 1));
             char runVal = ipsData.at(pos + 2);
             pos += 3;
-
-            // Store originals
-            if (ofs < currentData.size()) {
-                qint64 origLen = qMin<qint64>(runLen, currentData.size() - ofs);
-                origGroups.append({ofs, currentData.mid(ofs, origLen)});
-            }
-
-            // Apply RLE
-            QByteArray fill(runLen, runVal);
-            hexEdit->replace(ofs, fill.size(), fill);
+            patchData = QByteArray(runLen, runVal);
         } else {
             if (pos + sz > ipsData.size()) break;
-            QByteArray patchData = ipsData.mid(pos, sz);
+            patchData = ipsData.mid(pos, sz);
             pos += sz;
-
-            // Store originals
-            if (ofs < currentData.size()) {
-                qint64 origLen = qMin<qint64>(sz, currentData.size() - ofs);
-                origGroups.append({ofs, currentData.mid(ofs, origLen)});
-            }
-
-            // Apply patch
-            hexEdit->replace(ofs, patchData.size(), patchData);
         }
+
+        const qint64 patchEnd = ofs + patchData.size();
+
+        // Expand if the record extends beyond the current size
+        if (patchEnd > currentData.size())
+            currentData.resize(static_cast<int>(patchEnd));
+
+        // Store original bytes (only from the original-size portion)
+        if (ofs < originalSize) {
+            qint64 origLen = qMin<qint64>(patchData.size(), originalSize - ofs);
+            origGroups.append({ofs, currentData.mid(static_cast<int>(ofs),
+                                                    static_cast<int>(origLen))});
+        }
+
+        // Apply patch directly to the byte array
+        memcpy(currentData.data() + ofs, patchData.constData(), patchData.size());
     }
 
-    // Merge into project's originalBytes
+    // Record original file size before expansion
+    if (currentData.size() > originalSize) {
+        if (m_document->originalFileSize < 0)
+            m_document->originalFileSize = originalSize;
+    }
+
+    // Invalidate the change tracking snapshot so that onHexDataChangedAt
+    // (triggered by setData) just re-initialises it without processing diffs.
+    m_changeTrackingSnapshot = QByteArray();
+
+    // Replace editor contents in one shot (resets undo stack).
+    hexEdit->setData(currentData);
+
+    // Mark as modified so the user is prompted to save.
+    hexEdit->setModified(true);
+    setWindowModified(true);
+
+    // Re-initialise the tracking snapshot with the new data.
+    m_changeTrackingSnapshot = currentData;
+
+    // Merge origGroups into project's originalBytes
     for (const auto &g : origGroups) {
         bool merged = false;
         for (auto &existing : m_document->originalBytes) {
@@ -5001,13 +5477,17 @@ void MainWindow::loadIpsPatch()
     rememberDirectory(kLastFileDirKey, path);
     statusBar()->showMessage(tr("IPS patch applied"), 2000);
 
+    // Enable changes highlighting and set hex mode
+    if (showChangesAct && !showChangesAct->isChecked())
+        showChangesAct->setChecked(true);
+
+    if (m_changesDock)
+        m_changesDock->setHexMode(true);
+
     m_changesDock->show();
     enforceBottomDockEqualWidth();
+    updateChangedBytesHighlight();
     refreshChangesView();
-    if (showChangesAct->isChecked())
-        updateChangedBytesHighlight();
-    else
-        refreshChangesView();
 }
 
 void MainWindow::loadOriginal()
@@ -5082,6 +5562,7 @@ void MainWindow::loadOriginal()
     }
 
     m_document->originalBytes = newOriginalBytes;
+    m_document->originalFileSize = origData.size();
     updateActionStates();
     m_changesDock->show();
     enforceBottomDockEqualWidth();
@@ -5133,6 +5614,12 @@ void MainWindow::updateEndiannesLabel()
 void MainWindow::onRomTypeChanged(int index)
 {
     m_detectedRomType = static_cast<RomType>(cbRomType->itemData(index).toInt());
+    m_pointerOffset = defaultPointerOffset(m_detectedRomType);
+    m_pointerSize = defaultPointerSize(m_detectedRomType);
+    if (m_document) {
+        m_document->pointerOffset = m_pointerOffset;
+        m_document->pointerSize = m_pointerSize;
+    }
 
     // Update byte order to match the new ROM type
     hexEdit->byteOrder = defaultByteOrder(m_detectedRomType);
@@ -5159,9 +5646,35 @@ void MainWindow::onMenuRomTypeTriggered(QAction *action)
     const QSignalBlocker blocker(cbRomType);
     cbRomType->setCurrentIndex(index);
     m_detectedRomType = static_cast<RomType>(index);
+    m_pointerOffset = defaultPointerOffset(m_detectedRomType);
+    m_pointerSize = defaultPointerSize(m_detectedRomType);
+    if (m_document) {
+        m_document->pointerOffset = m_pointerOffset;
+        m_document->pointerSize = m_pointerSize;
+    }
     hexEdit->byteOrder = defaultByteOrder(m_detectedRomType);
     updateEndiannesLabel();
     setAddress(hexEdit->getCurrentOffset());
+}
+
+void MainWindow::setCurrentPointerOffset(qint64 offset)
+{
+    m_pointerOffset = offset;
+    if (m_document)
+        m_document->pointerOffset = m_pointerOffset;
+    if (!m_restoringProjectUi && m_document && !m_document->projectFilePath.isEmpty())
+        m_projectModified = true;
+}
+
+void MainWindow::setCurrentPointerSize(int size)
+{
+    if (size != 2 && size != 4)
+        return;
+    m_pointerSize = size;
+    if (m_document)
+        m_document->pointerSize = m_pointerSize;
+    if (!m_restoringProjectUi && m_document && !m_document->projectFilePath.isEmpty())
+        m_projectModified = true;
 }
 
 void MainWindow::syncRomTypeMenu(int index)
@@ -5186,6 +5699,48 @@ void MainWindow::syncEncodingMenu()
     for (QAction *a : encodingGroup->actions()) {
         if (a->data().toString() == m_currentEncoding) {
             a->setChecked(true);
+            break;
+        }
+    }
+}
+
+void MainWindow::openEncodingSelectionDialog()
+{
+    if (!encodingGroup || !hexEdit)
+        return;
+
+    const QList<QAction *> actions = encodingGroup->actions();
+    if (actions.isEmpty())
+        return;
+
+    QStringList values;
+    values.reserve(actions.size());
+    int currentIndex = 0;
+
+    for (int i = 0; i < actions.size(); ++i) {
+        const QString value = actions[i]->data().toString();
+        values.append(value);
+        if (value == m_currentEncoding)
+            currentIndex = i;
+    }
+
+    bool ok = false;
+    const QString selected = QInputDialog::getItem(
+        this,
+        tr("Encoding"),
+        tr("Select current encoding:"),
+        values,
+        currentIndex,
+        false,
+        &ok);
+
+    if (!ok || selected.isEmpty() || selected == m_currentEncoding)
+        return;
+
+    for (QAction *action : actions) {
+        if (action->data().toString() == selected) {
+            onEncodingTriggered(action);
+            syncEncodingMenu();
             break;
         }
     }

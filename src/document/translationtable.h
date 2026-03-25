@@ -4,12 +4,17 @@
 #include <QMap>
 #include <QByteArray>
 #include <QString>
+#include <QStringList>
 
 class TranslationTable
 {
 public:
     TranslationTable();
-    TranslationTable(QString fileName);
+    TranslationTable(QString fileName, const QString &textEncoding = QString());
+    bool loadFromFile(const QString &fileName, const QString &textEncoding = QString());
+    static QStringList supportedImportEncodings();
+    static QString guessImportEncoding(const QByteArray &raw);
+    static bool hasNonAsciiValueBytes(const QByteArray &raw);
     QByteArray decode(QByteArray src);
     char decodeSymbol(QString src) const;
     // Returns the byte sequence for a text symbol: checks multi-byte table first, then single-byte.

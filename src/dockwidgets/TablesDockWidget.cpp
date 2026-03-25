@@ -1,5 +1,6 @@
 #include "TablesDockWidget.h"
 #include "translationtable.h"
+#include "DockTitleBar.h"
 
 #include <QPainter>
 #include <QPainterPath>
@@ -10,16 +11,49 @@
 #include <QMessageBox>
 #include <QFileDialog>
 #include <QInputDialog>
+#include <QFile>
 #include <QRegularExpressionValidator>
 #include <QLineEdit>
 #include <QTabBar>
 #include <QSet>
+#include <QPushButton>
+#include <QAbstractButton>
 #include <QApplication>
 #include <QButtonGroup>
 #include <QMenu>
 #include <QUndoCommand>
 #include <QDataStream>
+#include <QSignalBlocker>
+#include <QMainWindow>
+#include <QClipboard>
+#include <QMimeData>
+#include <QRegularExpression>
 #include <algorithm>
+
+#include <QStyledItemDelegate>
+
+// ---------------------------------------------------------------------------
+// Hex-only input delegate for column 0 of the table grid
+// ---------------------------------------------------------------------------
+
+class HexColumnDelegate : public QStyledItemDelegate
+{
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+
+    QWidget *createEditor(QWidget *parent, const QStyleOptionViewItem &option,
+                          const QModelIndex &index) const override
+    {
+        QWidget *editor = QStyledItemDelegate::createEditor(parent, option, index);
+        if (index.column() == 0) {
+            if (auto *le = qobject_cast<QLineEdit *>(editor)) {
+                static const QRegularExpression hexRe(QStringLiteral("^([0-9A-Fa-f]{2})*$"));
+                le->setValidator(new QRegularExpressionValidator(hexRe, le));
+            }
+        }
+        return editor;
+    }
+};
 
 // ---------------------------------------------------------------------------
 // Undo command: stores before/after snapshots of all tables
@@ -29,6 +63,24 @@ static TableTab cloneTab(const TableTab &src)
 {
     return src;
 }
+
+static void configureTableGridColumns(QTableWidget *grid)
+{
+    if (!grid || !grid->horizontalHeader())
+        return;
+
+    auto *header = grid->horizontalHeader();
+    header->setSectionResizeMode(0, QHeaderView::Interactive);
+    header->setSectionResizeMode(1, QHeaderView::Interactive);
+    header->setStretchLastSection(false);
+
+    const int hexWidth = qMax(80, grid->fontMetrics().horizontalAdvance(QStringLiteral("00000000")) + 20);
+    const int valueWidth = qMax(80, hexWidth / 2);
+    grid->setColumnWidth(0, hexWidth);
+    grid->setColumnWidth(1, valueWidth);
+}
+
+static constexpr const char *kTableRowsMimeType = "application/x-rthextion-table-rows";
 
 class TableSnapshotCommand : public QUndoCommand
 {
@@ -69,27 +121,6 @@ TablesDockWidget::TablesDockWidget(QWidget *parent)
 {
     setObjectName(QStringLiteral("TablesDockWidget"));
     setFeatures(QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetFloatable | QDockWidget::DockWidgetMovable);
-
-    // Custom compact title bar
-    auto *titleBar = new QWidget(this);
-    titleBar->setObjectName(QStringLiteral("dockTitleBar"));
-    titleBar->setFixedHeight(16);
-    auto *titleLayout = new QHBoxLayout(titleBar);
-    titleLayout->setContentsMargins(4, 0, 2, 0);
-    titleLayout->setSpacing(1);
-    m_titleLabel = new QLabel(tr("Tables"), titleBar);
-    QFont smallFont = m_titleLabel->font();
-    smallFont.setPointSizeF(smallFont.pointSizeF() * 0.8);
-    m_titleLabel->setFont(smallFont);
-    titleLayout->addWidget(m_titleLabel);
-    titleLayout->addStretch();
-    m_collapseBtn = new QToolButton(titleBar);
-    m_collapseBtn->setArrowType(Qt::DownArrow);
-    m_collapseBtn->setAutoRaise(true);
-    m_collapseBtn->setFixedSize(14, 14);
-    m_collapseBtn->setToolTip(tr("Collapse / Expand"));
-    titleLayout->addWidget(m_collapseBtn);
-    setTitleBarWidget(titleBar);
 
     m_undoStack = new QUndoStack(this);
 
@@ -155,12 +186,52 @@ TablesDockWidget::TablesDockWidget(QWidget *parent)
         emit useTableToggled(checked);
     });
 
-    m_addAct       = m_toolbar->addAction(QStringLiteral("+"),   this, [this]{ pushUndoSnapshot(tr("Add table")); addTable(); });
-    m_duplicateAct = m_toolbar->addAction(QStringLiteral("Copy"), this, [this]{ pushUndoSnapshot(tr("Duplicate table")); duplicateCurrentTable(); });
-    m_importAct    = m_toolbar->addAction(QStringLiteral("Import"), this, [this]{ importTable(); });
-    m_exportAct    = m_toolbar->addAction(QStringLiteral("Export"), this, [this]{ exportCurrentTable(); });
+    m_addAct = new QAction(this);
+    connect(m_addAct, &QAction::triggered, this, [this] {
+        pushUndoSnapshot(tr("Add table"));
+        addTable();
+    });
+
+    m_duplicateAct = new QAction(this);
+    connect(m_duplicateAct, &QAction::triggered, this, [this] {
+        pushUndoSnapshot(tr("Duplicate table"));
+        duplicateCurrentTable();
+    });
+
+    m_generateAct = new QAction(this);
+    connect(m_generateAct, &QAction::triggered, this, [this] {
+        emit generateTableRequested();
+    });
+
+    m_importAct = new QAction(this);
+    connect(m_importAct, &QAction::triggered, this, [this] {
+        importTable();
+    });
+
+    m_addMenu = new QMenu(this);
+    m_addMenu->addAction(m_importAct);
+    m_addMenu->addSeparator();
+    m_addMenu->addAction(m_duplicateAct);
+    m_addMenu->addAction(m_generateAct);
+    m_addMenu->addAction(m_addAct);
+
+    m_addBtn = new QToolButton(this);
+    m_addBtn->setPopupMode(QToolButton::MenuButtonPopup);
+    m_addBtn->setMenu(m_addMenu);
+    connect(m_addBtn, &QToolButton::clicked, this, [this] {
+        if (m_addAct)
+            m_addAct->trigger();
+    });
+    m_toolbar->addWidget(m_addBtn);
+
+    m_removeAct = m_toolbar->addAction(QStringLiteral("Delete"), this, [this]{ removeCurrentTable(); });
+
     m_toolbar->addSeparator();
-    m_removeAct    = m_toolbar->addAction(QStringLiteral("X"),  this, [this]{ removeCurrentTable(); });
+    auto *spacer = new QWidget(this);
+    spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    m_toolbar->addWidget(spacer);
+
+    m_exportAct = m_toolbar->addAction(QStringLiteral("Export"), this, [this]{ exportCurrentTable(); });
     layout->addWidget(m_toolbar);
 
     // Tab widget
@@ -168,6 +239,7 @@ TablesDockWidget::TablesDockWidget(QWidget *parent)
     m_tabs->setTabsClosable(false);
     m_tabs->setMovable(true);
     connect(m_tabs, &QTabWidget::currentChanged, this, &TablesDockWidget::onTabChanged);
+    connect(m_tabs->tabBar(), &QTabBar::tabMoved, this, &TablesDockWidget::onTabMoved);
     // Double-click on a tab label → rename
     connect(m_tabs->tabBar(), &QTabBar::tabBarDoubleClicked,
             this, &TablesDockWidget::onTabDoubleClicked);
@@ -183,11 +255,6 @@ TablesDockWidget::TablesDockWidget(QWidget *parent)
     updateButtonStates();
     retranslateUi();
 
-    connect(m_collapseBtn, &QToolButton::clicked, this, [this]() {
-        const bool visible = m_contentWidget->isVisible();
-        m_contentWidget->setVisible(!visible);
-        m_collapseBtn->setArrowType(visible ? Qt::RightArrow : Qt::DownArrow);
-    });
 }
 
 TablesDockWidget::~TablesDockWidget()
@@ -208,6 +275,8 @@ TablesDockWidget::~TablesDockWidget()
 
 int TablesDockWidget::addTable(const QString &name, const TranslationTable *table)
 {
+    setCollapsed(false);
+
     TableTab tab;
     tab.name = name.isEmpty() ? defaultTabName(0) : name;
     if (table)
@@ -218,12 +287,21 @@ int TablesDockWidget::addTable(const QString &name, const TranslationTable *tabl
     // Create grid widget
     auto *grid = new QTableWidget(0, 2, this);
     grid->setHorizontalHeaderLabels(QStringList() << QStringLiteral("HEX") << tr("Value"));
-    grid->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-    grid->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    grid->setItemDelegateForColumn(0, new HexColumnDelegate(grid));
+    configureTableGridColumns(grid);
     grid->setAlternatingRowColors(true);
     grid->setSelectionBehavior(QAbstractItemView::SelectRows);
+    grid->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    grid->setContextMenuPolicy(Qt::CustomContextMenu);
     grid->verticalHeader()->setDefaultSectionSize(22);
     connect(grid, &QTableWidget::cellChanged, this, &TablesDockWidget::onCellChanged);
+    connect(grid, &QTableWidget::cellClicked, this, [this, grid](int row, int /*col*/) {
+        if (isPlaceholderRow(grid, row))
+            activatePlaceholderRow(grid, row);
+    });
+    connect(grid, &QTableWidget::customContextMenuRequested, this, [this, grid](const QPoint &pos) {
+        onGridContextMenu(grid, pos);
+    });
 
     m_ignoreChanges = true;
     populateGrid(grid, &tab.table);
@@ -314,8 +392,10 @@ void TablesDockWidget::removeCurrentTable()
         // Last table — just clear it, don't remove the tab
         m_tables[0].table.clearItems();
         m_ignoreChanges = true;
-        if (auto *g = gridAt(0))
+        if (auto *g = gridAt(0)) {
             g->setRowCount(0);
+            ensurePlaceholderRow(g);
+        }
         m_ignoreChanges = false;
     } else {
         m_tables.removeAt(idx);
@@ -359,9 +439,33 @@ void TablesDockWidget::importTable()
         QStringLiteral("Tables (*.tbl *.tab *.table);;Text files (*.txt)"));
     if (fileName.isEmpty()) return;
 
+    QString importEncoding;
+    QFile rawFile(fileName);
+    if (rawFile.open(QIODevice::ReadOnly)) {
+        const QByteArray raw = rawFile.readAll();
+        rawFile.close();
+        if (TranslationTable::hasNonAsciiValueBytes(raw)) {
+            const QStringList encodings = TranslationTable::supportedImportEncodings();
+            const QString guessed = TranslationTable::guessImportEncoding(raw);
+            const int idx = qMax(0, encodings.indexOf(guessed));
+            bool ok = false;
+            const QString picked = QInputDialog::getItem(
+                this,
+                tr("Table encoding"),
+                tr("Select encoding for imported table:"),
+                encodings,
+                idx,
+                false,
+                &ok);
+            if (!ok)
+                return;
+            importEncoding = picked;
+        }
+    }
+
     pushUndoSnapshot(tr("Import table"));
 
-    const TranslationTable importedTable(fileName);
+    const TranslationTable importedTable(fileName, importEncoding);
     addTable(QFileInfo(fileName).completeBaseName(), &importedTable);
     emit tableContentChanged();
 }
@@ -410,16 +514,85 @@ const QVector<TableTab> &TablesDockWidget::allTables() const
     return m_tables;
 }
 
+void TablesDockWidget::setCollapsed(bool collapsed)
+{
+    if (m_collapsed == collapsed)
+        return;
+    m_collapsed = collapsed;
+
+    Qt::DockWidgetArea area = Qt::NoDockWidgetArea;
+    QMainWindow *mw = qobject_cast<QMainWindow *>(parentWidget());
+    if (mw)
+        area = mw->dockWidgetArea(this);
+    const bool sideArea = (area == Qt::LeftDockWidgetArea || area == Qt::RightDockWidgetArea);
+
+    int collapsedExtent = 30;
+    if (auto *titleBar = static_cast<DockTitleBar *>(titleBarWidget())) {
+        collapsedExtent = titleBar->collapsedExtent(sideArea);
+    }
+
+    if (collapsed) {
+        if (sideArea) {
+            m_savedExpandedWidth = width();
+            setMinimumWidth(collapsedExtent);
+            setMaximumWidth(collapsedExtent);
+            if (mw)
+                mw->resizeDocks({this}, {collapsedExtent}, Qt::Horizontal);
+            else
+                resize(collapsedExtent, height());
+        } else {
+            m_savedExpandedHeight = height();
+            setMinimumHeight(collapsedExtent);
+            setMaximumHeight(collapsedExtent);
+            if (mw)
+                mw->resizeDocks({this}, {collapsedExtent}, Qt::Vertical);
+            else
+                resize(width(), collapsedExtent);
+        }
+    } else {
+        if (sideArea) {
+            setMinimumWidth(0);
+            setMaximumWidth(QWIDGETSIZE_MAX);
+            const int target = m_savedExpandedWidth > 0 ? m_savedExpandedWidth : 360;
+            if (mw)
+                mw->resizeDocks({this}, {target}, Qt::Horizontal);
+            else
+                resize(target, height());
+        } else {
+            setMinimumHeight(0);
+            setMaximumHeight(QWIDGETSIZE_MAX);
+            const int target = m_savedExpandedHeight > 0 ? m_savedExpandedHeight : 220;
+            if (mw)
+                mw->resizeDocks({this}, {target}, Qt::Vertical);
+            else
+                resize(width(), target);
+        }
+    }
+
+    if (m_contentWidget)
+        m_contentWidget->setVisible(!collapsed);
+    if (auto *titleBar = static_cast<DockTitleBar *>(titleBarWidget()))
+        titleBar->setCollapsed(collapsed);
+}
+
 void TablesDockWidget::retranslateUi()
 {
     setWindowTitle(tr("Tables"));
-    if (m_titleLabel)
-        m_titleLabel->setText(tr("Tables"));
-    if (m_collapseBtn)
-        m_collapseBtn->setToolTip(tr("Collapse / Expand"));
+    if (m_addBtn)
+        m_addBtn->setText(tr("Add"));
+    m_addAct->setText(tr("Blank"));
     m_addAct->setToolTip(tr("Add empty table"));
+    m_duplicateAct->setText(tr("Copy"));
     m_duplicateAct->setToolTip(tr("Duplicate current table"));
-    m_importAct->setToolTip(tr("Import table from file"));
+    if (m_generateAct) {
+        m_generateAct->setText(tr("Generate"));
+        m_generateAct->setToolTip(tr("Generate table by searching for a known text"));
+    }
+    if (m_importAct) {
+        m_importAct->setText(tr("Import"));
+        m_importAct->setToolTip(tr("Import table from file"));
+    }
+    m_removeAct->setText(tr("Delete"));
     m_exportAct->setToolTip(tr("Export table to file"));
     m_removeAct->setToolTip(tr("Remove current table"));
     for (int i = 0; i < m_tabs->count(); ++i) {
@@ -446,6 +619,17 @@ void TablesDockWidget::onTabChanged(int index)
         emit activeTableChanged(nullptr);
 }
 
+void TablesDockWidget::onTabMoved(int from, int to)
+{
+    if (from == to || from < 0 || to < 0 || from >= m_tables.size() || to >= m_tables.size())
+        return;
+
+    m_tables.move(from, to);
+    updateButtonStates();
+    emit tableContentChanged();
+    emit activeTableChanged(currentTable());
+}
+
 void TablesDockWidget::onTabDoubleClicked(int index)
 {
     if (index < 0 || index >= m_tables.size())
@@ -463,7 +647,12 @@ void TablesDockWidget::onTabDoubleClicked(int index)
         // completes, Qt may move focus elsewhere, so we restore it via queued call.
         QMetaObject::invokeMethod(this, [this, index]() {
             m_tabs->setCurrentIndex(index);
-            m_tabs->tabBar()->setFocus(Qt::OtherFocusReason);
+            if (auto *bar = m_tabs->tabBar()) {
+                bar->setCurrentIndex(index);
+                bar->setFocus(Qt::OtherFocusReason);
+                bar->update();
+            }
+            m_tabs->update();
         }, Qt::QueuedConnection);
         return;
     }
@@ -474,12 +663,48 @@ void TablesDockWidget::onTabDoubleClicked(int index)
     emit tableContentChanged();
 }
 
-void TablesDockWidget::onCellChanged(int /*row*/, int /*col*/)
+void TablesDockWidget::onCellChanged(int row, int col)
 {
     if (m_ignoreChanges) return;
 
     const int idx = m_tabs->currentIndex();
     if (idx < 0 || idx >= m_tables.size()) return;
+
+    auto *grid = gridAt(idx);
+    if (!grid)
+        return;
+
+    if (row >= 0 && row < grid->rowCount() && !isPlaceholderRow(grid, row)) {
+        auto *hexItem = grid->item(row, 0);
+        auto *valItem = grid->item(row, 1);
+        if (hexItem && valItem) {
+            const QString normalizedHex = hexItem->text().trimmed().toUpper();
+            const bool validHex = isValidHexKeyText(normalizedHex);
+
+            if (col == 0) {
+                m_ignoreChanges = true;
+                hexItem->setText(normalizedHex);
+                if (validHex) {
+                    hexItem->setBackground(QBrush());
+                    valItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled | Qt::ItemIsEditable);
+                    valItem->setToolTip(QString());
+                } else {
+                    hexItem->setBackground(QColor(255, 220, 220));
+                    valItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
+                    valItem->setToolTip(tr("HEX must contain only hexadecimal digits and even length (e.g. 0A or 0A1B)."));
+                }
+                m_ignoreChanges = false;
+            } else if (col == 1 && !validHex) {
+                m_ignoreChanges = true;
+                valItem->setText(QString());
+                valItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
+                valItem->setToolTip(tr("Enter HEX key first"));
+                m_ignoreChanges = false;
+                QMessageBox::warning(this, tr("Invalid HEX"),
+                                     tr("Allowed format: hexadecimal digits with even length."));
+            }
+        }
+    }
 
     // Push undo snapshot for content edits
     // We don't push per-keystroke; instead we rely on tab losing focus / explicit commit.
@@ -522,6 +747,8 @@ void TablesDockWidget::populateGrid(QTableWidget *grid, TranslationTable *table)
         grid->setItem(row, 0, hexItem);
         grid->setItem(row, 1, new QTableWidgetItem(it.value()));
     }
+
+    ensurePlaceholderRow(grid);
 }
 
 void TablesDockWidget::syncTableFromGrid(int tabIndex)
@@ -562,6 +789,336 @@ void TablesDockWidget::syncTableFromGrid(int tabIndex)
     }
 
     m_tabs->setTabText(tabIndex, m_tables[tabIndex].name);
+}
+
+void TablesDockWidget::ensurePlaceholderRow(QTableWidget *grid)
+{
+    if (!grid)
+        return;
+
+    const int row = grid->rowCount();
+    grid->insertRow(row);
+
+    auto *hexItem = new QTableWidgetItem(QString());
+    hexItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
+    hexItem->setTextAlignment(Qt::AlignCenter);
+
+    auto *valueItem = new QTableWidgetItem(tr("Add value"));
+    valueItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
+    valueItem->setForeground(QBrush(Qt::gray));
+    valueItem->setData(Qt::UserRole, true);
+
+    grid->setItem(row, 0, hexItem);
+    grid->setItem(row, 1, valueItem);
+}
+
+bool TablesDockWidget::isPlaceholderRow(QTableWidget *grid, int row) const
+{
+    if (!grid || row < 0 || row >= grid->rowCount())
+        return false;
+    auto *valueItem = grid->item(row, 1);
+    return valueItem && valueItem->data(Qt::UserRole).toBool();
+}
+
+void TablesDockWidget::activatePlaceholderRow(QTableWidget *grid, int row)
+{
+    if (!isPlaceholderRow(grid, row))
+        return;
+
+    const QSignalBlocker blocker(grid);
+
+    auto *hexItem = grid->item(row, 0);
+    if (!hexItem) {
+        hexItem = new QTableWidgetItem;
+        grid->setItem(row, 0, hexItem);
+    }
+    hexItem->setText(QString());
+    hexItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled | Qt::ItemIsEditable);
+    hexItem->setTextAlignment(Qt::AlignCenter);
+
+    auto *valueItem = grid->item(row, 1);
+    if (!valueItem) {
+        valueItem = new QTableWidgetItem;
+        grid->setItem(row, 1, valueItem);
+    }
+    valueItem->setText(QString());
+    valueItem->setData(Qt::UserRole, false);
+    valueItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
+    valueItem->setToolTip(tr("Enter HEX key first"));
+    valueItem->setForeground(QBrush());
+
+    ensurePlaceholderRow(grid);
+
+    grid->setCurrentCell(row, 0);
+    grid->editItem(hexItem);
+}
+
+bool TablesDockWidget::isValidHexKeyText(const QString &hexText) const
+{
+    static const QRegularExpression kHexRe(QStringLiteral("^[0-9A-Fa-f]+$"));
+    if (hexText.isEmpty())
+        return false;
+    if (hexText.size() % 2 != 0)
+        return false;
+    return kHexRe.match(hexText).hasMatch();
+}
+
+QVector<int> TablesDockWidget::selectedEditableRows(QTableWidget *grid) const
+{
+    QVector<int> rows;
+    if (!grid)
+        return rows;
+
+    QModelIndexList indices = grid->selectionModel() ? grid->selectionModel()->selectedRows() : QModelIndexList();
+    rows.reserve(indices.size());
+    for (const QModelIndex &idx : indices) {
+        if (!idx.isValid())
+            continue;
+        const int row = idx.row();
+        if (row >= 0 && row < grid->rowCount() && !isPlaceholderRow(grid, row))
+            rows.append(row);
+    }
+    std::sort(rows.begin(), rows.end());
+    rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
+    return rows;
+}
+
+void TablesDockWidget::copyRowsToClipboard(QTableWidget *grid, const QVector<int> &rows) const
+{
+    if (!grid || rows.isEmpty())
+        return;
+
+    QStringList lines;
+    lines.reserve(rows.size());
+    for (int row : rows) {
+        auto *hexItem = grid->item(row, 0);
+        auto *valItem = grid->item(row, 1);
+        if (!hexItem || !valItem)
+            continue;
+        const QString hex = hexItem->text().trimmed().toUpper();
+        const QString value = valItem->text();
+        if (!isValidHexKeyText(hex))
+            continue;
+        lines.append(hex + QLatin1Char('\t') + value);
+    }
+
+    if (lines.isEmpty())
+        return;
+
+    auto *mime = new QMimeData;
+    const QString text = lines.join(QLatin1Char('\n'));
+    mime->setData(kTableRowsMimeType, text.toUtf8());
+    mime->setText(text);
+    QApplication::clipboard()->setMimeData(mime);
+}
+
+void TablesDockWidget::deleteRows(QTableWidget *grid, const QVector<int> &rows)
+{
+    if (!grid || rows.isEmpty())
+        return;
+
+    m_ignoreChanges = true;
+    for (int i = rows.size() - 1; i >= 0; --i)
+        grid->removeRow(rows[i]);
+    m_ignoreChanges = false;
+
+    ensurePlaceholderRow(grid);
+}
+
+void TablesDockWidget::pasteRowsFromClipboard(QTableWidget *grid)
+{
+    if (!grid)
+        return;
+
+    const QMimeData *mime = QApplication::clipboard()->mimeData();
+    if (!mime)
+        return;
+
+    QString text;
+    if (mime->hasFormat(kTableRowsMimeType))
+        text = QString::fromUtf8(mime->data(kTableRowsMimeType));
+    else
+        text = mime->text();
+
+    if (text.trimmed().isEmpty())
+        return;
+
+    struct RowData {
+        QString hex;
+        QString value;
+    };
+    QVector<RowData> incoming;
+    const QStringList lines = text.split(QRegularExpression(QStringLiteral("\\r?\\n")), Qt::SkipEmptyParts);
+    incoming.reserve(lines.size());
+
+    for (const QString &line : lines) {
+        QString hex;
+        QString value;
+        const int tabPos = line.indexOf(QLatin1Char('\t'));
+        if (tabPos >= 0) {
+            hex = line.left(tabPos).trimmed().toUpper();
+            value = line.mid(tabPos + 1);
+        } else {
+            const int eqPos = line.indexOf(QLatin1Char('='));
+            if (eqPos <= 0)
+                continue;
+            hex = line.left(eqPos).trimmed().toUpper();
+            value = line.mid(eqPos + 1);
+        }
+
+        if (!isValidHexKeyText(hex))
+            continue;
+
+        incoming.append({hex, value});
+    }
+
+    if (incoming.isEmpty())
+        return;
+
+    QHash<QString, int> existingByHex;
+    for (int r = 0; r < grid->rowCount(); ++r) {
+        if (isPlaceholderRow(grid, r))
+            continue;
+        auto *hexItem = grid->item(r, 0);
+        if (!hexItem)
+            continue;
+        const QString hex = hexItem->text().trimmed().toUpper();
+        if (isValidHexKeyText(hex))
+            existingByHex.insert(hex, r);
+    }
+
+    enum class ConflictDecision { Ask, YesAll, NoAll };
+    ConflictDecision decision = ConflictDecision::Ask;
+
+    m_ignoreChanges = true;
+    for (const RowData &rowData : incoming) {
+        if (existingByHex.contains(rowData.hex)) {
+            const int row = existingByHex.value(rowData.hex);
+            auto *valItem = grid->item(row, 1);
+            if (!valItem)
+                continue;
+            const QString currentValue = valItem->text();
+            if (currentValue == rowData.value)
+                continue;
+
+            bool overwrite = false;
+            if (decision == ConflictDecision::YesAll) {
+                overwrite = true;
+            } else if (decision == ConflictDecision::NoAll) {
+                overwrite = false;
+            } else {
+                QMessageBox box(QMessageBox::Question,
+                                tr("Overwrite value"),
+                                tr("Key %1 already exists with different value. Overwrite?").arg(rowData.hex),
+                                QMessageBox::NoButton,
+                                this);
+                QPushButton *yesBtn = box.addButton(tr("Yes"), QMessageBox::YesRole);
+                QPushButton *noBtn = box.addButton(tr("No"), QMessageBox::NoRole);
+                QPushButton *yesAllBtn = box.addButton(tr("Yes for all"), QMessageBox::AcceptRole);
+                QPushButton *noAllBtn = box.addButton(tr("No for all"), QMessageBox::RejectRole);
+                box.exec();
+
+                if (box.clickedButton() == yesAllBtn) {
+                    decision = ConflictDecision::YesAll;
+                    overwrite = true;
+                } else if (box.clickedButton() == noAllBtn) {
+                    decision = ConflictDecision::NoAll;
+                    overwrite = false;
+                } else if (box.clickedButton() == yesBtn) {
+                    overwrite = true;
+                } else if (box.clickedButton() == noBtn) {
+                    overwrite = false;
+                }
+            }
+
+            if (overwrite)
+                valItem->setText(rowData.value);
+            continue;
+        }
+
+        int insertRow = grid->rowCount();
+        for (int r = 0; r < grid->rowCount(); ++r) {
+            if (isPlaceholderRow(grid, r)) {
+                insertRow = r;
+                break;
+            }
+        }
+
+        grid->insertRow(insertRow);
+        auto *hexItem = new QTableWidgetItem(rowData.hex);
+        hexItem->setTextAlignment(Qt::AlignCenter);
+        auto *valItem = new QTableWidgetItem(rowData.value);
+        valItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled | Qt::ItemIsEditable);
+        grid->setItem(insertRow, 0, hexItem);
+        grid->setItem(insertRow, 1, valItem);
+
+        existingByHex.insert(rowData.hex, insertRow);
+    }
+    m_ignoreChanges = false;
+
+    syncTableFromGrid(m_tabs->currentIndex());
+    emit tableContentChanged();
+    emit activeTableChanged(currentTable());
+}
+
+void TablesDockWidget::onGridContextMenu(QTableWidget *grid, const QPoint &pos)
+{
+    if (!grid)
+        return;
+
+    const QVector<int> rows = selectedEditableRows(grid);
+    const bool hasRows = !rows.isEmpty();
+
+    QMenu menu(this);
+    QAction *cutAct = menu.addAction(tr("Cut"));
+    QAction *copyAct = menu.addAction(tr("Copy"));
+    QAction *deleteAct = menu.addAction(tr("Delete"));
+    menu.addSeparator();
+    QAction *pasteAct = menu.addAction(tr("Paste"));
+
+    cutAct->setEnabled(hasRows);
+    copyAct->setEnabled(hasRows);
+    deleteAct->setEnabled(hasRows);
+    pasteAct->setEnabled(QApplication::clipboard() && QApplication::clipboard()->mimeData() &&
+                        (QApplication::clipboard()->mimeData()->hasFormat(kTableRowsMimeType)
+                         || !QApplication::clipboard()->text().trimmed().isEmpty()));
+
+    QAction *chosen = menu.exec(grid->viewport()->mapToGlobal(pos));
+    if (!chosen)
+        return;
+
+    if (chosen == copyAct) {
+        copyRowsToClipboard(grid, rows);
+        return;
+    }
+
+    if (chosen == cutAct) {
+        pushUndoSnapshot(tr("Cut rows"));
+        copyRowsToClipboard(grid, rows);
+        deleteRows(grid, rows);
+        syncTableFromGrid(m_tabs->currentIndex());
+        updateButtonStates();
+        emit tableContentChanged();
+        emit activeTableChanged(currentTable());
+        return;
+    }
+
+    if (chosen == deleteAct) {
+        pushUndoSnapshot(tr("Delete rows"));
+        deleteRows(grid, rows);
+        syncTableFromGrid(m_tabs->currentIndex());
+        updateButtonStates();
+        emit tableContentChanged();
+        emit activeTableChanged(currentTable());
+        return;
+    }
+
+    if (chosen == pasteAct) {
+        pushUndoSnapshot(tr("Paste rows"));
+        pasteRowsFromClipboard(grid);
+        updateButtonStates();
+        return;
+    }
 }
 
 void TablesDockWidget::updateButtonStates()
@@ -686,12 +1243,21 @@ void TablesDockWidget::applySnapshot(const QVector<TableTab> &snapshot, int acti
         TableTab copy = cloneTab(snap);
         auto *grid = new QTableWidget(0, 2, this);
         grid->setHorizontalHeaderLabels(QStringList() << QStringLiteral("HEX") << tr("Value"));
-        grid->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-        grid->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+        grid->setItemDelegateForColumn(0, new HexColumnDelegate(grid));
+        configureTableGridColumns(grid);
         grid->setAlternatingRowColors(true);
         grid->setSelectionBehavior(QAbstractItemView::SelectRows);
+        grid->setSelectionMode(QAbstractItemView::ExtendedSelection);
+        grid->setContextMenuPolicy(Qt::CustomContextMenu);
         grid->verticalHeader()->setDefaultSectionSize(22);
         connect(grid, &QTableWidget::cellChanged, this, &TablesDockWidget::onCellChanged);
+        connect(grid, &QTableWidget::cellClicked, this, [this, grid](int row, int /*col*/) {
+            if (isPlaceholderRow(grid, row))
+                activatePlaceholderRow(grid, row);
+        });
+        connect(grid, &QTableWidget::customContextMenuRequested, this, [this, grid](const QPoint &pos) {
+            onGridContextMenu(grid, pos);
+        });
 
         populateGrid(grid, &copy.table);
 
@@ -821,14 +1387,7 @@ void TablesDockWidget::setTableOriginal(int index, bool original)
     if (index < 0 || index >= m_tables.size())
         return;
 
-    if (original) {
-        // Mark exactly one table as original.
-        for (int i = 0; i < m_tables.size(); ++i)
-            m_tables[i].isOriginal = (i == index);
-    } else {
-        // Allow clearing the flag for this table without touching others.
-        m_tables[index].isOriginal = false;
-    }
+    m_tables[index].isOriginal = original;
 
     updateButtonStates();
 }

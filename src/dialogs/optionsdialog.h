@@ -113,6 +113,8 @@ private:
     QList<HotkeyEntry>          m_hotkeys;
     QMap<QString, QKeySequence> m_originalHotkeys;
     QLabel                     *m_conflictLabel = nullptr;
+    QString                      m_originalThemeId;
+    QString                      m_currentThemeId;
 
     struct SettingsSnapshot
     {
@@ -120,7 +122,6 @@ private:
         int addressAreaWidth;
         bool asciiArea;
         bool hexGridShow;
-        bool highlighting;
         bool autosize;
         bool autoLoadRecentFile;
         int bytesPerLine;
@@ -154,6 +155,7 @@ private:
         bool resetTableOnClose = false;
         bool resetEncodingOnClose = false;
         bool autoFixChecksums = false;
+        bool darkMode = false;
         QString defaultEncoding = QStringLiteral("ASCII");
     };
     SettingsSnapshot m_originalSettings, m_currentSettings;

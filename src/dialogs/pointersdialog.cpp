@@ -24,6 +24,11 @@
 #include <QComboBox>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QSettings>
+
+static constexpr const char *kPointersProfileRomTypeKey = "pointers/profile_rom_type";
+static constexpr const char *kPointersProfileOffsetKey = "pointers/profile_offset_hex";
+static constexpr const char *kPointersPointerSizeKey   = "pointers/pointer_size";
 
 PointersDialog::PointersDialog(HexEditor *hexEdit, QWidget *parent) :
     QDialog(parent),
@@ -66,7 +71,7 @@ PointersDialog::PointersDialog(HexEditor *hexEdit, QWidget *parent) :
     _cbProfileRomType->setCurrentIndex(0);
 
     auto *lblOffset = new QLabel(tr("Pointer offset") + ":");
-    _leProfileOffset = new QLineEdit("0");
+    _leProfileOffset = new QLineEdit(QString::number(defaultPointerOffset(RomType::Unknown), 16).toUpper());
     _leProfileOffset->setMaximumWidth(120);
     _leProfileOffset->setValidator(new QRegularExpressionValidator(
         QRegularExpression("[+-]?[0-9A-Fa-f]*"), this));
@@ -106,7 +111,29 @@ PointersDialog::PointersDialog(HexEditor *hexEdit, QWidget *parent) :
             _leProfileOffset->setText("-" + QString::number(-offset, 16).toUpper());
         else
             _leProfileOffset->setText(QString::number(offset, 16).toUpper());
+
+        QSettings settings;
+        settings.setValue(QLatin1String(kPointersProfileRomTypeKey), static_cast<int>(rt));
+        settings.setValue(QLatin1String(kPointersProfileOffsetKey), _leProfileOffset->text().trimmed().toUpper());
     });
+
+    connect(_leProfileOffset, &QLineEdit::editingFinished, this, [this]() {
+        QSettings settings;
+        settings.setValue(QLatin1String(kPointersProfileOffsetKey), _leProfileOffset->text().trimmed().toUpper());
+    });
+
+    // Save pointer size to QSettings and MainWindow when the user manually changes it.
+    // _profileInitialized guards against saving during initial setup.
+    auto onPointerSizeToggled = [this](int size, bool checked) {
+        if (!checked || !_profileInitialized)
+            return;
+        QSettings s;
+        s.setValue(QLatin1String(kPointersPointerSizeKey), size);
+        if (auto *mw = qobject_cast<MainWindow *>(this->parent()))
+            mw->setCurrentPointerSize(size);
+    };
+    connect(ui->rb2Byte, &QRadioButton::toggled, this, [=](bool c) { onPointerSizeToggled(2, c); });
+    connect(ui->rb4Byte, &QRadioButton::toggled, this, [=](bool c) { onPointerSizeToggled(4, c); });
 
     ui->bbControls->button(QDialogButtonBox::Ok)->setText(tr("Find"));
 
@@ -156,6 +183,8 @@ void PointersDialog::refreshFromTable()
 void PointersDialog::setRomProfile(RomType type, qint64 offset)
 {
     const QSignalBlocker blocker(_cbProfileRomType);
+    const QSignalBlocker blk2(ui->rb2Byte);
+    const QSignalBlocker blk4(ui->rb4Byte);
     _cbProfileRomType->setCurrentIndex(static_cast<int>(type));
 
     if (offset < 0)
@@ -234,8 +263,15 @@ void PointersDialog::quickSearch(qint64 clickBytePos)
     ui->cbOptimize->setChecked(false);      // no text optimization
     ui->cbExcludeSelection->setChecked(false);
 
-    // Force 4-byte pointers for quick search (override any ROM-type defaults)
-    ui->rb4Byte->setChecked(true);
+    // Restore pointer size from MainWindow (respects user's persisted preference)
+    {
+        const QSignalBlocker blk2(ui->rb2Byte);
+        const QSignalBlocker blk4(ui->rb4Byte);
+        auto *mw = qobject_cast<MainWindow *>(parent());
+        const int sz = mw ? mw->currentPointerSize() : 4;
+        if (sz == 2) ui->rb2Byte->setChecked(true);
+        else         ui->rb4Byte->setChecked(true);
+    }
 
     _quickSearchMode = true;
     if (!_quickSearchBusyCursor)
@@ -305,12 +341,51 @@ void PointersDialog::showEvent(QShowEvent *ev)
     const int y = (screenGeom.height() - height()) / 2 + screenGeom.top();
     move(x, y);
 
-    // Sync ROM profile from MainWindow
-    auto *mw = qobject_cast<MainWindow *>(parent());
-    if (mw)
-        setRomProfile(mw->currentRomType(), mw->currentPointerOffset());
-    // Always default to 4-byte pointer size regardless of ROM-type default
-    ui->rb4Byte->setChecked(true);
+    if (!_profileInitialized)
+    {
+        // Initialize profile from MainWindow only once.
+        auto *mw = qobject_cast<MainWindow *>(parent());
+        if (mw)
+            setRomProfile(mw->currentRomType(), mw->currentPointerOffset());
+
+        QSettings settings;
+        const QVariant savedRomType = settings.value(QLatin1String(kPointersProfileRomTypeKey));
+        const QString savedOffset = settings.value(QLatin1String(kPointersProfileOffsetKey)).toString().trimmed().toUpper();
+
+        if (savedRomType.isValid())
+        {
+            const int romTypeRaw = savedRomType.toInt();
+            for (int i = 0; i < _cbProfileRomType->count(); ++i)
+            {
+                if (_cbProfileRomType->itemData(i).toInt() == romTypeRaw)
+                {
+                    _cbProfileRomType->setCurrentIndex(i);
+                    break;
+                }
+            }
+        }
+
+        if (!savedOffset.isEmpty())
+            _leProfileOffset->setText(savedOffset);
+
+        // Restore pointer size: prefer MainWindow's saved value, fall back to QSettings
+        {
+            const QSignalBlocker blk2(ui->rb2Byte);
+            const QSignalBlocker blk4(ui->rb4Byte);
+            int sz = 4;
+            if (mw)
+                sz = mw->currentPointerSize();
+            else {
+                const QVariant savedSize = settings.value(QLatin1String(kPointersPointerSizeKey));
+                if (savedSize.isValid())
+                    sz = savedSize.toInt();
+            }
+            if (sz == 2) ui->rb2Byte->setChecked(true);
+            else         ui->rb4Byte->setChecked(true);
+        }
+
+        _profileInitialized = true;
+    }
 
     //ui->bbControls->button(QDialogButtonBox::Ok)->setEnabled(_hexEdit->hasSelection());
 
@@ -431,7 +506,14 @@ void PointersDialog::on_bbControls_accepted()
             if (ok)
                 pointerOffset = negative ? -absVal : absVal;
         }
+
+        QSettings settings;
+        settings.setValue(QLatin1String(kPointersProfileOffsetKey), offText.toUpper());
+        settings.setValue(QLatin1String(kPointersProfileRomTypeKey), _cbProfileRomType->currentData().toInt());
     }
+
+    if (auto *mw = qobject_cast<MainWindow *>(parent()))
+        mw->setCurrentPointerOffset(pointerOffset);
 
     bool before = ui->rbBefore->isChecked();
     bool after = ui->rbAfter->isChecked();

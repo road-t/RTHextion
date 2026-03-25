@@ -75,7 +75,6 @@ OptionsDialog::OptionsDialog(QWidget *parent) : QDialog(parent), ui(new Ui::Opti
     // Connect signals for preview (real-time changes)
     connect(ui->cbAddressArea, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
     connect(ui->cbAsciiArea, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
-    connect(ui->cbHighlighting, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
     // cbDynamicSize replaced by m_cbBytesPerLine combo
     connect(ui->cbShowHexGrid, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
     connect(ui->cbShowMultibyteFrame, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
@@ -162,10 +161,15 @@ void OptionsDialog::show()
     readSettings();
     readHotkeySettings();
     // Sync dark mode checkbox with current setting
+    QSettings s;
     if (m_cbDarkMode) {
-        QSettings s;
-        m_cbDarkMode->setChecked(s.value(QStringLiteral("DarkTheme"), false).toBool());
+        const bool dark = s.value(QStringLiteral("DarkTheme"), false).toBool();
+        m_cbDarkMode->setChecked(dark);
+        m_originalSettings.darkMode = dark;
     }
+    m_originalThemeId = s.value(QStringLiteral("CurrentTheme"), QStringLiteral("__builtin_light__")).toString();
+    m_currentThemeId = m_originalThemeId;
+
     saveCurrentSettings(); // Save original settings for potential rollback
     updateAreaControls();
     m_suppressUpdate = false;
@@ -175,12 +179,29 @@ void OptionsDialog::show()
 void OptionsDialog::accept()
 {
     updateSettings();
+    QSettings s;
+    if (!m_currentThemeId.isEmpty())
+        s.setValue(QStringLiteral("CurrentTheme"), m_currentThemeId);
+    s.sync();
     QDialog::accept();
 }
 
 void OptionsDialog::reject()
 {
     restoreSettings(); // Restore original settings on cancel
+    QSettings s;
+    if (!m_originalThemeId.isEmpty())
+        s.setValue(QStringLiteral("CurrentTheme"), m_originalThemeId);
+    s.sync();
+    if (m_themeList) {
+        for (int i = 0; i < m_themeList->count(); ++i) {
+            auto *item = m_themeList->item(i);
+            if (item && item->data(Qt::UserRole).toString() == m_originalThemeId) {
+                m_themeList->setCurrentItem(item);
+                break;
+            }
+        }
+    }
     QDialog::reject();
 }
 
@@ -190,7 +211,6 @@ void OptionsDialog::saveCurrentSettings()
     m_originalSettings.addressAreaWidth = 4; // managed by hex editor drag
     m_originalSettings.asciiArea = ui->cbAsciiArea->isChecked();
     m_originalSettings.hexGridShow = ui->cbShowHexGrid->isChecked();
-    m_originalSettings.highlighting = ui->cbHighlighting->isChecked();
     m_originalSettings.autosize = m_cbBytesPerLine ? (m_cbBytesPerLine->currentIndex() == 0) : true;
     m_originalSettings.autoLoadRecentFile = ui->cbAutoLoadRecentFile->isChecked();
     {
@@ -228,6 +248,7 @@ void OptionsDialog::saveCurrentSettings()
     m_originalSettings.resetTableOnClose = ui->cbResetTableOnClose->isChecked();
     m_originalSettings.resetEncodingOnClose = ui->cbResetEncodingOnClose->isChecked();
     m_originalSettings.autoFixChecksums = ui->cbAutoFixChecksums->isChecked();
+    m_originalSettings.darkMode = m_cbDarkMode ? m_cbDarkMode->isChecked() : false;
     m_originalSettings.defaultEncoding = ui->cbDefaultEncoding->currentText();
 
     m_originalHotkeys.clear();
@@ -244,7 +265,6 @@ void OptionsDialog::restoreSettings()
     // addressAreaWidth managed by hex editor drag
     ui->cbAsciiArea->setChecked(m_originalSettings.asciiArea);
     ui->cbShowHexGrid->setChecked(m_originalSettings.hexGridShow);
-    ui->cbHighlighting->setChecked(m_originalSettings.highlighting);
     if (m_cbBytesPerLine) {
         if (m_originalSettings.autosize) {
             m_cbBytesPerLine->setCurrentIndex(0);
@@ -279,6 +299,8 @@ void OptionsDialog::restoreSettings()
     setColor(ui->lbChangesColor, m_originalSettings.changesColor);
     setColor(ui->lbScrollMapPtrBgColor, m_originalSettings.scrollMapPtrBgColor);
     setColor(ui->lbScrollMapTargetBgColor, m_originalSettings.scrollMapTargetBgColor);
+    if (m_cbDarkMode)
+        m_cbDarkMode->setChecked(m_originalSettings.darkMode);
     ui->pbWidgetFont->setFont(m_originalSettings.widgetFont);
     updateFontButtonText(m_originalSettings.widgetFont);
     ui->leNonPrintableNoTableChar->setText(sanitizeSingleChar(m_originalSettings.nonPrintableNoTableChar, kDefaultNonPrintableNoTableChar));
@@ -346,7 +368,6 @@ void OptionsDialog::readSettings()
 
     ui->cbAddressArea->setChecked(settings.value("AddressArea", true).toBool());
     ui->cbAsciiArea->setChecked(settings.value("AsciiArea", true).toBool());
-    ui->cbHighlighting->setChecked(settings.value("Highlighting", true).toBool());
     // cbDynamicSize replaced by m_cbBytesPerLine combo
     ui->cbShowHexGrid->setChecked(settings.value("ShowHexGrid", true).toBool());
     ui->cbShowMultibyteFrame->setChecked(settings.value("ShowMultibyteFrame", true).toBool());
@@ -407,7 +428,6 @@ void OptionsDialog::writeSettings()
     // Write all boolean settings
     // AddressArea and AddressAreaWidth managed by hex editor drag (not written here)
     settings.setValue("AsciiArea", ui->cbAsciiArea->isChecked());
-    settings.setValue("Highlighting", ui->cbHighlighting->isChecked());
     if (m_cbBytesPerLine) {
         const int bplIdx = m_cbBytesPerLine->currentIndex();
         settings.setValue("Autosize", bplIdx == 0);
@@ -789,7 +809,6 @@ void OptionsDialog::resetToDefaults()
     ui->cbAsciiArea->setChecked(true);
     ui->cbShowHexGrid->setChecked(true);
     ui->cbShowMultibyteFrame->setChecked(true);
-    ui->cbHighlighting->setChecked(true);
     if (m_cbBytesPerLine) m_cbBytesPerLine->setCurrentIndex(0); // Auto
     ui->cbAutoLoadRecentFile->setChecked(true);
 
@@ -871,6 +890,7 @@ void OptionsDialog::initHotkeysTab()
         {"Jump to offset",    "hotkey_Goto",           QKeySequence(QKeySequence::FindNext)},
         {"Use table",         "hotkey_UseTable",       QKeySequence(QKeySequence::AddTab)},
         {"Find pointers",     "hotkey_FindPointers",   QKeySequence(QKeySequence::New)},
+        {"Edit script",       "hotkey_EditScript",    QKeySequence(Qt::CTRL | Qt::Key_E)},
         {"Previous position", "hotkey_PrevPos",        QKeySequence(Qt::CTRL | Qt::Key_BracketLeft)},
         {"Next position",     "hotkey_NextPos",        QKeySequence(Qt::CTRL | Qt::Key_BracketRight)},
     };
@@ -968,7 +988,7 @@ void OptionsDialog::resolveShortcutConflict(const QString &sourceKey, const QKey
                 : QString::fromUtf8(e.displayKey);
             if (m_conflictLabel) {
                 m_conflictLabel->setText(
-                    tr("Shortcut %1 was removed from \u201c%2\u201d")
+                    tr("Shortcut %1 was removed from \"%2\"")
                         .arg(seq.toString(QKeySequence::NativeText), actionName));
                 m_conflictLabel->setVisible(true);
             }
@@ -1071,14 +1091,14 @@ void OptionsDialog::initThemesTab()
     presetsVL->addWidget(btnApply);
 
     auto *btnRow = new QHBoxLayout();
-    auto *btnImport = new QPushButton(tr("Import..."));
-    m_btnExport = new QPushButton(tr("Export..."));
+    auto *btnImport = new QPushButton(tr("Import") + QStringLiteral("..."));
+    m_btnExport = new QPushButton(tr("Export") + QStringLiteral("..."));
     btnRow->addWidget(btnImport);
     btnRow->addWidget(m_btnExport);
     presetsVL->addLayout(btnRow);
 
     auto *btnRow2 = new QHBoxLayout();
-    auto *btnSave = new QPushButton(tr("Save..."));
+    auto *btnSave = new QPushButton(tr("Save") + QStringLiteral("..."));
     m_btnDelete = new QPushButton(tr("Delete"));
     btnRow2->addWidget(btnSave);
     btnRow2->addWidget(m_btnDelete);
@@ -1146,6 +1166,10 @@ void OptionsDialog::initThemesTab()
         if (m_btnExport) m_btnExport->setEnabled(!builtin);
     });
 
+    // Apply theme on double-click
+    connect(m_themeList, &QListWidget::itemDoubleClicked, this,
+            &OptionsDialog::applySelectedTheme);
+
     populateThemeList();
 }
 
@@ -1170,7 +1194,20 @@ void OptionsDialog::populateThemeList()
         m_themeList->addItem(item);
     }
 
-    if (m_themeList->count() > 0)
+    // Select the current theme
+    QSettings settings;
+    const QString currentThemeId = settings.value(QStringLiteral("CurrentTheme"), QStringLiteral("__builtin_light__")).toString();
+    
+    for (int i = 0; i < m_themeList->count(); ++i) {
+        auto *item = m_themeList->item(i);
+        if (item->data(Qt::UserRole).toString() == currentThemeId) {
+            m_themeList->setCurrentItem(item);
+            break;
+        }
+    }
+    
+    // Fallback to first item if current theme not found
+    if (!m_themeList->currentItem() && m_themeList->count() > 0)
         m_themeList->setCurrentRow(0);
 }
 
@@ -1189,6 +1226,7 @@ void OptionsDialog::applySelectedTheme()
         theme = EditorTheme::loadUserPreset(id);
 
     applyThemeToUi(theme);
+    m_currentThemeId = id;
 }
 
 void OptionsDialog::saveCurrentAsTheme()
@@ -1197,7 +1235,7 @@ void OptionsDialog::saveCurrentAsTheme()
 
     bool ok = false;
     QString name = QInputDialog::getText(this, tr("Save Theme"),
-                                         tr("Theme name:"), QLineEdit::Normal,
+                                         tr("Theme name") + ":", QLineEdit::Normal,
                                          QString(), &ok);
     if (!ok || name.trimmed().isEmpty()) return;
     name = name.trimmed();
@@ -1205,7 +1243,7 @@ void OptionsDialog::saveCurrentAsTheme()
     // Prevent overwriting built-in presets
     if (kBuiltinNames.contains(name, Qt::CaseSensitive)) {
         QMessageBox::warning(this, tr("Save Theme"),
-            tr("\u201c%1\u201d is a built-in theme and cannot be overwritten.\nChoose a different name.").arg(name));
+            tr("\"%1\" is a built-in theme and cannot be overwritten.\nChoose a different name.").arg(name));
         return;
     }
 
@@ -1213,7 +1251,7 @@ void OptionsDialog::saveCurrentAsTheme()
     const QStringList existing = EditorTheme::userPresetNames();
     if (existing.contains(name)) {
         auto btn = QMessageBox::question(this, tr("Save Theme"),
-            tr("Theme \u201c%1\u201d already exists. Replace it?").arg(name),
+            tr("Theme \"%1\" already exists. Replace it?").arg(name),
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
         if (btn != QMessageBox::Yes) return;
     }
@@ -1246,7 +1284,7 @@ void OptionsDialog::importTheme()
     // Block overwriting built-in preset names
     if (kBuiltinNames.contains(theme.name, Qt::CaseSensitive)) {
         QMessageBox::warning(this, tr("Import Theme"),
-            tr("\u201c%1\u201d is a built-in theme and cannot be overwritten.\nRename the theme in the file and try again.").arg(theme.name));
+            tr("\"%1\" is a built-in theme and cannot be overwritten.\nRename the theme in the file and try again.").arg(theme.name));
         return;
     }
 
@@ -1254,7 +1292,7 @@ void OptionsDialog::importTheme()
     const QStringList existing = EditorTheme::userPresetNames();
     if (existing.contains(theme.name)) {
         auto btn = QMessageBox::question(this, tr("Import Theme"),
-            tr("Theme \u201c%1\u201d already exists. Replace it?").arg(theme.name),
+            tr("Theme \"%1\" already exists. Replace it?").arg(theme.name),
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
         if (btn != QMessageBox::Yes) return;
     }
@@ -1307,7 +1345,6 @@ void OptionsDialog::applyThemeToUi(const EditorTheme &theme)
     applyPlaceholderFieldFont(ui->leNonPrintableNoTableChar, ui->leNotInTableChar, theme.hexFont);
 
     // Booleans
-    ui->cbHighlighting->setChecked(theme.highlighting);
     ui->cbShowHexGrid->setChecked(theme.showHexGrid);
     ui->cbShowMultibyteFrame->setChecked(theme.showMultibyteFrame);
 
@@ -1345,7 +1382,7 @@ EditorTheme OptionsDialog::captureThemeFromUi() const
     t.name = QStringLiteral("Current");
     t.darkMode = m_cbDarkMode ? m_cbDarkMode->isChecked() : false;
     t.hexFont = ui->pbWidgetFont->font();
-    t.highlighting = ui->cbHighlighting->isChecked();
+    t.highlighting = true;
     t.showHexGrid = ui->cbShowHexGrid->isChecked();
     t.showMultibyteFrame = ui->cbShowMultibyteFrame->isChecked();
 

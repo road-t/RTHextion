@@ -161,8 +161,21 @@ void UndoStack::overwrite(qint64 pos, int len, const QByteArray &ba)
     {
         QString txt = QString(tr("Overwrite %1 chars")).arg(len);
         beginMacro(txt);
-        removeAt(pos, len);
-        insert(pos, ba);
+        if (len == ba.size())
+        {
+            // Same-length replacement: overwrite byte-by-byte to preserve
+            // original data tracking and avoid false change marking.
+            for (int i = 0; i < len; ++i)
+            {
+                QUndoCommand *cc = new CharCommand(_chunks, CharCommand::overwrite, pos + i, ba.at(i));
+                push(cc);
+            }
+        }
+        else
+        {
+            removeAt(pos, len);
+            insert(pos, ba);
+        }
         endMacro();
     }
 }

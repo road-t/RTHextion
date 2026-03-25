@@ -2,35 +2,208 @@
 #include <QFile>
 #include <QTextStream>
 #include <QRegularExpression>
+#include <QStringDecoder>
+#include <QStringConverter>
 #include <QDebug>
 #include <algorithm>
 
 #include "translationtable.h"
+
+namespace {
+QString normalizeImportEncodingName(const QString &name)
+{
+    const QString trimmed = name.trimmed();
+    if (trimmed.isEmpty())
+        return trimmed;
+
+    QString compact = trimmed.toUpper();
+    compact.remove('-');
+    compact.remove('_');
+    compact.remove(' ');
+
+    if (compact == QLatin1String("CP1251")
+        || compact == QLatin1String("WINDOWS1251")
+        || compact == QLatin1String("WIN1251"))
+        return QStringLiteral("Windows-1251");
+    if (compact == QLatin1String("CP866"))
+        return QStringLiteral("CP-866");
+    if (compact == QLatin1String("UTF16LE"))
+        return QStringLiteral("UTF-16LE");
+    if (compact == QLatin1String("UTF16BE"))
+        return QStringLiteral("UTF-16BE");
+    if (compact == QLatin1String("UTF8"))
+        return QStringLiteral("UTF-8");
+
+    return trimmed;
+}
+
+QString decodeWindows1251(const QByteArray &raw)
+{
+    static const ushort kCp1251Ext[64] = {
+        0x0402, 0x0403, 0x201A, 0x0453, 0x201E, 0x2026, 0x2020, 0x2021,
+        0x20AC, 0x2030, 0x0409, 0x2039, 0x040A, 0x040C, 0x040B, 0x040F,
+        0x0452, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
+        0xFFFD, 0x2122, 0x0459, 0x203A, 0x045A, 0x045C, 0x045B, 0x045F,
+        0x00A0, 0x040E, 0x045E, 0x0408, 0x00A4, 0x0490, 0x00A6, 0x00A7,
+        0x0401, 0x00A9, 0x0404, 0x00AB, 0x00AC, 0x00AD, 0x00AE, 0x0407,
+        0x00B0, 0x00B1, 0x0406, 0x0456, 0x0491, 0x00B5, 0x00B6, 0x00B7,
+        0x0451, 0x2116, 0x0454, 0x00BB, 0x0458, 0x0405, 0x0455, 0x0457
+    };
+
+    QString out;
+    out.reserve(raw.size());
+
+    for (unsigned char b : raw) {
+        if (b < 0x80) {
+            out.append(QChar(b));
+        } else if (b >= 0xC0) {
+            out.append(QChar(0x0410 + (b - 0xC0))); // А..я
+        } else if (b == 0xA8) {
+            out.append(QChar(0x0401)); // Ё
+        } else if (b == 0xB8) {
+            out.append(QChar(0x0451)); // ё
+        } else {
+            out.append(QChar(kCp1251Ext[b - 0x80]));
+        }
+    }
+
+    return out;
+}
+
+bool tryDecodeWithEncoding(const QByteArray &raw, const QString &encodingName, QString *outText)
+{
+    if (!outText)
+        return false;
+
+    const auto encoding = QStringConverter::encodingForName(encodingName.toUtf8());
+    if (!encoding.has_value())
+        return false;
+
+    QStringDecoder decoder(*encoding);
+    const QString decoded = decoder.decode(raw);
+    if (decoder.hasError())
+        return false;
+
+    *outText = decoded;
+    return true;
+}
+}
 
 TranslationTable::TranslationTable()
 {
     reset();
 }
 
-TranslationTable::TranslationTable(QString fileName) : TranslationTable()
+TranslationTable::TranslationTable(QString fileName, const QString &textEncoding) : TranslationTable()
 {
+    loadFromFile(fileName, textEncoding);
+}
+
+QStringList TranslationTable::supportedImportEncodings()
+{
+    return {
+        QStringLiteral("ASCII"),
+        QStringLiteral("UTF-8"),
+        QStringLiteral("UTF-16LE"),
+        QStringLiteral("UTF-16BE"),
+        QStringLiteral("Windows-1251"),
+        QStringLiteral("CP-1251"),
+        QStringLiteral("WIN-1251"),
+        QStringLiteral("KOI8-R"),
+        QStringLiteral("KOI8-U"),
+        QStringLiteral("CP-866"),
+        QStringLiteral("ISO-8859-1"),
+        QStringLiteral("Windows-1252"),
+        QStringLiteral("Shift-JIS"),
+        QStringLiteral("EUC-JP"),
+        QStringLiteral("ISO-2022-JP"),
+        QStringLiteral("GB2312"),
+        QStringLiteral("Big5"),
+        QStringLiteral("EUC-KR"),
+        QStringLiteral("Mac Cyrillic")
+    };
+}
+
+QString TranslationTable::guessImportEncoding(const QByteArray &raw)
+{
+    if (raw.startsWith("\xEF\xBB\xBF"))
+        return QStringLiteral("UTF-8");
+    if (raw.startsWith("\xFF\xFE"))
+        return QStringLiteral("UTF-16LE");
+    if (raw.startsWith("\xFE\xFF"))
+        return QStringLiteral("UTF-16BE");
+
+    QStringDecoder utf8Decoder("UTF-8");
+    utf8Decoder.decode(raw);
+    if (!utf8Decoder.hasError())
+        return QStringLiteral("UTF-8");
+
+    return QStringLiteral("Windows-1251");
+}
+
+bool TranslationTable::hasNonAsciiValueBytes(const QByteArray &raw)
+{
+    int lineStart = 0;
+    for (int i = 0; i <= raw.size(); ++i) {
+        if (i == raw.size() || raw[i] == '\n') {
+            const int lineLen = i - lineStart;
+            if (lineLen > 0) {
+                const QByteArray line = raw.mid(lineStart, lineLen);
+                const int eqPos = line.indexOf('=');
+                if (eqPos > 0) {
+                    for (int j = eqPos + 1; j < line.size(); ++j) {
+                        if (static_cast<unsigned char>(line[j]) > 0x7F)
+                            return true;
+                    }
+                }
+            }
+            lineStart = i + 1;
+        }
+    }
+    return false;
+}
+
+bool TranslationTable::loadFromFile(const QString &fileName, const QString &textEncoding)
+{
+    clearItems();
+    reset();
+
     QFile inputFile(fileName);
 
-    if (inputFile.open(QIODevice::ReadOnly))
+    if (!inputFile.open(QIODevice::ReadOnly))
+        return false;
+
+    const QByteArray raw = inputFile.readAll();
+    inputFile.close();
+
+    const QString effectiveEncoding = textEncoding.trimmed().isEmpty()
+            ? guessImportEncoding(raw)
+            : textEncoding.trimmed();
+    const QString normalizedEncoding = normalizeImportEncodingName(effectiveEncoding);
+
+    QString content;
+    if (normalizedEncoding == QLatin1String("ASCII")) {
+        content = QString::fromLatin1(raw);
+    } else if (normalizedEncoding == QLatin1String("Windows-1251")) {
+        content = decodeWindows1251(raw);
+    } else {
+        if (!tryDecodeWithEncoding(raw, normalizedEncoding, &content)
+            && !tryDecodeWithEncoding(raw, QStringLiteral("Windows-1251"), &content)) {
+            content = decodeWindows1251(raw);
+        }
+    }
+
+    const QStringList lines = content.split(QRegularExpression(QStringLiteral("\\r?\\n")), Qt::SkipEmptyParts);
+    for (const QString &rawLine : lines)
     {
-        QTextStream in(&inputFile);
+        auto eqPos = rawLine.indexOf('=');
 
-        while (!in.atEnd())
-        {
-            auto rawLine = in.readLine();
-            auto eqPos = rawLine.indexOf('=');
+        // skip lines without '=' or with nothing before it
+        if (eqPos <= 0)
+            continue;
 
-            // skip lines without '=' or with nothing before it
-            if (eqPos <= 0)
-                continue;
-
-            QString hexPart = rawLine.left(eqPos);
-            auto value = rawLine.mid(eqPos + 1);
+        QString hexPart = rawLine.left(eqPos);
+        auto value = rawLine.mid(eqPos + 1);
 
             // Validate: all hex chars
             bool allHex = true;
@@ -41,41 +214,39 @@ TranslationTable::TranslationTable(QString fileName) : TranslationTable()
                     break;
                 }
             }
-            if (!allHex || hexPart.isEmpty())
-                continue;
+        if (!allHex || hexPart.isEmpty())
+            continue;
 
-            if (hexPart.size() <= 2) {
-                // Single-byte entry: XX=text
-                bool success;
-                auto val = hexPart.toUInt(&success, 16);
-                if (success) {
-                    encodeTable.insert(val, value);
-                    decodeTable[value] = val;
-                }
-            } else {
-                // Multi-byte entry: XXYY...=text (must be even number of hex digits)
-                if (hexPart.size() % 2 != 0)
-                    continue;
-                QByteArray key;
-                bool ok = true;
-                for (int i = 0; i < hexPart.size(); i += 2) {
-                    uint val = hexPart.mid(i, 2).toUInt(&ok, 16);
-                    if (!ok) break;
-                    key.append(static_cast<char>(val));
-                }
-                if (ok && !key.isEmpty()) {
-                    multiByteEncodeTable.insert(key, value);
-                    multiByteDecodeTable[value] = key;
-                    if (key.size() > _maxKeyLen)
-                        _maxKeyLen = key.size();
-                }
+        if (hexPart.size() <= 2) {
+            // Single-byte entry: XX=text
+            bool success;
+            auto val = hexPart.toUInt(&success, 16);
+            if (success) {
+                encodeTable.insert(val, value);
+                decodeTable[value] = val;
+            }
+        } else {
+            // Multi-byte entry: XXYY...=text (must be even number of hex digits)
+            if (hexPart.size() % 2 != 0)
+                continue;
+            QByteArray key;
+            bool ok = true;
+            for (int i = 0; i < hexPart.size(); i += 2) {
+                uint val = hexPart.mid(i, 2).toUInt(&ok, 16);
+                if (!ok) break;
+                key.append(static_cast<char>(val));
+            }
+            if (ok && !key.isEmpty()) {
+                multiByteEncodeTable.insert(key, value);
+                multiByteDecodeTable[value] = key;
+                if (key.size() > _maxKeyLen)
+                    _maxKeyLen = key.size();
             }
         }
-
-        inputFile.close();
-
-        buildFallbackDecodeEntries();
     }
+
+    buildFallbackDecodeEntries();
+    return true;
 }
 
 void TranslationTable::buildFallbackDecodeEntries()
@@ -99,26 +270,57 @@ uint32_t TranslationTable::size() const
 
 QByteArray TranslationTable::decode(QByteArray src)
 {
-    auto result = QByteArray();
-    auto text = QString(src);
+    QByteArray result;
+    QString text = QString(src);
 
-    // Replace multi-byte entries first (longer values first for greedy matching)
+    // Build multi-byte keys sorted by length descending (longest match first)
     QList<QString> mbKeys = multiByteDecodeTable.keys();
-    // Sort by length descending so longer text tokens match first
     std::sort(mbKeys.begin(), mbKeys.end(), [](const QString &a, const QString &b) {
         return a.size() > b.size();
     });
-    for (const auto &key : mbKeys) {
-        text.replace(key, QString::fromLatin1(multiByteDecodeTable[key]));
-    }
 
-    // Then single-byte entries
-    for (auto i = decodeTable.begin(); i != decodeTable.end(); i++)
-    {
-        text.replace(i.key(), QChar(i.value()));
-    }
+    // Build single-byte keys sorted by length descending (longest match first).
+    // This includes {XX} fallback entries (4 chars) and 1-char table entries.
+    QVector<QPair<QString, char>> sbEntries;
+    sbEntries.reserve(decodeTable.size());
+    for (auto it = decodeTable.begin(); it != decodeTable.end(); ++it)
+        sbEntries.append({it.key(), static_cast<char>(it.value())});
+    std::sort(sbEntries.begin(), sbEntries.end(), [](const auto &a, const auto &b) {
+        return a.first.size() > b.first.size();
+    });
 
-    result = text.toLatin1();
+    // Single-pass left-to-right scan to avoid cascading replacements
+    int i = 0;
+    while (i < text.size()) {
+        bool matched = false;
+
+        // Try multi-byte decode entries first (longest match)
+        for (const auto &key : mbKeys) {
+            if (i + key.size() <= text.size() && QStringView(text).mid(i, key.size()) == key) {
+                result.append(multiByteDecodeTable[key]);
+                i += key.size();
+                matched = true;
+                break;
+            }
+        }
+        if (matched) continue;
+
+        // Try single-byte decode entries (longest key first)
+        for (const auto &entry : sbEntries) {
+            if (i + entry.first.size() <= text.size()
+                && QStringView(text).mid(i, entry.first.size()) == entry.first) {
+                result.append(entry.second);
+                i += entry.first.size();
+                matched = true;
+                break;
+            }
+        }
+        if (matched) continue;
+
+        // No match — pass through as Latin1
+        result.append(text[i].toLatin1());
+        ++i;
+    }
 
     return result;
 }

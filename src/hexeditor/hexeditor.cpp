@@ -1651,8 +1651,27 @@ void HexEditor::setChangedPositions(const QSet<qint64> &positions)
 void HexEditor::clearChangedPositions()
 {
     _changedPositions.clear();
+    clearChangedRange();
     viewport()->update();
     updateScrollMap();  // hide the changes map strip
+}
+
+void HexEditor::setChangedRange(qint64 start, qint64 end)
+{
+    if (start < 0 || end <= start) {
+        clearChangedRange();
+        return;
+    }
+    _changedRangeStart = start;
+    _changedRangeEnd = end;
+    viewport()->update();
+    updateScrollMap();
+}
+
+void HexEditor::clearChangedRange()
+{
+    _changedRangeStart = -1;
+    _changedRangeEnd = -1;
 }
 
 void HexEditor::setShowPointers(bool show)
@@ -2007,6 +2026,12 @@ bool HexEditor::isModified()
     return _modified;
 }
 
+void HexEditor::setModified(bool modified)
+{
+    _baseModified = modified;
+    _modified = modified;
+}
+
 bool HexEditor::canUndo()
 {
     return _undoStack->canUndo();
@@ -2036,8 +2061,10 @@ qint64 HexEditor::lastIndexOf(const QByteArray &ba, qint64 from)
 
 void HexEditor::redo()
 {
+    if (!_undoStack->canRedo())
+        return;
     _undoStack->redo();
-    setCursorPosition(_chunks->pos() * (_editAreaIsAscii ? 1 : 2));
+    setCursorPosition(_chunks->pos() * 2);
     refresh();
 }
 
@@ -2079,8 +2106,10 @@ QString HexEditor::toReadableString()
 
 void HexEditor::undo()
 {
+    if (!_undoStack->canUndo())
+        return;
     _undoStack->undo();
-    setCursorPosition(_chunks->pos() * (_editAreaIsAscii ? 1 : 2));
+    setCursorPosition(_chunks->pos() * 2);
     refresh();
 }
 
@@ -3064,7 +3093,8 @@ void HexEditor::paintEvent(QPaintEvent *event)
                 const bool isSelectedByte = (getSelectionEnd() - getSelectionBegin() > 1)
                                          && (getSelectionBegin() <= posBa) && (getSelectionEnd() > posBa);
                 const bool isHighlightedByte = _highlighting && _markedShown.at((int)(posBa - _bPosFirst));
-                const bool isChangedByte = _showChanges && _changedPositions.contains(posBa);
+                const bool isChangedByte = _showChanges && (_changedPositions.contains(posBa) 
+                    || (posBa >= _changedRangeStart && posBa < _changedRangeEnd));
 
                 if (isSelectedByte)
                 {
@@ -3073,15 +3103,15 @@ void HexEditor::paintEvent(QPaintEvent *event)
                 }
                 else
                 {
-                    if (isChangedByte)
-                    {
-                        c = _brushChanges.color();
-                        painter.setPen(_penChanges);
-                    }
-                    else if (isHighlightedByte)
+                    if (isHighlightedByte)
                     {
                         c = _brushHighlighted.color();
                         painter.setPen(_penHighlighted);
+                    }
+                    else if (isChangedByte)
+                    {
+                        c = _brushChanges.color();
+                        painter.setPen(_penChanges);
                     }
                 }
 
@@ -3110,7 +3140,6 @@ void HexEditor::paintEvent(QPaintEvent *event)
                         // Draw pointer frame only at the first byte of the pointer on each row
                         // The frame is clipped to the current line so it doesn't bleed into ASCII area
                         const int colInLine = static_cast<int>(posBa % _bytesPerLine);
-                        const int ptrStartCol = static_cast<int>(pointerStart % _bytesPerLine);
 
                         // We draw a partial frame segment on every row that the pointer occupies
                         // Determine how many bytes of this pointer are on the current row starting from colIdx
@@ -3673,6 +3702,7 @@ void HexEditor::init()
     setCursorPosition(0);
     verticalScrollBar()->setValue(0);
 
+    _baseModified = false;
     _modified = false;
 }
 
@@ -3704,9 +3734,9 @@ void HexEditor::adjust()
     const int rowStridePx = _pxCharHeight + kHexRowExtraGapPx;
     _rowsShown = ((viewport()->height() - 4) / rowStridePx);
 
-    auto lineCount = (_chunks->size() / _bytesPerLine) + 1;
+    const qint64 lineCount = (_chunks->size() + _bytesPerLine - 1) / _bytesPerLine;
 
-    verticalScrollBar()->setRange(0, lineCount - _rowsShown);
+    verticalScrollBar()->setRange(0, qMax<qint64>(0, lineCount - _rowsShown));
     verticalScrollBar()->setPageStep(_rowsShown);
 
     auto value = verticalScrollBar()->value();
@@ -3743,7 +3773,7 @@ void HexEditor::adjust()
 
 void HexEditor::dataChangedPrivate(int)
 {
-    _modified = _undoStack->index() != 0;
+    _modified = _baseModified || (_undoStack->index() != 0);
 
     invalidateAsciiAreaWidthCache();
 
@@ -4128,11 +4158,15 @@ void HexEditor::scheduleScrollMapCompute()
     QList<qint64> ptrKeys     = wantTarget  ? _pointers.pointerKeys()    : QList<qint64>{};
     QList<qint64> targetKeys  = wantTarget  ? _pointers.offsetKeys()     : QList<qint64>{};
 
+    const qint64 changedRangeStart = _changedRangeStart;
+    const qint64 changedRangeEnd = _changedRangeEnd;
+
     auto future = QtConcurrent::run(
         [mapH, totalBytes,
          sbMin, sbMax, sbPage, bytesPerLine,
          mGrooveTop, mGrooveH, mThumbH,
          wantChanges, wantTarget,
+         changedRangeStart, changedRangeEnd,
          changedKeys = std::move(changedKeys),
          ptrKeys     = std::move(ptrKeys),
          targetKeys  = std::move(targetKeys)]() -> ScrollMapMarkers
@@ -4171,6 +4205,22 @@ void HexEditor::scheduleScrollMapCompute()
             if (wantChanges)
             {
                 QVector<bool> px(mapH, false);
+
+                // Extended tail of file (inserted bytes beyond original) should show as continuous block
+                if (changedRangeStart >= 0 && changedRangeEnd > changedRangeStart)
+                {
+                    int y0 = offToY(changedRangeStart);
+                    int y1 = offToY(changedRangeEnd - 1);
+                    if (y0 > y1)
+                        std::swap(y0, y1);
+                    for (int y = y0; y <= y1; ++y)
+                    {
+                        px[y] = true;
+                        if (!result.changesYToOff.contains(y))
+                            result.changesYToOff.insert(y, changedRangeStart);
+                    }
+                }
+
                 for (qint64 off : changedKeys) {
                     int y = offToY(off);
                     px[y] = true;

@@ -3,6 +3,7 @@
 
 #include <QAbstractTableModel>
 #include <QMap>
+#include <QMultiMap>
 #include <QVector>
 #include <QPair>
 
@@ -68,7 +69,7 @@ public:
     /** Returns all offsets where pointer values are stored (keys of _pointers map). */
     QList<qint64> pointerKeys() const { return _pointers.keys(); }
     /** Returns all target offsets that pointers point to (keys of _offsets map). */
-    QList<qint64> offsetKeys() const { return _offsets.keys(); }
+    QList<qint64> offsetKeys() const { return _offsets.uniqueKeys(); }
 
     void setHexEdit(HexEditor *hexEdit);
 
@@ -79,7 +80,7 @@ private:
     void rebuildRowOrder();
 
     QMap<qint64, qint64> _pointers;
-    QMap<qint64, quint32> _offsets;
+    QMultiMap<qint64, qint64> _offsets;
     QVector<qint64> _rowOrder;
     int _sortColumn = 0;
     Qt::SortOrder _sortOrder = Qt::AscendingOrder;

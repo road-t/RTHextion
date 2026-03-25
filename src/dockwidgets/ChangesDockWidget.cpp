@@ -1,5 +1,6 @@
 #include "ChangesDockWidget.h"
 #include "translationtable.h"
+#include "DockTitleBar.h"
 
 #include <QPainter>
 #include <QPainterPath>
@@ -10,6 +11,7 @@
 #include <QStringDecoder>
 #include <QSignalBlocker>
 #include <QButtonGroup>
+#include <QMainWindow>
 
 ChangesDockWidget::ChangesDockWidget(QWidget *parent)
     : QDockWidget(parent)
@@ -17,29 +19,6 @@ ChangesDockWidget::ChangesDockWidget(QWidget *parent)
     setWindowTitle(tr("Changes"));
     setObjectName(QStringLiteral("ChangesDockWidget"));
     setFeatures(QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetFloatable | QDockWidget::DockWidgetMovable);
-
-    // Compact title bar (same pattern as PointersDockWidget)
-    auto *titleBar = new QWidget(this);
-    titleBar->setObjectName(QStringLiteral("dockTitleBar"));
-    titleBar->setFixedHeight(16);
-    auto *titleLayout = new QHBoxLayout(titleBar);
-    titleLayout->setContentsMargins(4, 0, 2, 0);
-    titleLayout->setSpacing(1);
-
-    m_titleLabel = new QLabel(tr("Changes"), titleBar);
-    QFont smallFont = m_titleLabel->font();
-    smallFont.setPointSizeF(smallFont.pointSizeF() * 0.8);
-    m_titleLabel->setFont(smallFont);
-    titleLayout->addWidget(m_titleLabel);
-    titleLayout->addStretch();
-
-    m_collapseBtn = new QToolButton(titleBar);
-    m_collapseBtn->setArrowType(Qt::DownArrow);
-    m_collapseBtn->setAutoRaise(true);
-    m_collapseBtn->setFixedSize(14, 14);
-    m_collapseBtn->setToolTip(tr("Collapse / Expand"));
-    titleLayout->addWidget(m_collapseBtn);
-    setTitleBarWidget(titleBar);
 
     // Content widget
     auto *container = new QWidget(this);
@@ -191,11 +170,6 @@ ChangesDockWidget::ChangesDockWidget(QWidget *parent)
     setWidget(container);
 
     connect(m_table, &QTableWidget::doubleClicked, this, &ChangesDockWidget::onRowDoubleClicked);
-    connect(m_collapseBtn, &QToolButton::clicked, this, [this]() {
-        const bool visible = m_contentWidget->isVisible();
-        m_contentWidget->setVisible(!visible);
-        m_collapseBtn->setArrowType(visible ? Qt::RightArrow : Qt::DownArrow);
-    });
 }
 
 void ChangesDockWidget::refresh(const QVector<QPair<qint64, QByteArray>> &originals,
@@ -214,6 +188,7 @@ void ChangesDockWidget::refresh(const QVector<QPair<qint64, QByteArray>> &origin
     m_lastEncoding    = encoding;
 
     // Helper: encode bytes according to current display mode
+    // Truncates results longer than 255 characters and adds "..."
     auto encodeBytes = [this, useTable, &encoding](const QByteArray &bytes, TranslationTable *table) -> QString {
         auto hexFallback = [](const QByteArray &b) -> QString {
             QString hex;
@@ -225,27 +200,36 @@ void ChangesDockWidget::refresh(const QVector<QPair<qint64, QByteArray>> &origin
             return hex;
         };
 
+        QString result;
         if (m_hexMode)
-            return hexFallback(bytes);
-
-        if (useTable && table && table->size() > 0)
-            return table->encode(bytes);
-
-        if (!useTable) {
+            result = hexFallback(bytes);
+        else if (useTable && table && table->size() > 0)
+            result = table->encode(bytes);
+        else if (!useTable) {
             // Decode using the current text encoding (like the ASCII area)
             if (encoding.isEmpty() || encoding == QLatin1String("ASCII"))
-                return QString::fromLatin1(bytes);
-            QStringDecoder dec(encoding.toUtf8().constData());
-            if (dec.isValid()) {
-                const QString result = dec(bytes);
-                if (!result.isEmpty() || bytes.isEmpty())
-                    return result;
+                result = QString::fromLatin1(bytes);
+            else {
+                QStringDecoder dec(encoding.toUtf8().constData());
+                if (dec.isValid()) {
+                    result = dec(bytes);
+                    if (result.isEmpty() && !bytes.isEmpty())
+                        result = QString::fromLatin1(bytes);
+                } else {
+                    result = QString::fromLatin1(bytes);
+                }
             }
-            return QString::fromLatin1(bytes);
+        } else {
+            // useTable ON but no table — hex fallback
+            result = hexFallback(bytes);
         }
-
-        // useTable ON but no table — hex fallback
-        return hexFallback(bytes);
+        
+        // Truncate if longer than 255 characters
+        if (result.length() > 255) {
+            result.truncate(255);
+            result += QStringLiteral("...");
+        }
+        return result;
     };
 
     m_table->setUpdatesEnabled(false);
@@ -298,17 +282,83 @@ void ChangesDockWidget::refresh(const QVector<QPair<qint64, QByteArray>> &origin
     m_table->setUpdatesEnabled(true);
 
     // Update title with count
-    if (m_titleLabel) {
+    {
         const int count = m_table->rowCount();
         const QString title = tr("Changes") +
             (count > 0 ? QStringLiteral(" \u2013 %1").arg(count) : QString());
-        m_titleLabel->setText(title);
+        setWindowTitle(title);
     }
 }
 
 void ChangesDockWidget::clear()
 {
     m_table->setRowCount(0);
+}
+
+void ChangesDockWidget::setCollapsed(bool collapsed)
+{
+    if (m_collapsed == collapsed)
+        return;
+    m_collapsed = collapsed;
+
+    Qt::DockWidgetArea area = Qt::NoDockWidgetArea;
+    QMainWindow *mw = qobject_cast<QMainWindow *>(parentWidget());
+    if (mw)
+        area = mw->dockWidgetArea(this);
+    const bool sideArea = (area == Qt::LeftDockWidgetArea || area == Qt::RightDockWidgetArea);
+
+    int collapsedExtent = 30;
+    if (auto *titleBar = static_cast<DockTitleBar *>(titleBarWidget())) {
+        collapsedExtent = titleBar->collapsedExtent(sideArea);
+    }
+
+    if (collapsed) {
+        if (sideArea) {
+            m_savedExpandedWidth = width();
+            setMinimumWidth(collapsedExtent);
+            setMaximumWidth(collapsedExtent);
+            if (mw)
+                mw->resizeDocks({this}, {collapsedExtent}, Qt::Horizontal);
+            else
+                resize(collapsedExtent, height());
+        } else {
+            m_savedExpandedHeight = height();
+            setMinimumHeight(collapsedExtent);
+            setMaximumHeight(collapsedExtent);
+            if (mw)
+                mw->resizeDocks({this}, {collapsedExtent}, Qt::Vertical);
+            else
+                resize(width(), collapsedExtent);
+        }
+    } else {
+        if (sideArea) {
+            setMinimumWidth(0);
+            setMaximumWidth(QWIDGETSIZE_MAX);
+            const int target = m_savedExpandedWidth > 0 ? m_savedExpandedWidth : 320;
+            if (mw)
+                mw->resizeDocks({this}, {target}, Qt::Horizontal);
+            else
+                resize(target, height());
+        } else {
+            setMinimumHeight(0);
+            setMaximumHeight(QWIDGETSIZE_MAX);
+            const int target = m_savedExpandedHeight > 0 ? m_savedExpandedHeight : 220;
+            if (mw)
+                mw->resizeDocks({this}, {target}, Qt::Vertical);
+            else
+                resize(width(), target);
+        }
+    }
+
+    if (m_contentWidget)
+        m_contentWidget->setVisible(!collapsed);
+    if (auto *titleBar = static_cast<DockTitleBar *>(titleBarWidget()))
+        titleBar->setCollapsed(collapsed);
+}
+
+bool ChangesDockWidget::isCollapsed() const
+{
+    return m_contentWidget && !m_contentWidget->isVisible();
 }
 
 void ChangesDockWidget::setShowChangesChecked(bool checked)
@@ -369,8 +419,6 @@ void ChangesDockWidget::restoreColumnsState(const QByteArray &state)
 void ChangesDockWidget::retranslateUi()
 {
     setWindowTitle(tr("Changes"));
-    if (m_titleLabel)
-        m_titleLabel->setText(tr("Changes"));
     if (m_showChangesBtn)
         m_showChangesBtn->setToolTip(tr("Show changes"));
     if (m_currentBtn)
