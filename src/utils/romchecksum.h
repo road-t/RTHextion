@@ -3,6 +3,7 @@
 
 #include <QByteArray>
 #include <QString>
+#include <QCoreApplication>
 #include <cstdint>
 #include "romdetect.h"
 
@@ -28,7 +29,7 @@ inline ChecksumFixResult fixMegaDriveChecksum(QByteArray &data)
 {
     if (data.size() < 0x0200)
         return {ChecksumFixStatus::TooSmall,
-                QStringLiteral("ROM too small for Mega Drive checksum (need ≥ 512 bytes)")};
+                QCoreApplication::translate("romchecksum", "ROM too small for Mega Drive checksum (need ≥ 512 bytes)")};
 
     uint16_t cs = 0;
     const int len = data.size();
@@ -45,12 +46,12 @@ inline ChecksumFixResult fixMegaDriveChecksum(QByteArray &data)
 
     if (stored == cs)
         return {ChecksumFixStatus::OK,
-                QStringLiteral("Mega Drive checksum is already correct")};
+                QCoreApplication::translate("romchecksum", "Mega Drive checksum is already correct")};
 
     data[0x018E] = static_cast<char>((cs >> 8) & 0xFF);
     data[0x018F] = static_cast<char>(cs & 0xFF);
     return {ChecksumFixStatus::Fixed,
-            QStringLiteral("Mega Drive checksum fixed")};
+            QCoreApplication::translate("romchecksum", "Mega Drive checksum fixed")};
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -73,7 +74,7 @@ inline ChecksumFixResult fixSMSChecksum(QByteArray &data)
     }
     if (headerOffset < 0)
         return {ChecksumFixStatus::NotApplicable,
-                QStringLiteral("Sega ROM header (\"TMR SEGA\") not found")};
+                QCoreApplication::translate("romchecksum", "Sega ROM header (\"TMR SEGA\") not found")};
 
     uint16_t cs = 0;
     for (int i = 0; i < headerOffset; ++i)
@@ -85,12 +86,12 @@ inline ChecksumFixResult fixSMSChecksum(QByteArray &data)
 
     if (stored == cs)
         return {ChecksumFixStatus::OK,
-                QStringLiteral("SMS/GG checksum is already correct")};
+                QCoreApplication::translate("romchecksum", "SMS/GG checksum is already correct")};
 
     data[headerOffset + 0x0A] = static_cast<char>(cs & 0xFF);
     data[headerOffset + 0x0B] = static_cast<char>((cs >> 8) & 0xFF);
     return {ChecksumFixStatus::Fixed,
-            QStringLiteral("SMS/GG checksum fixed")};
+            QCoreApplication::translate("romchecksum", "SMS/GG checksum fixed")};
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -104,7 +105,7 @@ inline ChecksumFixResult fixGameBoyChecksum(QByteArray &data)
 {
     if (data.size() < 0x0150)
         return {ChecksumFixStatus::TooSmall,
-                QStringLiteral("ROM too small for Game Boy checksum (need ≥ 0x150 bytes)")};
+                QCoreApplication::translate("romchecksum", "ROM too small for Game Boy checksum (need ≥ 0x150 bytes)")};
 
     // Header checksum
     int x = 0;
@@ -135,9 +136,9 @@ inline ChecksumFixResult fixGameBoyChecksum(QByteArray &data)
 
     if (!anyFixed)
         return {ChecksumFixStatus::OK,
-                QStringLiteral("Game Boy checksums are already correct")};
+                QCoreApplication::translate("romchecksum", "Game Boy checksums are already correct")};
     return {ChecksumFixStatus::Fixed,
-            QStringLiteral("Game Boy checksum(s) fixed")};
+            QCoreApplication::translate("romchecksum", "Game Boy checksum(s) fixed")};
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -150,7 +151,7 @@ inline ChecksumFixResult fixGBAChecksum(QByteArray &data)
 {
     if (data.size() < 0x00BE)
         return {ChecksumFixStatus::TooSmall,
-                QStringLiteral("ROM too small for GBA header checksum (need ≥ 0xBE bytes)")};
+                QCoreApplication::translate("romchecksum", "ROM too small for GBA header checksum (need ≥ 0xBE bytes)")};
 
     int sum = 0;
     for (int i = 0x00A0; i <= 0x00BC; ++i)
@@ -159,11 +160,11 @@ inline ChecksumFixResult fixGBAChecksum(QByteArray &data)
 
     if (static_cast<uint8_t>(data[0x00BD]) == cs)
         return {ChecksumFixStatus::OK,
-                QStringLiteral("GBA header checksum is already correct")};
+                QCoreApplication::translate("romchecksum", "GBA header checksum is already correct")};
 
     data[0x00BD] = static_cast<char>(cs);
     return {ChecksumFixStatus::Fixed,
-            QStringLiteral("GBA header checksum fixed")};
+            QCoreApplication::translate("romchecksum", "GBA header checksum fixed")};
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -185,12 +186,12 @@ inline ChecksumFixResult fixSNESChecksum(QByteArray &data, RomType romType)
 
     if (data.size() - romBase < 0x8000)
         return {ChecksumFixStatus::TooSmall,
-                QStringLiteral("ROM data too small for SNES checksum")};
+                QCoreApplication::translate("romchecksum", "ROM data too small for SNES checksum")};
 
     const int csOff = romBase + (isHiROM ? 0xFFDC : 0x7FDC);
     if (data.size() < csOff + 4)
         return {ChecksumFixStatus::TooSmall,
-                QStringLiteral("ROM too small to contain SNES checksum fields")};
+                QCoreApplication::translate("romchecksum", "ROM too small to contain SNES checksum fields")};
 
     // Sum all ROM bytes with the 4 checksum bytes substituted
     // (complement = 0xFF,0xFF  checksum = 0x00,0x00)
@@ -214,14 +215,14 @@ inline ChecksumFixResult fixSNESChecksum(QByteArray &data, RomType romType)
 
     if (storedComp == comp && storedCs == cs)
         return {ChecksumFixStatus::OK,
-                QStringLiteral("SNES checksum is already correct")};
+                QCoreApplication::translate("romchecksum", "SNES checksum is already correct")};
 
     data[csOff + 0] = static_cast<char>(comp & 0xFF);
     data[csOff + 1] = static_cast<char>((comp >> 8) & 0xFF);
     data[csOff + 2] = static_cast<char>(cs & 0xFF);
     data[csOff + 3] = static_cast<char>((cs >> 8) & 0xFF);
     return {ChecksumFixStatus::Fixed,
-            QStringLiteral("SNES checksum fixed")};
+            QCoreApplication::translate("romchecksum", "SNES checksum fixed")};
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -254,7 +255,7 @@ inline ChecksumFixResult tryFixChecksum(QByteArray &data, RomType romType)
 
     default:
         return {ChecksumFixStatus::NotApplicable,
-                QStringLiteral("No standard checksum defined for this ROM type")};
+                QCoreApplication::translate("romchecksum", "No standard checksum defined for this ROM type")};
     }
 }
 
