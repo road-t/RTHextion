@@ -2343,6 +2343,18 @@ void MainWindow::restoreSession(EditorSession *session)
     // Restore the per-session table dock content. applySnapshot rebuilds the
     // dock's tab list and emits activeTableChanged/tableContentChanged.
     // Suppress "project modified" side effects while this is a pure restore.
+
+    // Null out translation table pointers on ALL editors before applySnapshot
+    // clears m_tables. Any editor's _tb pointing into the old m_tables becomes
+    // a dangling pointer after clear(); setting it to nullptr here prevents a
+    // use-after-free crash in ensureTableDisplayCache(). applySelectedTable()
+    // at the end of this function will restore the correct pointer for the
+    // active editor once the new snapshot has been applied.
+    for (EditorSession *s : m_sessions) {
+        if (s->editor)
+            s->editor->setTranslationTable(nullptr);
+    }
+
     m_restoringTableDockState = true;
     m_tablesDock->applySnapshot(session->tableSnapshot, session->tableActiveIndex);
     m_restoringTableDockState = false;
