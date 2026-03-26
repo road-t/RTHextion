@@ -83,6 +83,9 @@ public:
     void setCollapsed(bool collapsed);
     bool isCollapsed() const { return m_collapsed; }
 
+    /// Force-reset collapse state (called when dock changes area).
+    void resetCollapse();
+
     /// Undo stack (exposed so main window can connect undo/redo actions).
     QUndoStack *undoStack() const { return m_undoStack; }
 

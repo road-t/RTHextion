@@ -27,6 +27,7 @@
 #include <QTabWidget>
 #include <QStyleFactory>
 #include <QMouseEvent>
+#include <QChildEvent>
 #include <QInputDialog>
 #include <QFile>
 #ifdef Q_OS_MAC
@@ -38,6 +39,7 @@
 #include "appinfo.h"
 #include "langtranslator.h"
 #include "mainwindow.h"
+#include "DockTitleBar.h"
 #include "TablesDockWidget.h"
 #include "ChangesDockWidget.h"
 #include "romdetect.h"
@@ -337,6 +339,24 @@ void MainWindow::dropEvent(QDropEvent *event)
     }
 }
 
+bool MainWindow::event(QEvent *e)
+{
+    // Track child widgets added to the main window (including internal separators)
+    // and install event filters on potential dock area separators.
+    if (e->type() == QEvent::ChildAdded) {
+        auto *ce = static_cast<QChildEvent *>(e);
+        if (QWidget *w = qobject_cast<QWidget *>(ce->child())) {
+            // Skip known widget types — only separators remain
+            if (!qobject_cast<QDockWidget *>(w) && !qobject_cast<QToolBar *>(w)
+                && !qobject_cast<QMenuBar *>(w) && !qobject_cast<QStatusBar *>(w)
+                && w != centralWidget() && w != m_tabWidget) {
+                w->installEventFilter(this);
+            }
+        }
+    }
+    return QMainWindow::event(e);
+}
+
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
     if (watched == lbEncoding && event && event->type() == QEvent::MouseButtonRelease) {
@@ -344,6 +364,46 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         if (mouseEvent && mouseEvent->button() == Qt::LeftButton) {
             openEncodingSelectionDialog();
             return true;
+        }
+    }
+
+    // Double-click on dock area separator → toggle area collapse
+    if (event && event->type() == QEvent::MouseButtonDblClick) {
+        auto *me = static_cast<QMouseEvent *>(event);
+        if (me->button() == Qt::LeftButton) {
+            QWidget *w = qobject_cast<QWidget *>(watched);
+            if (w && w->parentWidget() == this
+                && !qobject_cast<QDockWidget *>(w)
+                && !qobject_cast<QToolBar *>(w)
+                && !qobject_cast<QMenuBar *>(w)
+                && !qobject_cast<QStatusBar *>(w)
+                && w != centralWidget() && w != m_tabWidget) {
+                Qt::DockWidgetArea area = separatorDockArea(w);
+                if (area != Qt::NoDockWidgetArea) {
+                    setDockAreaCollapsed(area, !isDockAreaCollapsed(area));
+                    return true;
+                }
+            }
+        }
+    }
+
+    // Single click on dock area separator when already collapsed → expand
+    if (event && event->type() == QEvent::MouseButtonPress) {
+        auto *me = static_cast<QMouseEvent *>(event);
+        if (me->button() == Qt::LeftButton) {
+            QWidget *w = qobject_cast<QWidget *>(watched);
+            if (w && w->parentWidget() == this
+                && !qobject_cast<QDockWidget *>(w)
+                && !qobject_cast<QToolBar *>(w)
+                && !qobject_cast<QMenuBar *>(w)
+                && !qobject_cast<QStatusBar *>(w)
+                && w != centralWidget() && w != m_tabWidget) {
+                Qt::DockWidgetArea area = separatorDockArea(w);
+                if (area != Qt::NoDockWidgetArea && isDockAreaCollapsed(area)) {
+                    setDockAreaCollapsed(area, false);
+                    return true;
+                }
+            }
         }
     }
 
@@ -2242,6 +2302,10 @@ void MainWindow::init()
         if (visible && m_document)
             refreshChangesView();
     });
+
+    // Wire up dock title bar collapse callbacks and separator event filters
+    setupDockTitleBarCallbacks();
+    installSeparatorEventFilters();
     
     createToolBars();
     createMenus();
@@ -3390,18 +3454,45 @@ void MainWindow::createMenus()
     // Dock submenu
     dockMenu = viewMenu->addMenu(tr("Dock"));
     
-    // Store references to dock toggle actions and set proper text
+    // Store references to dock toggle actions.
+    // Set fixed text and override QDockWidget's auto-sync with windowTitle
+    // (which may include counts like "Pointers – 42").
     tablesDockToggleAct = m_tablesDock->toggleViewAction();
     tablesDockToggleAct->setText(tr("Tables"));
     dockMenu->addAction(tablesDockToggleAct);
+    connect(m_tablesDock, &QDockWidget::windowTitleChanged, this, [this]() {
+        if (tablesDockToggleAct) tablesDockToggleAct->setText(tr("Tables"));
+    });
     
     pointersDockToggleAct = m_pointersDock->toggleViewAction();
     pointersDockToggleAct->setText(tr("Pointers"));
     dockMenu->addAction(pointersDockToggleAct);
+    connect(m_pointersDock, &QDockWidget::windowTitleChanged, this, [this]() {
+        if (pointersDockToggleAct) pointersDockToggleAct->setText(tr("Pointers"));
+    });
     
     changesDockToggleAct = m_changesDock->toggleViewAction();
     changesDockToggleAct->setText(tr("Changes"));
     dockMenu->addAction(changesDockToggleAct);
+    connect(m_changesDock, &QDockWidget::windowTitleChanged, this, [this]() {
+        if (changesDockToggleAct) changesDockToggleAct->setText(tr("Changes"));
+    });
+
+    dockMenu->addSeparator();
+
+    QAction *collapseAllDocksAct = dockMenu->addAction(tr("Collapse all"));
+    connect(collapseAllDocksAct, &QAction::triggered, this, [this]() {
+        setDockAreaCollapsed(Qt::LeftDockWidgetArea, true);
+        setDockAreaCollapsed(Qt::RightDockWidgetArea, true);
+        setDockAreaCollapsed(Qt::BottomDockWidgetArea, true);
+    });
+
+    QAction *expandAllDocksAct = dockMenu->addAction(tr("Expand all"));
+    connect(expandAllDocksAct, &QAction::triggered, this, [this]() {
+        setDockAreaCollapsed(Qt::LeftDockWidgetArea, false);
+        setDockAreaCollapsed(Qt::RightDockWidgetArea, false);
+        setDockAreaCollapsed(Qt::BottomDockWidgetArea, false);
+    });
 
     dockMenu->addSeparator();
     dockMenu->addAction(restoreDockLayoutAct);
@@ -3546,36 +3637,51 @@ void MainWindow::restoreDockLayout()
 
 void MainWindow::setDockAreaCollapsed(Qt::DockWidgetArea area, bool collapsed)
 {
-    auto docksInArea = [this, area]() {
-        QList<QDockWidget *> result;
-        const auto allDocks = findChildren<QDockWidget *>();
-        for (QDockWidget *dock : allDocks) {
-            if (!dock)
-                continue;
-            if (dockWidgetArea(dock) == area)
-                result.append(dock);
-        }
-        return result;
-    };
+    // For bottom area: capture horizontal widths BEFORE any collapse/expand
+    // so the splitter proportions can be restored afterwards.
+    QList<QDockWidget*> bottomDocks;
+    QList<int> savedWidths;
+    if (area == Qt::BottomDockWidgetArea) {
+        auto capture = [&](QDockWidget *dock) {
+            if (dock && !dock->isFloating() &&
+                dockWidgetArea(dock) == Qt::BottomDockWidgetArea) {
+                bottomDocks << dock;
+                savedWidths << dock->width();
+            }
+        };
+        capture(m_pointersDock);
+        capture(m_changesDock);
+    }
 
-    if (area == Qt::RightDockWidgetArea) {
-        if (m_tablesDock && dockWidgetArea(m_tablesDock) == Qt::RightDockWidgetArea && !m_tablesDock->isFloating())
+    // Collapse all known dock widgets in the given area.
+    // Each dock's setCollapsed() handles resizing to title-bar-only extent.
+    auto collapseIfInArea = [this, area, collapsed](QDockWidget *dock) {
+        if (!dock || dock->isFloating())
+            return;
+        if (dockWidgetArea(dock) != area)
+            return;
+        if (dock == m_tablesDock)
             m_tablesDock->setCollapsed(collapsed);
-    } else if (area == Qt::BottomDockWidgetArea) {
-        if (m_pointersDock && dockWidgetArea(m_pointersDock) == Qt::BottomDockWidgetArea && !m_pointersDock->isFloating())
+        else if (dock == m_pointersDock)
             m_pointersDock->setCollapsed(collapsed);
-        if (m_changesDock && dockWidgetArea(m_changesDock) == Qt::BottomDockWidgetArea && !m_changesDock->isFloating())
+        else if (dock == m_changesDock)
             m_changesDock->setCollapsed(collapsed);
-    } else {
-        for (QDockWidget *dock : docksInArea()) {
-            if (!dock || dock->isFloating())
-                continue;
+        else {
             if (collapsed)
                 dock->hide();
             else
                 dock->show();
         }
-    }
+    };
+
+    collapseIfInArea(m_tablesDock);
+    collapseIfInArea(m_pointersDock);
+    collapseIfInArea(m_changesDock);
+
+    // Restore horizontal widths for bottom docks (preserves the splitter ratio
+    // the user had before collapse, instead of forcing 50/50).
+    if (!bottomDocks.isEmpty())
+        resizeDocks(bottomDocks, savedWidths, Qt::Horizontal);
 
     updateDockAreaActions();
 }
@@ -3640,6 +3746,78 @@ void MainWindow::updateDockAreaActions()
     syncAction(collapseLeftDockAreaAct, Qt::LeftDockWidgetArea);
     syncAction(collapseRightDockAreaAct, Qt::RightDockWidgetArea);
     syncAction(collapseBottomDockAreaAct, Qt::BottomDockWidgetArea);
+}
+
+Qt::DockWidgetArea MainWindow::separatorDockArea(QWidget *separator) const
+{
+    if (!separator || !centralWidget())
+        return Qt::NoDockWidgetArea;
+
+    // Map the separator's center to MainWindow coordinates
+    const QPoint sepCenter = separator->mapTo(const_cast<MainWindow *>(this),
+                                              QPoint(separator->width() / 2, separator->height() / 2));
+    const QRect cr = centralWidget()->geometry();
+
+    // Thin horizontal separator below central widget → bottom area
+    if (separator->height() < separator->width()
+        && sepCenter.y() >= cr.bottom() - 2) {
+        return Qt::BottomDockWidgetArea;
+    }
+    // Thin vertical separator to the left → left area
+    if (separator->width() < separator->height()
+        && sepCenter.x() <= cr.left() + 2) {
+        return Qt::LeftDockWidgetArea;
+    }
+    // Thin vertical separator to the right → right area
+    if (separator->width() < separator->height()
+        && sepCenter.x() >= cr.right() - 2) {
+        return Qt::RightDockWidgetArea;
+    }
+
+    return Qt::NoDockWidgetArea;
+}
+
+void MainWindow::installSeparatorEventFilters()
+{
+    // Install event filters on direct child widgets that are likely dock separators
+    const auto children = this->children();
+    for (QObject *child : children) {
+        if (!child->isWidgetType())
+            continue;
+        QWidget *w = static_cast<QWidget *>(child);
+        if (w == centralWidget() || w == m_tabWidget
+            || qobject_cast<QDockWidget *>(w)
+            || qobject_cast<QToolBar *>(w)
+            || qobject_cast<QMenuBar *>(w)
+            || qobject_cast<QStatusBar *>(w))
+            continue;
+        w->installEventFilter(this);
+    }
+}
+
+void MainWindow::setupDockTitleBarCallbacks()
+{
+    // Helper: set up collapse callback and double-click filter for a dock's title bar.
+    // installDoubleClickFilter() must be called AFTER setTitleBarWidget() so our
+    // event filter is installed last and therefore runs first (LIFO), intercepting
+    // double-clicks before QDockWidget's internal filter can toggle floating.
+    auto setupCallback = [this](QDockWidget *dock) {
+        if (!dock)
+            return;
+        auto *titleBar = static_cast<DockTitleBar *>(dock->titleBarWidget());
+        if (!titleBar)
+            return;
+        titleBar->setCollapseAreaCallback([this, dock] {
+            Qt::DockWidgetArea area = dockWidgetArea(dock);
+            if (area != Qt::NoDockWidgetArea)
+                setDockAreaCollapsed(area, !isDockAreaCollapsed(area));
+        });
+        titleBar->installDoubleClickFilter();
+    };
+
+    setupCallback(m_tablesDock);
+    setupCallback(m_pointersDock);
+    setupCallback(m_changesDock);
 }
 
 void MainWindow::createToolBars()
@@ -5334,8 +5512,14 @@ void MainWindow::enforceBottomDockEqualWidth()
         return;
     if (!m_pointersDock->isVisible() || !m_changesDock->isVisible())
         return;
+    if (m_pointersDock->isFloating() || m_changesDock->isFloating())
+        return;
+    if (dockWidgetArea(m_pointersDock) != Qt::BottomDockWidgetArea ||
+        dockWidgetArea(m_changesDock) != Qt::BottomDockWidgetArea)
+        return;
 
-    resizeDocks({m_pointersDock, m_changesDock}, {1, 1}, Qt::Horizontal);
+    const int halfWidth = qMax(200, width() / 2);
+    resizeDocks({m_pointersDock, m_changesDock}, {halfWidth, halfWidth}, Qt::Horizontal);
 }
 
 void MainWindow::createIpsPatch()

@@ -33,6 +33,7 @@ public:
 
     void setCollapsed(bool collapsed);
     bool isCollapsed() const;
+    void resetCollapse();
 
     void retranslateUi();
 

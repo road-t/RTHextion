@@ -169,6 +169,14 @@ ChangesDockWidget::ChangesDockWidget(QWidget *parent)
 
     setWidget(container);
 
+    // Custom title bar with collapse/float/close
+    auto *titleBar = new DockTitleBar(windowTitle(), this);
+    setTitleBarWidget(titleBar);
+    connect(this, &QDockWidget::dockLocationChanged, titleBar, &DockTitleBar::onDockLocationChanged);
+    connect(this, &QDockWidget::dockLocationChanged, this, [this](Qt::DockWidgetArea) {
+        resetCollapse();
+    });
+
     connect(m_table, &QTableWidget::doubleClicked, this, &ChangesDockWidget::onRowDoubleClicked);
 }
 
@@ -307,58 +315,78 @@ void ChangesDockWidget::setCollapsed(bool collapsed)
         area = mw->dockWidgetArea(this);
     const bool sideArea = (area == Qt::LeftDockWidgetArea || area == Qt::RightDockWidgetArea);
 
-    int collapsedExtent = 30;
-    if (auto *titleBar = static_cast<DockTitleBar *>(titleBarWidget())) {
-        collapsedExtent = titleBar->collapsedExtent(sideArea);
-    }
+    auto *titleBar = static_cast<DockTitleBar *>(titleBarWidget());
+    const int collapsedExtent = titleBar ? titleBar->collapsedExtent(sideArea) : 30;
 
     if (collapsed) {
+        if (m_contentWidget)
+            m_contentWidget->setVisible(false);
+        if (titleBar)
+            titleBar->setCollapsed(true);
+
         if (sideArea) {
             m_savedExpandedWidth = width();
-            setMinimumWidth(collapsedExtent);
-            setMaximumWidth(collapsedExtent);
-            if (mw)
-                mw->resizeDocks({this}, {collapsedExtent}, Qt::Horizontal);
-            else
-                resize(collapsedExtent, height());
-        } else {
             m_savedExpandedHeight = height();
-            setMinimumHeight(collapsedExtent);
-            setMaximumHeight(collapsedExtent);
-            if (mw)
-                mw->resizeDocks({this}, {collapsedExtent}, Qt::Vertical);
-            else
-                resize(width(), collapsedExtent);
-        }
-    } else {
-        if (sideArea) {
-            setMinimumWidth(0);
-            setMaximumWidth(QWIDGETSIZE_MAX);
-            const int target = m_savedExpandedWidth > 0 ? m_savedExpandedWidth : 320;
-            if (mw)
-                mw->resizeDocks({this}, {target}, Qt::Horizontal);
-            else
-                resize(target, height());
-        } else {
             setMinimumHeight(0);
             setMaximumHeight(QWIDGETSIZE_MAX);
-            const int target = m_savedExpandedHeight > 0 ? m_savedExpandedHeight : 220;
-            if (mw)
-                mw->resizeDocks({this}, {target}, Qt::Vertical);
-            else
-                resize(width(), target);
+            setMinimumWidth(collapsedExtent);
+            setMaximumWidth(collapsedExtent);
+            if (mw) mw->resizeDocks({this}, {collapsedExtent}, Qt::Horizontal);
+        } else {
+            m_savedExpandedHeight = height();
+            m_savedExpandedWidth = width();
+            setMinimumWidth(m_savedExpandedWidth);
+            setMinimumHeight(collapsedExtent);
+            setMaximumHeight(collapsedExtent);
+            if (mw) mw->resizeDocks({this}, {collapsedExtent}, Qt::Vertical);
+        }
+    } else {
+        if (titleBar)
+            titleBar->setCollapsed(false);
+
+        setMinimumWidth(0);
+        setMaximumWidth(QWIDGETSIZE_MAX);
+        setMinimumHeight(0);
+        setMaximumHeight(QWIDGETSIZE_MAX);
+
+        if (m_contentWidget)
+            m_contentWidget->setVisible(true);
+
+        if (sideArea) {
+            const int target = m_savedExpandedWidth > 0 ? m_savedExpandedWidth : 320;
+            if (mw) mw->resizeDocks({this}, {target}, Qt::Horizontal);
+        } else {
+            const int targetH = m_savedExpandedHeight > 0 ? m_savedExpandedHeight : 220;
+            const int targetW = m_savedExpandedWidth > 0 ? m_savedExpandedWidth : -1;
+            if (mw) {
+                mw->resizeDocks({this}, {targetH}, Qt::Vertical);
+                if (targetW > 0)
+                    mw->resizeDocks({this}, {targetW}, Qt::Horizontal);
+            }
         }
     }
+}
 
+void ChangesDockWidget::resetCollapse()
+{
+    if (!m_collapsed)
+        return;
+    m_collapsed = false;
+    m_savedExpandedWidth = -1;
+    m_savedExpandedHeight = -1;
+    setMinimumWidth(0);
+    setMaximumWidth(QWIDGETSIZE_MAX);
+    setMinimumHeight(0);
+    setMaximumHeight(QWIDGETSIZE_MAX);
     if (m_contentWidget)
-        m_contentWidget->setVisible(!collapsed);
-    if (auto *titleBar = static_cast<DockTitleBar *>(titleBarWidget()))
-        titleBar->setCollapsed(collapsed);
+        m_contentWidget->setVisible(true);
+    if (auto *tb = static_cast<DockTitleBar *>(titleBarWidget()))
+        tb->setCollapsed(false);
 }
 
 bool ChangesDockWidget::isCollapsed() const
 {
-    return m_contentWidget && !m_contentWidget->isVisible();
+    return m_collapsed;
 }
 
 void ChangesDockWidget::setShowChangesChecked(bool checked)

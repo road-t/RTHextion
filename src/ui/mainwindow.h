@@ -49,6 +49,7 @@ protected:
     void changeEvent(QEvent *event) override;
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dropEvent(QDropEvent *event) override;
+    bool event(QEvent *e) override;
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private slots:
@@ -194,6 +195,9 @@ private:
     void setDockAreaCollapsed(Qt::DockWidgetArea area, bool collapsed);
     bool isDockAreaCollapsed(Qt::DockWidgetArea area) const;
     void updateDockAreaActions();
+    void installSeparatorEventFilters();
+    void setupDockTitleBarCallbacks();
+    Qt::DockWidgetArea separatorDockArea(QWidget *separator) const;
 
     // ---- Tab / session management ----
     QTabWidget *m_tabWidget = nullptr;

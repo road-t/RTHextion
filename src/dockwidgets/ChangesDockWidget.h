@@ -45,6 +45,7 @@ public:
 
     void setCollapsed(bool collapsed);
     bool isCollapsed() const;
+    void resetCollapse();
 
     QByteArray saveColumnsState() const;
     void restoreColumnsState(const QByteArray &state);

@@ -6,18 +6,26 @@
 #include <QFontMetrics>
 #include <QShowEvent>
 #include <QResizeEvent>
+#include <QMouseEvent>
 #include <QStyle>
 #include <QStyleOption>
 #include <QMainWindow>
 #include <QDockWidget>
 #include <QCloseEvent>
+#include <functional>
 
 /// A custom title bar widget for QDockWidget that draws its label vertically
-/// when the dock is placed in the left or right dock area.
+/// when the dock is placed in the left or right dock area (collapsed state).
+///
+/// Left dock:  text rotated  90° CW (top-to-bottom), aligned to top.
+/// Right dock: text rotated 270° CW (bottom-to-top), aligned to top.
+///
+/// Double-click on this title bar collapses/expands the entire dock area
+/// (overrides QDockWidget's default double-click-to-float behaviour).
 class DockTitleBar : public QWidget
 {
     static constexpr int kThick = 30;  ///< Bar thickness (height in H-mode, width in V-mode)
-    static constexpr int kBtnSz = 16;  ///< Collapse button size
+    static constexpr int kBtnSz = 16;  ///< Button size
     static constexpr int kPad   = 3;   ///< Padding around elements
 
 public:
@@ -42,8 +50,10 @@ public:
         m_closeBtn->setFixedSize(kBtnSz, kBtnSz);
         m_closeBtn->setToolTip(tr("Close"));
 
+        // Collapse button triggers area-level collapse via callback
         connect(m_collapseBtn, &QToolButton::clicked, this, [this] {
-            setCollapsed(!m_collapsed);
+            if (m_collapseAreaCallback)
+                m_collapseAreaCallback();
         });
 
         connect(m_floatBtn, &QToolButton::clicked, this, [this] {
@@ -61,14 +71,25 @@ public:
         updateCollapseGlyph();
     }
 
-    QToolButton *collapseButton() const { return m_collapseBtn; }
-    int collapsedExtent(bool sideArea) const
+    /// Call AFTER setTitleBarWidget() to intercept double-clicks before
+    /// QDockWidget's internal event filter can toggle floating.
+    void installDoubleClickFilter()
     {
-        const QFontMetrics fm(m_font);
-        const int buttonsLen = (3 * kBtnSz) + (4 * kPad);
-        if (sideArea)
-            return kThick;
-        return qMax(buttonsLen + 24, fm.height() + 2 * kPad);
+        installEventFilter(this);
+    }
+
+    /// Set a callback invoked when the user requests area collapse/expand
+    /// (via collapse button or double-click on title bar).
+    void setCollapseAreaCallback(std::function<void()> cb)
+    {
+        m_collapseAreaCallback = std::move(cb);
+    }
+
+    QToolButton *collapseButton() const { return m_collapseBtn; }
+
+    int collapsedExtent(bool /*sideArea*/) const
+    {
+        return kThick;
     }
 
     void setTitle(const QString &t)
@@ -102,6 +123,31 @@ public slots:
     }
 
 protected:
+    /// Event filter installed on *this* — intercepts double-clicks before
+    /// QDockWidget's built-in filter can toggle floating.
+    /// Also intercepts single clicks on a collapsed bar for quick expand.
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (watched == this) {
+            if (event->type() == QEvent::MouseButtonDblClick) {
+                auto *me = static_cast<QMouseEvent *>(event);
+                if (me->button() == Qt::LeftButton && m_collapseAreaCallback) {
+                    m_collapseAreaCallback();
+                    return true;  // consume — prevent QDockWidget from toggling floating
+                }
+            }
+            // Single click on a collapsed title bar → expand the area
+            if (event->type() == QEvent::MouseButtonPress && m_collapsed) {
+                auto *me = static_cast<QMouseEvent *>(event);
+                if (me->button() == Qt::LeftButton && m_collapseAreaCallback) {
+                    m_collapseAreaCallback();
+                    return true;
+                }
+            }
+        }
+        return QWidget::eventFilter(watched, event);
+    }
+
     void showEvent(QShowEvent *e) override
     {
         QWidget::showEvent(e);
@@ -127,26 +173,40 @@ protected:
         const QFontMetrics fm(m_font);
 
         if (m_vertical) {
-            // Vertical title is used only in collapsed side-dock state.
-            // Buttons are at the top; text occupies remaining lower area.
+            // Vertical text in collapsed side-dock state.
+            // Buttons are at the top; text below.
             const int buttons = (3 * kBtnSz) + (4 * kPad);
             const int avail = height() - buttons;
             if (avail > fm.height()) {
                 const QString txt = fm.elidedText(m_title, Qt::ElideRight, avail - kPad);
                 p.save();
-                // Rotate so x-axis maps from top to bottom in original coordinates.
-                p.translate(width(), 0);
-                p.rotate(90.0);
-                p.drawText(QRect(buttons, 0, avail - kPad, width()),
-                           Qt::AlignLeft | Qt::AlignVCenter, txt);
+                if (m_dockArea == Qt::LeftDockWidgetArea) {
+                    // Left dock: rotate 90° CW (text reads top-to-bottom),
+                    // aligned to top edge of the strip.
+                    p.translate(width(), 0);
+                    p.rotate(90.0);
+                    // Rotated coords: x runs downward, y runs leftward.
+                    p.drawText(QRect(buttons, 0, avail - kPad, width()),
+                               Qt::AlignLeft | Qt::AlignVCenter, txt);
+                } else {
+                    // Right dock: rotate 270° CW (text reads bottom-to-top),
+                    // aligned to top edge of the strip.
+                    p.translate(0, height());
+                    p.rotate(-90.0);
+                    // Rotated coords: x runs upward, y runs rightward.
+                    // AlignRight pushes text toward top of the original widget.
+                    p.drawText(QRect(kPad, 0, avail - kPad, width()),
+                               Qt::AlignRight | Qt::AlignVCenter, txt);
+                }
                 p.restore();
             }
         } else {
             const int buttons = (3 * kBtnSz) + (4 * kPad);
             const int avail = width() - buttons - kPad;
             if (avail > 0) {
+                const Qt::Alignment hAlign = m_collapsed ? Qt::AlignRight : Qt::AlignLeft;
                 p.drawText(QRect(kPad, 0, avail, height()),
-                           Qt::AlignLeft | Qt::AlignVCenter,
+                           hAlign | Qt::AlignVCenter,
                            fm.elidedText(m_title, Qt::ElideRight, avail));
             }
         }
@@ -231,17 +291,29 @@ private:
     {
         m_collapseBtn->setIcon(QIcon());
         if (m_vertical) {
+            // Collapsed side dock: arrow points outward to indicate "expand"
             if (m_dockArea == Qt::LeftDockWidgetArea)
-                m_collapseBtn->setText(m_collapsed ? QStringLiteral(">") : QStringLiteral("<"));
+                m_collapseBtn->setText(QStringLiteral("\u25B6")); // ▶ right
             else
-                m_collapseBtn->setText(m_collapsed ? QStringLiteral("<") : QStringLiteral(">"));
+                m_collapseBtn->setText(QStringLiteral("\u25C0")); // ◀ left
         } else {
-            if (m_dockArea == Qt::TopDockWidgetArea)
-                m_collapseBtn->setText(m_collapsed ? QStringLiteral("V") : QStringLiteral("^"));
-            else if (m_dockArea == Qt::BottomDockWidgetArea)
-                m_collapseBtn->setText(m_collapsed ? QStringLiteral("^") : QStringLiteral("V"));
-            else
-                m_collapseBtn->setText(m_collapsed ? QStringLiteral("^") : QStringLiteral("V"));
+            if (m_collapsed) {
+                // Collapsed bottom/top: arrow points outward to indicate "expand"
+                if (m_dockArea == Qt::TopDockWidgetArea)
+                    m_collapseBtn->setText(QStringLiteral("\u25BC")); // ▼ down
+                else
+                    m_collapseBtn->setText(QStringLiteral("\u25B2")); // ▲ up
+            } else {
+                // Expanded: arrow points inward to indicate "collapse"
+                if (m_dockArea == Qt::TopDockWidgetArea)
+                    m_collapseBtn->setText(QStringLiteral("\u25B2")); // ▲ up
+                else if (m_dockArea == Qt::BottomDockWidgetArea)
+                    m_collapseBtn->setText(QStringLiteral("\u25BC")); // ▼ down
+                else if (m_dockArea == Qt::LeftDockWidgetArea)
+                    m_collapseBtn->setText(QStringLiteral("\u25C0")); // ◀ left
+                else
+                    m_collapseBtn->setText(QStringLiteral("\u25B6")); // ▶ right
+            }
         }
     }
 
@@ -279,4 +351,5 @@ private:
     bool         m_collapsed = false;
     bool         m_sideArea = false;
     Qt::DockWidgetArea m_dockArea = Qt::NoDockWidgetArea;
+    std::function<void()> m_collapseAreaCallback;
 };
