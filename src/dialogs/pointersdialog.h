@@ -30,7 +30,19 @@ public:
     ~PointersDialog();
     void refreshFromTable();
     void quickSearch(qint64 clickBytePos = -1);
+    void setHexEdit(HexEditor *he);
     void setRomProfile(RomType type, qint64 offset);
+
+    /// Per-tab snapshot of user-controlled options (excluding ROM profile and range, which
+    /// are derived from the current session and selection respectively).
+    struct State {
+        int  searchDir        = 0;  // 0=before, 1=after, 2=both
+        bool excludeSelection = false;
+        bool alignedOnly      = false;
+        bool optimize         = false;
+    };
+    State dialogState() const;
+    void  setDialogState(const State &s);
     void setDock(PointersDockWidget *dock) { m_dock = dock; }
 
 signals:

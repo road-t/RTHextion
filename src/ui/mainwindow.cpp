@@ -17,6 +17,7 @@
 #include <QGridLayout>
 #include <QSettings>
 #include <QScrollBar>
+#include <QUrl>
 #include <QShortcut>
 #include <QSplitter>
 #include <QDir>
@@ -816,6 +817,18 @@ void MainWindow::showSearchDialog()
     searchDialog->setAvailableTables(m_tablesDock->allTables(),
                                      m_tablesDock->currentIndex(),
                                      useTableAct && useTableAct->isChecked());
+
+    // Restore per-tab search state
+    if (m_currentSession) {
+        SearchDialog::State s;
+        s.findText    = m_currentSession->searchFindText;
+        s.findFormat  = m_currentSession->searchFindFormat;
+        s.replaceText = m_currentSession->searchReplaceText;
+        s.replaceFormat = m_currentSession->searchReplaceFormat;
+        s.relative    = m_currentSession->searchRelative;
+        searchDialog->setDialogState(s);
+    }
+
     searchDialog->show();
 }
 
@@ -828,9 +841,23 @@ void MainWindow::showPointersDialog()
         connect(pointersDialog, &PointersDialog::searchCompleted, this, &MainWindow::onQuickSearchCompleted);
         pointersDialog->setDock(m_pointersDock);
     }
+    // Always sync to the active tab's editor and ROM profile before showing
+    pointersDialog->setHexEdit(hexEdit);
     m_pointersDock->show();
     m_pointersDock->raise();
     pointersDialog->show();
+    // Override profile AFTER show so it takes effect regardless of _profileInitialized
+    pointersDialog->setRomProfile(m_detectedRomType, m_pointerOffset);
+
+    // Restore per-tab "where" and "text optimization" options
+    if (m_currentSession) {
+        PointersDialog::State ps;
+        ps.searchDir        = m_currentSession->ptrSearchDir;
+        ps.excludeSelection = m_currentSession->ptrExcludeSelection;
+        ps.alignedOnly      = m_currentSession->ptrAlignedOnly;
+        ps.optimize         = m_currentSession->ptrOptimize;
+        pointersDialog->setDialogState(ps);
+    }
 }
 
 void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
@@ -1446,6 +1473,15 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
             connect(pointersDialog, SIGNAL(accepted()), this, SLOT(pointersUpdated()));
             connect(pointersDialog, &PointersDialog::searchCompleted, this, &MainWindow::onQuickSearchCompleted);
             pointersDialog->setDock(m_pointersDock);
+        }
+        pointersDialog->setHexEdit(hexEdit);
+        if (m_currentSession) {
+            PointersDialog::State ps;
+            ps.searchDir        = m_currentSession->ptrSearchDir;
+            ps.excludeSelection = m_currentSession->ptrExcludeSelection;
+            ps.alignedOnly      = m_currentSession->ptrAlignedOnly;
+            ps.optimize         = m_currentSession->ptrOptimize;
+            pointersDialog->setDialogState(ps);
         }
         m_pointersDock->show();
         pointersDialog->quickSearch(bytePos);
@@ -2317,6 +2353,25 @@ void MainWindow::saveCurrentSession()
     m_currentSession->tablesDockVisibilityInitialized = true;
     if (m_document)
         m_document->useTable = useTableAct && useTableAct->isChecked();
+
+    // Save Find/Replace dialog state for this tab
+    if (searchDialog) {
+        const SearchDialog::State s = searchDialog->dialogState();
+        m_currentSession->searchFindText    = s.findText;
+        m_currentSession->searchFindFormat  = s.findFormat;
+        m_currentSession->searchReplaceText = s.replaceText;
+        m_currentSession->searchReplaceFormat = s.replaceFormat;
+        m_currentSession->searchRelative    = s.relative;
+    }
+
+    // Save Find Pointers dialog state for this tab
+    if (pointersDialog) {
+        const PointersDialog::State ps = pointersDialog->dialogState();
+        m_currentSession->ptrSearchDir        = ps.searchDir;
+        m_currentSession->ptrExcludeSelection = ps.excludeSelection;
+        m_currentSession->ptrAlignedOnly      = ps.alignedOnly;
+        m_currentSession->ptrOptimize         = ps.optimize;
+    }
 }
 
 void MainWindow::restoreSession(EditorSession *session)
@@ -4209,6 +4264,22 @@ void MainWindow::loadFile(const QString &fileName)
     }
 
     settings.setValue("RecentFile0", fileName);
+
+    // Restore last known cursor position for this file
+    {
+        settings.beginGroup(QStringLiteral("CursorPositions"));
+        const QString key = QString::fromUtf8(QUrl::toPercentEncoding(fileName));
+        const QVariant savedPos = settings.value(key);
+        settings.endGroup();
+        if (savedPos.isValid()) {
+            const qint64 fileSize = hexEdit->data().size();
+            const qint64 bytePos = qBound(0LL, savedPos.toLongLong(), fileSize > 0 ? fileSize - 1 : 0LL);
+            if (bytePos > 0) {
+                hexEdit->setCursorPosition(bytePos * 2);
+                hexEdit->ensureVisible();
+            }
+        }
+    }
 }
 
 void MainWindow::readSettings()
@@ -4804,6 +4875,16 @@ void MainWindow::writeSettings()
     settings.setValue(QStringLiteral("Session/Tabs"), sessionPaths);
     settings.setValue(QStringLiteral("Session/ActiveTab"),
                       m_tabWidget->isVisible() ? m_tabWidget->currentIndex() : -1);
+
+    // Save last cursor position for each open file so it survives app restarts
+    settings.beginGroup(QStringLiteral("CursorPositions"));
+    for (const EditorSession *s : std::as_const(m_sessions)) {
+        if (!s->curFile.isEmpty() && !s->isUntitled) {
+            const QString key = QString::fromUtf8(QUrl::toPercentEncoding(s->curFile));
+            settings.setValue(key, s->curOffset);
+        }
+    }
+    settings.endGroup();
 
     settings.sync();
 }

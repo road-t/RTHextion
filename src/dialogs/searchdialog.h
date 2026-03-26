@@ -20,6 +20,17 @@ public:
     void setHexEdit(HexEditor *hexEdit);
     void setAvailableTables(const QVector<TableTab> &tables, int activeIndex, bool useTable);
 
+    /// Snapshot of the dialog's editable state (find/replace text, formats, relative flag).
+    struct State {
+        QString findText;
+        int     findFormat    = 0;
+        QString replaceText;
+        int     replaceFormat = 0;
+        bool    relative      = false;
+    };
+    State dialogState() const;
+    void  setDialogState(const State &s);
+
 private slots:
     void on_pbFind_clicked();
     void on_pbFindPrev_clicked();

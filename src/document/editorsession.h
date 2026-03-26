@@ -49,6 +49,19 @@ public:
     bool tablesDockVisible = false;
     bool tablesDockVisibilityInitialized = false;
 
+    // Per-tab Find/Replace dialog state
+    QString searchFindText;
+    int     searchFindFormat    = 0;   // 0 = Text, 1 = Hex
+    QString searchReplaceText;
+    int     searchReplaceFormat = 0;
+    bool    searchRelative      = false;
+
+    // Per-tab Find Pointers dialog state (options not covered by ROM profile)
+    int  ptrSearchDir        = 0;     // 0 = before, 1 = after, 2 = both
+    bool ptrExcludeSelection = false;
+    bool ptrAlignedOnly      = false;
+    bool ptrOptimize         = false;
+
 private:
     EditorSession(const EditorSession &) = delete;
     EditorSession &operator=(const EditorSession &) = delete;

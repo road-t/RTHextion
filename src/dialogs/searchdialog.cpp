@@ -131,6 +131,41 @@ void SearchDialog::setHexEdit(HexEditor *hexEdit)
     _hexEdit = hexEdit;
 }
 
+SearchDialog::State SearchDialog::dialogState() const
+{
+    return {cbFind->currentText(),
+            cbFindFormat->currentIndex(),
+            cbReplace->currentText(),
+            cbReplaceFormat->currentIndex(),
+            cbRelative->isChecked()};
+}
+
+void SearchDialog::setDialogState(const State &s)
+{
+    // Always restore text unconditionally so switching to a "fresh" tab
+    // correctly clears any text left by a different tab.
+    cbFind->setEditText(s.findText);
+    {
+        const QSignalBlocker blk(cbFindFormat);
+        cbFindFormat->setCurrentIndex(s.findFormat);
+        // Apply validator matching the restored format
+        auto *le = cbFind->lineEdit();
+        le->setInputMask("");
+        le->setValidator(s.findFormat ? new QRegularExpressionValidator(
+            QRegularExpression("[0-9A-Fa-f ]*"), le) : nullptr);
+    }
+    cbReplace->setEditText(s.replaceText);
+    {
+        const QSignalBlocker blk(cbReplaceFormat);
+        cbReplaceFormat->setCurrentIndex(s.replaceFormat);
+        auto *le = cbReplace->lineEdit();
+        le->setInputMask("");
+        le->setValidator(s.replaceFormat ? new QRegularExpressionValidator(
+            QRegularExpression("[0-9A-Fa-f ]*"), le) : nullptr);
+    }
+    cbRelative->setChecked(s.relative);
+}
+
 void SearchDialog::setAvailableTables(const QVector<TableTab> &tables, int activeIndex, bool useTable)
 {
     m_availableTables = tables;
@@ -320,6 +355,8 @@ void SearchDialog::on_cbFindFormat_currentIndexChanged(int index)
     le->setInputMask("");
     le->setValidator(index ? new QRegularExpressionValidator(
         QRegularExpression("[0-9A-Fa-f ]*"), le) : nullptr);
+    if (index == 1)  // switching to Hex — clear non-hex text
+        cbFind->setEditText(QString());
 }
 
 
@@ -329,6 +366,8 @@ void SearchDialog::on_cbReplaceFormat_currentIndexChanged(int index)
     le->setInputMask("");
     le->setValidator(index ? new QRegularExpressionValidator(
         QRegularExpression("[0-9A-Fa-f ]*"), le) : nullptr);
+    if (index == 1)  // switching to Hex — clear non-hex text
+        cbReplace->setEditText(QString());
 }
 
 void SearchDialog::changeEvent(QEvent *event)

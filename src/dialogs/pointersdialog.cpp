@@ -180,6 +180,44 @@ void PointersDialog::refreshFromTable()
         m_dock->refreshView();
 }
 
+void PointersDialog::setHexEdit(HexEditor *he)
+{
+    _hexEdit = he;
+    // Force range-combo rebuild on next showEvent by invalidating the cached
+    // table pointer (tb may belong to a different tab's TranslationTable).
+    tb = nullptr;
+}
+
+PointersDialog::State PointersDialog::dialogState() const
+{
+    State s;
+    if (ui->rbAfter->isChecked())
+        s.searchDir = 1;
+    else if (ui->rbBoth->isChecked())
+        s.searchDir = 2;
+    else
+        s.searchDir = 0;
+    s.excludeSelection = ui->cbExcludeSelection->isChecked();
+    s.alignedOnly      = ui->cbAlignedOnly->isChecked();
+    s.optimize         = ui->cbOptimize->isChecked();
+    return s;
+}
+
+void PointersDialog::setDialogState(const State &s)
+{
+    const QSignalBlocker b1(ui->rbBefore);
+    const QSignalBlocker b2(ui->rbAfter);
+    const QSignalBlocker b3(ui->rbBoth);
+    switch (s.searchDir) {
+    case 1: ui->rbAfter->setChecked(true);  break;
+    case 2: ui->rbBoth->setChecked(true);   break;
+    default: ui->rbBefore->setChecked(true); break;
+    }
+    ui->cbExcludeSelection->setChecked(s.excludeSelection);
+    ui->cbAlignedOnly->setChecked(s.alignedOnly);
+    ui->cbOptimize->setChecked(s.optimize);
+}
+
 void PointersDialog::setRomProfile(RomType type, qint64 offset)
 {
     const QSignalBlocker blocker(_cbProfileRomType);
