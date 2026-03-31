@@ -27,6 +27,7 @@ A hex editor for retrogames translation and ROMHacking, a tribute to 00's Transl
 
 <img src="assets/general_view_1.png" alt="General view" width="600" />
 <img src="assets/general_view_2.png" alt="General view" width="600" />
+<img src="assets/find-replace.png" alt="Find/Replace window" width="600" />
 <img src="assets/pointer_quick_search.png" alt="Pointer quick search" width="600" />
 <img src="assets/find_pointers.png" alt="Pointers search window" width="600" />
 <img src="assets/pointer_hint.png" alt="Pointer hint" width="600" />
