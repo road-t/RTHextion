@@ -7,11 +7,31 @@
 *.tmp
 *.bak
 
+# Qt generated files (precompiled)
+*.o
+*.moc
+moc_*.cpp
+moc_*.h
+ui_*.h
+qrc_*.cpp
+
+# Compiled test binaries
+tst_hexdocument
+tst_hexedit
+tst_chunks
+tst_commands
+tst_translationtable
+tst_datas
+
 # Compiled Qt translation files
 *.qm
 
-# Build directories
-/build*
+# Build directories (root and nested)
+build*/
+*/build*/
+test/*/build/
+
+# Build artifacts
 /AppDir/
 
 # Packaged artifacts

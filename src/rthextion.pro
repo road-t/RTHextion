@@ -9,68 +9,93 @@ macx {
     QMAKE_BUNDLE = RTHextion
     QMAKE_INFO_PLIST = Info.plist
     LIBS += -liconv
+    OBJECTIVE_SOURCES += utils/macostheme.mm
+    HEADERS += utils/macostheme.h
 }
 
 # Windows: iconv path is passed via CI qmake arguments (INCLUDEPATH/LIBS)
 # Linux:   iconv is part of glibc — no link flag needed
 
+INCLUDEPATH += \
+    $$PWD \
+    $$PWD/ui \
+    $$PWD/dialogs \
+    $$PWD/dockwidgets \
+    $$PWD/document \
+    $$PWD/utils
+
 HEADERS = \
     appinfo.h \
-    Datas.h \
-    DumpScriptdialog.h \
-    InsertScriptDialog.h \
-    JumpToDialog.h \
-    PointerListModel.h \
-    SemiAutoTableDialog.h \
-    TableEditDialog.h \
-    langtranslator.h \
-    mainwindow.h \
-    optionsdialog.h \
-    qhexedit/qhexedit.h \
-    qhexedit/chunks.h \
-    qhexedit/commands.h \
-    qhexedit/hexscrollmap.h \
-    pointersdialog.h \
-    romdetect.h \
-    searchdialog.h \
-    translationtable.h \
-    encodingdetect.h
-
+    ui/mainwindow.h \
+    utils/langtranslator.h \
+    # hexeditor
+    hexeditor/hexeditor.h \
+    hexeditor/chunks.h \
+    hexeditor/commands.h \
+    hexeditor/hexscrollmap.h \
+    # document
+    document/editorsession.h \
+    document/hexdocument.h \
+    document/translationtable.h \
+    document/PointerListModel.h \
+    document/theme.h \
+    # dialogs
+    dialogs/DumpScriptdialog.h \
+    dialogs/InsertScriptDialog.h \
+    dialogs/JumpToDialog.h \
+    dialogs/optionsdialog.h \
+    dialogs/pointersdialog.h \
+    dialogs/searchdialog.h \
+    dialogs/SemiAutoTableDialog.h \
+    # dockwidgets
+    dockwidgets/TablesDockWidget.h \
+    dockwidgets/PointersDockWidget.h \
+    dockwidgets/ChangesDockWidget.h \
+    # utils
+    utils/Datas.h \
+    utils/encodingdetect.h \
+    utils/romdetect.h
 
 SOURCES = \
-    DumpScriptdialog.cpp \
-    InsertScriptDialog.cpp \
-    JumpToDialog.cpp \
-    PointerListModel.cpp \
-    SemiAutoTableDialog.cpp \
-    TableEditDialog.cpp \
-    langtranslator.cpp \
     main.cpp \
-    mainwindow.cpp \
-    optionsdialog.cpp \
-    qhexedit/qhexedit.cpp \
-    qhexedit/chunks.cpp \
-    qhexedit/commands.cpp \
-    qhexedit/hexscrollmap.cpp \
-    pointersdialog.cpp \
-    searchdialog.cpp \
-    translationtable.cpp
+    ui/mainwindow.cpp \
+    utils/langtranslator.cpp \
+    # hexeditor
+    hexeditor/hexeditor.cpp \
+    hexeditor/chunks.cpp \
+    hexeditor/commands.cpp \
+    hexeditor/hexscrollmap.cpp \
+    # document
+    document/editorsession.cpp \
+    document/hexdocument.cpp \
+    document/translationtable.cpp \
+    document/PointerListModel.cpp \
+    document/theme.cpp \
+    # dialogs
+    dialogs/DumpScriptdialog.cpp \
+    dialogs/InsertScriptDialog.cpp \
+    dialogs/JumpToDialog.cpp \
+    dialogs/optionsdialog.cpp \
+    dialogs/pointersdialog.cpp \
+    dialogs/searchdialog.cpp \
+    dialogs/SemiAutoTableDialog.cpp \
+    # dockwidgets
+    dockwidgets/TablesDockWidget.cpp \
+    dockwidgets/PointersDockWidget.cpp \
+    dockwidgets/ChangesDockWidget.cpp \
+    # utils
+    utils/byteglue.cpp
 
 RESOURCES = \
     rthextion.qrc
 
 FORMS += \
-    DumpScriptdialog.ui \
-    InsertScriptDialog.ui \
-    JumpToDialog.ui \
-    TableEditDialog.ui \
-    optionsdialog.ui \
-    pointersdialog.ui \
-    searchdialog.ui
+    dialogs/DumpScriptdialog.ui \
+    dialogs/InsertScriptDialog.ui \
+    dialogs/JumpToDialog.ui \
+    dialogs/optionsdialog.ui \
+    dialogs/pointersdialog.ui
 
-OTHER_FILES += \
-    qhexedit/qhexedit.sip
-
-DEFINES += QHEXEDIT_EXPORTS
+DEFINES += HEXEDITOR_EXPORTS
 
 DISTFILES +=
