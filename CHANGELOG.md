@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v2.0 beta 2] - 2026-04-05
+
+### Added
+- *'Fill with'* functionality
+- Address area zeros color customization
+
+### Fixed
+- Large file handling performance and memory usage optimizations
+
+### Changed
+- Find/Replace dialog simplified  
+
 ## [v2.0 beta 1] - 2026-03-31
 
 ### Fixed
