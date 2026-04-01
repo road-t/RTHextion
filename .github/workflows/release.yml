@@ -171,7 +171,16 @@ jobs:
           arch: 'win64_msvc2022_64'
           cache: true
 
+      - name: Cache libiconv (vcpkg)
+        uses: actions/cache@v4
+        id: vcpkg-cache
+        with:
+          path: C:/vcpkg/installed/x64-windows-static
+          key: vcpkg-libiconv-x64-windows-static-${{ hashFiles('C:/vcpkg/versions/l-/libiconv.json') }}
+          restore-keys: vcpkg-libiconv-x64-windows-static-
+
       - name: Install libiconv (vcpkg)
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
         run: vcpkg install libiconv:x64-windows-static
         shell: cmd
 
