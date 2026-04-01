@@ -23,9 +23,9 @@ public:
     /// Snapshot of the dialog's editable state (find/replace text, formats, relative flag).
     struct State {
         QString findText;
-        int     findFormat    = 0;
+        int     findFormat    = -1;   // table combo data: -1 = Raw, -2 = Hex, >=0 = table index
         QString replaceText;
-        int     replaceFormat = 0;
+        int     replaceFormat = -1;
         bool    relative      = false;
     };
     State dialogState() const;
@@ -36,9 +36,6 @@ private slots:
     void on_pbFindPrev_clicked();
     void on_pbReplace_clicked();
     void on_pbReplaceAll_clicked();
-
-    void on_cbFindFormat_currentIndexChanged(int index);
-    void on_cbReplaceFormat_currentIndexChanged(int index);
 
     void onFindTableChanged(int index);
     void onReplaceTableChanged(int index);
@@ -62,14 +59,12 @@ private:
     TranslationTable *m_replaceTable = nullptr;
 
     // UI widgets
-    QComboBox *cbFindFormat;
     QComboBox *cbFind;
     QComboBox *cmbFindTable;
     QCheckBox *cbRelative;
     QPushButton *pbFind;
     QPushButton *pbFindPrev;
 
-    QComboBox *cbReplaceFormat;
     QComboBox *cbReplace;
     QComboBox *cmbReplaceTable;
     QPushButton *pbReplace;

@@ -51,9 +51,9 @@ public:
 
     // Per-tab Find/Replace dialog state
     QString searchFindText;
-    int     searchFindFormat    = 0;   // 0 = Text, 1 = Hex
+    int     searchFindFormat    = -1;  // table combo data: -1 = Raw, -2 = Hex, >=0 = table index
     QString searchReplaceText;
-    int     searchReplaceFormat = 0;
+    int     searchReplaceFormat = -1;
     bool    searchRelative      = false;
 
     // Per-tab Find Pointers dialog state (options not covered by ROM profile)

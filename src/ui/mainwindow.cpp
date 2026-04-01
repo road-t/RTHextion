@@ -37,6 +37,7 @@
 
 #include "QtWidgets/qpushbutton.h"
 #include "appinfo.h"
+#include "FillWithDialog.h"
 #include "langtranslator.h"
 #include "mainwindow.h"
 #include "DockTitleBar.h"
@@ -1296,9 +1297,12 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
 
         auto clipActs = addClipboardActions(menu);
 
+        QAction *fillWithAct1 = nullptr;
         if (hasSelection) {
             menu.addSeparator();
             editScriptAct1 = menu.addAction(tr("Edit script..."));
+            if (!isReadOnly)
+                fillWithAct1 = menu.addAction(tr("Fill with..."));
         }
 
         QAction *chosen = menu.exec(globalPos);
@@ -1308,6 +1312,25 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         if (editScriptAct1 && chosen == editScriptAct1)
         {
             dumpScript();
+        }
+        else if (fillWithAct1 && chosen == fillWithAct1)
+        {
+            const qint64 selBegin = hexEdit->getSelectionBegin();
+            const qint64 selLen   = hexEdit->getSelectionEnd() - selBegin;
+            const QVector<TableTab> tables = m_tablesDock ? m_tablesDock->allTables() : QVector<TableTab>();
+            FillWithDialog dlg(selLen, tables, this);
+            if (dlg.exec() == QDialog::Accepted) {
+                const QByteArray unit = dlg.fillByte();
+                const int len = dlg.fillLength();
+                QByteArray fill;
+                fill.reserve(len);
+                for (int i = 0; i < len; i += unit.size())
+                    fill.append(unit.left(qMin(unit.size(), len - i)));
+                fill.truncate(len);
+                hexEdit->replace(selBegin, len, fill);
+                hexEdit->setCursorPosition(2 * (selBegin + len));
+                hexEdit->ensureVisible();
+            }
         }
         else if (addPointerActs.contains(chosen))
         {
@@ -1371,9 +1394,12 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
 
         auto clipActs = addClipboardActions(menu);
 
+        QAction *fillWithAct2 = nullptr;
         if (hasSelection) {
             menu.addSeparator();
             editScriptAct2 = menu.addAction(tr("Edit script..."));
+            if (!isReadOnly)
+                fillWithAct2 = menu.addAction(tr("Fill with..."));
         }
 
         QAction *chosen = menu.exec(globalPos);
@@ -1386,6 +1412,27 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         if (editScriptAct2 && chosen == editScriptAct2)
         {
             dumpScript();
+            return;
+        }
+
+        if (fillWithAct2 && chosen == fillWithAct2)
+        {
+            const qint64 selBegin = hexEdit->getSelectionBegin();
+            const qint64 selLen   = hexEdit->getSelectionEnd() - selBegin;
+            const QVector<TableTab> tables = m_tablesDock ? m_tablesDock->allTables() : QVector<TableTab>();
+            FillWithDialog dlg(selLen, tables, this);
+            if (dlg.exec() == QDialog::Accepted) {
+                const QByteArray unit = dlg.fillByte();
+                const int len = dlg.fillLength();
+                QByteArray fill;
+                fill.reserve(len);
+                for (int i = 0; i < len; i += unit.size())
+                    fill.append(unit.left(qMin(unit.size(), len - i)));
+                fill.truncate(len);
+                hexEdit->replace(selBegin, len, fill);
+                hexEdit->setCursorPosition(2 * (selBegin + len));
+                hexEdit->ensureVisible();
+            }
             return;
         }
 
@@ -1474,9 +1521,12 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
     }
 
     QAction *editScriptAct3 = nullptr;
+    QAction *fillWithAct3 = nullptr;
     if (hasSelection) {
         menu.addSeparator();
         editScriptAct3 = menu.addAction(tr("Edit script..."));
+        if (!isReadOnly)
+            fillWithAct3 = menu.addAction(tr("Fill with..."));
     }
 
     QAction *chosen = menu.exec(globalPos);
@@ -1539,6 +1589,25 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
     else if (editScriptAct3 && chosen == editScriptAct3)
     {
         dumpScript();
+    }
+    else if (fillWithAct3 && chosen == fillWithAct3)
+    {
+        const qint64 selBegin = hexEdit->getSelectionBegin();
+        const qint64 selLen   = hexEdit->getSelectionEnd() - selBegin;
+        const QVector<TableTab> tables = m_tablesDock ? m_tablesDock->allTables() : QVector<TableTab>();
+        FillWithDialog dlg(selLen, tables, this);
+        if (dlg.exec() == QDialog::Accepted) {
+            const QByteArray unit = dlg.fillByte();
+            const int len = dlg.fillLength();
+            QByteArray fill;
+            fill.reserve(len);
+            for (int i = 0; i < len; i += unit.size())
+                fill.append(unit.left(qMin(unit.size(), len - i)));
+            fill.truncate(len);
+            hexEdit->replace(selBegin, len, fill);
+            hexEdit->setCursorPosition(2 * (selBegin + len));
+            hexEdit->ensureVisible();
+        }
     }
     else if (chosen == quickSearchAct)
     {

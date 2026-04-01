@@ -5,7 +5,6 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
-#include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QRegularExpression>
@@ -26,10 +25,6 @@ SearchDialog::SearchDialog(HexEditor *hexEdit, QWidget *parent) :
     auto *gbFind = new QGroupBox(tr("Find"), this);
     auto *findGrid = new QGridLayout(gbFind);
 
-    cbFindFormat = new QComboBox(this);
-    cbFindFormat->addItem(tr("Text"));
-    cbFindFormat->addItem(tr("Hex"));
-
     cbFind = new QComboBox(this);
     cbFind->setEditable(true);
     cbFind->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -41,35 +36,29 @@ SearchDialog::SearchDialog(HexEditor *hexEdit, QWidget *parent) :
     pbFindPrev = new QPushButton(tr("Find prev"), this);
     pbFindPrev->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F3));
 
-    auto *lblFindTable = new QLabel(tr("Table") + ":", this);
     cmbFindTable = new QComboBox(this);
     cmbFindTable->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
     cbRelative = new QCheckBox(tr("Relative search"), this);
 
-    // Row 0: format + input + find next
-    findGrid->addWidget(cbFindFormat, 0, 0);
-    findGrid->addWidget(cbFind, 0, 1, 1, 2);
+    // Row 0: input + find next
+    findGrid->addWidget(cbFind, 0, 0, 1, 3);
     findGrid->addWidget(pbFind, 0, 3);
 
-    // Row 1: table label + combo + find prev
-    findGrid->addWidget(lblFindTable, 1, 0);
-    findGrid->addWidget(cmbFindTable, 1, 1);
-    findGrid->addWidget(cbRelative, 1, 2);
+    // Row 1:  + find prev
+    findGrid->addWidget(cmbFindTable, 1, 0, 1, 3);
     findGrid->addWidget(pbFindPrev, 1, 3);
 
+    // Row 2: relative checkbox
+    findGrid->addWidget(cbRelative, 2, 0, 1, 3);
+
     findGrid->setColumnStretch(1, 1);
-    findGrid->setColumnStretch(2, 0);
 
     mainLayout->addWidget(gbFind);
 
     // ── Replace group ───────────────────────────────
     auto *gbReplace = new QGroupBox(tr("Replace"), this);
     auto *replaceGrid = new QGridLayout(gbReplace);
-
-    cbReplaceFormat = new QComboBox(this);
-    cbReplaceFormat->addItem(tr("Text"));
-    cbReplaceFormat->addItem(tr("Hex"));
 
     cbReplace = new QComboBox(this);
     cbReplace->setEditable(true);
@@ -78,18 +67,15 @@ SearchDialog::SearchDialog(HexEditor *hexEdit, QWidget *parent) :
     pbReplace = new QPushButton(tr("Replace"), this);
     pbReplaceAll = new QPushButton(tr("Replace All"), this);
 
-    auto *lblReplaceTable = new QLabel(tr("Table") + ":", this);
     cmbReplaceTable = new QComboBox(this);
     cmbReplaceTable->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
-    // Row 0: format + input + replace
-    replaceGrid->addWidget(cbReplaceFormat, 0, 0);
-    replaceGrid->addWidget(cbReplace, 0, 1, 1, 2);
+    // Row 0: input + replace
+    replaceGrid->addWidget(cbReplace, 0, 0, 1, 3);
     replaceGrid->addWidget(pbReplace, 0, 3);
 
-    // Row 1: table label + combo + replace all
-    replaceGrid->addWidget(lblReplaceTable, 1, 0);
-    replaceGrid->addWidget(cmbReplaceTable, 1, 1, 1, 2);
+    // Row 1: table combo + replace all
+    replaceGrid->addWidget(cmbReplaceTable, 1, 0, 1, 3);
     replaceGrid->addWidget(pbReplaceAll, 1, 3);
 
     replaceGrid->setColumnStretch(1, 1);
@@ -110,10 +96,6 @@ SearchDialog::SearchDialog(HexEditor *hexEdit, QWidget *parent) :
     connect(pbReplace, &QPushButton::clicked, this, &SearchDialog::on_pbReplace_clicked);
     connect(pbReplaceAll, &QPushButton::clicked, this, &SearchDialog::on_pbReplaceAll_clicked);
     connect(pbCancel, &QPushButton::clicked, this, &QDialog::hide);
-    connect(cbFindFormat, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &SearchDialog::on_cbFindFormat_currentIndexChanged);
-    connect(cbReplaceFormat, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &SearchDialog::on_cbReplaceFormat_currentIndexChanged);
     connect(cmbFindTable, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &SearchDialog::onFindTableChanged);
     connect(cmbReplaceTable, QOverload<int>::of(&QComboBox::currentIndexChanged),
@@ -134,33 +116,44 @@ void SearchDialog::setHexEdit(HexEditor *hexEdit)
 SearchDialog::State SearchDialog::dialogState() const
 {
     return {cbFind->currentText(),
-            cbFindFormat->currentIndex(),
+            cmbFindTable->currentData().toInt(),
             cbReplace->currentText(),
-            cbReplaceFormat->currentIndex(),
+            cmbReplaceTable->currentData().toInt(),
             cbRelative->isChecked()};
 }
 
 void SearchDialog::setDialogState(const State &s)
 {
-    // Always restore text unconditionally so switching to a "fresh" tab
-    // correctly clears any text left by a different tab.
     cbFind->setEditText(s.findText);
     {
-        const QSignalBlocker blk(cbFindFormat);
-        cbFindFormat->setCurrentIndex(s.findFormat);
-        // Apply validator matching the restored format
+        // Select matching table combo item by data value
+        for (int i = 0; i < cmbFindTable->count(); ++i) {
+            if (cmbFindTable->itemData(i).toInt() == s.findFormat) {
+                const QSignalBlocker blk(cmbFindTable);
+                cmbFindTable->setCurrentIndex(i);
+                break;
+            }
+        }
+        // Apply validator matching the restored mode
+        bool isHex = (s.findFormat == -2);
         auto *le = cbFind->lineEdit();
         le->setInputMask("");
-        le->setValidator(s.findFormat ? new QRegularExpressionValidator(
+        le->setValidator(isHex ? new QRegularExpressionValidator(
             QRegularExpression("[0-9A-Fa-f ]*"), le) : nullptr);
     }
     cbReplace->setEditText(s.replaceText);
     {
-        const QSignalBlocker blk(cbReplaceFormat);
-        cbReplaceFormat->setCurrentIndex(s.replaceFormat);
+        for (int i = 0; i < cmbReplaceTable->count(); ++i) {
+            if (cmbReplaceTable->itemData(i).toInt() == s.replaceFormat) {
+                const QSignalBlocker blk(cmbReplaceTable);
+                cmbReplaceTable->setCurrentIndex(i);
+                break;
+            }
+        }
+        bool isHex = (s.replaceFormat == -2);
         auto *le = cbReplace->lineEdit();
         le->setInputMask("");
-        le->setValidator(s.replaceFormat ? new QRegularExpressionValidator(
+        le->setValidator(isHex ? new QRegularExpressionValidator(
             QRegularExpression("[0-9A-Fa-f ]*"), le) : nullptr);
     }
     cbRelative->setChecked(s.relative);
@@ -182,11 +175,12 @@ void SearchDialog::showEvent(QShowEvent *ev)
         combo->blockSignals(true);
         combo->clear();
         combo->addItem(tr("Raw"), -1);
+        combo->addItem(tr("Hex"), -2);
         for (int i = 0; i < m_availableTables.size(); ++i)
             combo->addItem(m_availableTables[i].name, i);
 
         if (m_useTable && m_activeTableIndex >= 0 && m_activeTableIndex < m_availableTables.size())
-            combo->setCurrentIndex(m_activeTableIndex + 1);
+            combo->setCurrentIndex(m_activeTableIndex + 2);
         else
             combo->setCurrentIndex(0);
         combo->blockSignals(false);
@@ -207,16 +201,30 @@ void SearchDialog::showEvent(QShowEvent *ev)
 
 void SearchDialog::onFindTableChanged(int /*index*/)
 {
-    const int idx = cmbFindTable->currentData().toInt();
-    m_findTable = (idx >= 0 && idx < m_availableTables.size())
-                      ? &m_availableTables[idx].table : nullptr;
+    const int data = cmbFindTable->currentData().toInt();
+    m_findTable = (data >= 0 && data < m_availableTables.size())
+                      ? &m_availableTables[data].table : nullptr;
+
+    auto *le = cbFind->lineEdit();
+    le->setInputMask("");
+    le->setValidator(data == -2 ? new QRegularExpressionValidator(
+        QRegularExpression("[0-9A-Fa-f ]*"), le) : nullptr);
+    if (data == -2)
+        cbFind->setEditText(QString());
 }
 
 void SearchDialog::onReplaceTableChanged(int /*index*/)
 {
-    const int idx = cmbReplaceTable->currentData().toInt();
-    m_replaceTable = (idx >= 0 && idx < m_availableTables.size())
-                         ? &m_availableTables[idx].table : nullptr;
+    const int data = cmbReplaceTable->currentData().toInt();
+    m_replaceTable = (data >= 0 && data < m_availableTables.size())
+                         ? &m_availableTables[data].table : nullptr;
+
+    auto *le = cbReplace->lineEdit();
+    le->setInputMask("");
+    le->setValidator(data == -2 ? new QRegularExpressionValidator(
+        QRegularExpression("[0-9A-Fa-f ]*"), le) : nullptr);
+    if (data == -2)
+        cbReplace->setEditText(QString());
 }
 
 qint64 SearchDialog::findNext()
@@ -225,7 +233,8 @@ qint64 SearchDialog::findNext()
         return -1;
 
     qint64 from = _hexEdit->cursorPosition() / 2;
-    _findBa = getContent(cbFindFormat->currentIndex(), cbFind->currentText(), m_findTable);
+    int comboIndex = (cmbFindTable->currentData().toInt() == -2) ? 1 : 0;
+    _findBa = getContent(comboIndex, cbFind->currentText(), m_findTable);
     qint64 idx = -1;
 
     if (_findBa.length() > 0)
@@ -248,7 +257,8 @@ qint64 SearchDialog::findPrevious()
     if (from > 0)
         --from;
 
-    _findBa = getContent(cbFindFormat->currentIndex(), cbFind->currentText(), m_findTable);
+    int comboIndex = (cmbFindTable->currentData().toInt() == -2) ? 1 : 0;
+    _findBa = getContent(comboIndex, cbFind->currentText(), m_findTable);
     if (_findBa.isEmpty())
         return -1;
 
@@ -270,7 +280,8 @@ void SearchDialog::on_pbReplace_clicked()
     int idx = findNext();
     if (idx >= 0)
     {
-        QByteArray replaceBa = getContent(cbReplaceFormat->currentIndex(), cbReplace->currentText(), m_replaceTable);
+        int replaceComboIndex = (cmbReplaceTable->currentData().toInt() == -2) ? 1 : 0;
+        QByteArray replaceBa = getContent(replaceComboIndex, cbReplace->currentText(), m_replaceTable);
         replaceOccurrence(idx, replaceBa);
     }
 }
@@ -285,7 +296,8 @@ void SearchDialog::on_pbReplaceAll_clicked()
         idx = findNext();
         if (idx >= 0)
         {
-            QByteArray replaceBa = getContent(cbReplaceFormat->currentIndex(), cbReplace->currentText(), m_replaceTable);
+            int replaceComboIndex = (cmbReplaceTable->currentData().toInt() == -2) ? 1 : 0;
+            QByteArray replaceBa = getContent(replaceComboIndex, cbReplace->currentText(), m_replaceTable);
             replaceOccurrence(idx, replaceBa);
             replaceCounter += 1;
         }
@@ -347,27 +359,6 @@ qint64 SearchDialog::replaceOccurrence(qint64 idx, const QByteArray &replaceBa)
         _hexEdit->replace(idx, _findBa.length(), replaceBa);
     }
     return QMessageBox::Yes;
-}
-
-void SearchDialog::on_cbFindFormat_currentIndexChanged(int index)
-{
-    auto *le = cbFind->lineEdit();
-    le->setInputMask("");
-    le->setValidator(index ? new QRegularExpressionValidator(
-        QRegularExpression("[0-9A-Fa-f ]*"), le) : nullptr);
-    if (index == 1)  // switching to Hex — clear non-hex text
-        cbFind->setEditText(QString());
-}
-
-
-void SearchDialog::on_cbReplaceFormat_currentIndexChanged(int index)
-{
-    auto *le = cbReplace->lineEdit();
-    le->setInputMask("");
-    le->setValidator(index ? new QRegularExpressionValidator(
-        QRegularExpression("[0-9A-Fa-f ]*"), le) : nullptr);
-    if (index == 1)  // switching to Hex — clear non-hex text
-        cbReplace->setEditText(QString());
 }
 
 void SearchDialog::changeEvent(QEvent *event)

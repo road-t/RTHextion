@@ -46,6 +46,7 @@ HEADERS = \
     dialogs/optionsdialog.h \
     dialogs/pointersdialog.h \
     dialogs/searchdialog.h \
+    dialogs/FillWithDialog.h \
     dialogs/SemiAutoTableDialog.h \
     # dockwidgets
     dockwidgets/TablesDockWidget.h \
@@ -78,6 +79,7 @@ SOURCES = \
     dialogs/optionsdialog.cpp \
     dialogs/pointersdialog.cpp \
     dialogs/searchdialog.cpp \
+    dialogs/FillWithDialog.cpp \
     dialogs/SemiAutoTableDialog.cpp \
     # dockwidgets
     dockwidgets/TablesDockWidget.cpp \
