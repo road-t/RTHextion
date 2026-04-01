@@ -67,7 +67,7 @@ OptionsDialog::OptionsDialog(QWidget *parent) : QDialog(parent), ui(new Ui::Opti
     resize(qMax(width(), 602), 620);
 
     // Connect signals for area enable/disable logic
-    connect(ui->cbAddressArea, QOverload<int>::of(QCheckBox::checkStateChanged()),
+    connect(ui->cbAddressArea, QOverload<int>::of(&QCheckBox::stateChanged),
             this, &OptionsDialog::on_cbAddressArea_stateChanged);
     connect(ui->cbAsciiArea, QOverload<int>::of(&QCheckBox::stateChanged),
             this, &OptionsDialog::on_cbAsciiArea_stateChanged);
@@ -221,6 +221,7 @@ void OptionsDialog::saveCurrentSettings()
     m_originalSettings.highlightingColor = ui->lbHighlightingColor->palette().color(ui->lbHighlightingColor->backgroundRole());
     m_originalSettings.addressAreaColor = ui->lbAddressAreaColor->palette().color(ui->lbAddressAreaColor->backgroundRole());
     m_originalSettings.addressFontColor = ui->lbAddressFontColor->palette().color(ui->lbAddressFontColor->backgroundRole());
+    m_originalSettings.addressZeroByteFontColor = ui->lbAddressZeroByteFontColor->palette().color(ui->lbAddressZeroByteFontColor->backgroundRole());
     m_originalSettings.asciiAreaColor = ui->lbAsciiAreaColor->palette().color(ui->lbAsciiAreaColor->backgroundRole());
     m_originalSettings.asciiFontColor = ui->lbAsciiFontColor->palette().color(ui->lbAsciiFontColor->backgroundRole());
     m_originalSettings.pointedColor = ui->lbPointedColor->palette().color(ui->lbPointedColor->backgroundRole());
@@ -280,6 +281,7 @@ void OptionsDialog::restoreSettings()
     setColor(ui->lbHighlightingColor, m_originalSettings.highlightingColor);
     setColor(ui->lbAddressAreaColor, m_originalSettings.addressAreaColor);
     setColor(ui->lbAddressFontColor, m_originalSettings.addressFontColor);
+    setColor(ui->lbAddressZeroByteFontColor, m_originalSettings.addressZeroByteFontColor);
     setColor(ui->lbAsciiAreaColor, m_originalSettings.asciiAreaColor);
     setColor(ui->lbAsciiFontColor, m_originalSettings.asciiFontColor);
     setColor(ui->lbPointedColor, m_originalSettings.pointedColor);
@@ -388,6 +390,7 @@ void OptionsDialog::readSettings()
     setColor(ui->lbPointerFrameBgColor, settings.value("PointerFrameBgColor", QColor(0x00, 0xFF, 0x00, 0x80)).value<QColor>());
     setColor(ui->lbSelectionColor, settings.value("SelectionColor", this->palette().highlight().color()).value<QColor>());
     setColor(ui->lbAddressFontColor, settings.value("AddressFontColor", QPalette::WindowText).value<QColor>());
+    setColor(ui->lbAddressZeroByteFontColor, settings.value("AddressZeroByteFontColor", settings.value("AddressFontColor", QPalette::WindowText).value<QColor>()).value<QColor>());
     setColor(ui->lbAsciiAreaColor, settings.value("AsciiAreaColor", this->palette().alternateBase().color()).value<QColor>());
     setColor(ui->lbAsciiFontColor, settings.value("AsciiFontColor", QPalette::WindowText).value<QColor>());
     setColor(ui->lbHexFontColor, settings.value("HexFontColor", QPalette::WindowText).value<QColor>());
@@ -456,6 +459,7 @@ void OptionsDialog::writeSettings()
     settings.setValue("PointerFrameBgColor", ui->lbPointerFrameBgColor->palette().color(ui->lbPointerFrameBgColor->backgroundRole()));
     settings.setValue("SelectionColor", ui->lbSelectionColor->palette().color(ui->lbSelectionColor->backgroundRole()));
     settings.setValue("AddressFontColor", ui->lbAddressFontColor->palette().color(ui->lbAddressFontColor->backgroundRole()));
+    settings.setValue("AddressZeroByteFontColor", ui->lbAddressZeroByteFontColor->palette().color(ui->lbAddressZeroByteFontColor->backgroundRole()));
     settings.setValue("AsciiAreaColor", ui->lbAsciiAreaColor->palette().color(ui->lbAsciiAreaColor->backgroundRole()));
     settings.setValue("AsciiFontColor", ui->lbAsciiFontColor->palette().color(ui->lbAsciiFontColor->backgroundRole()));
     settings.setValue("HexFontColor", ui->lbHexFontColor->palette().color(ui->lbHexFontColor->backgroundRole()));
@@ -516,6 +520,17 @@ void OptionsDialog::on_pbAddressFontColor_clicked()
     if (color.isValid())
     {
         setColor(ui->lbAddressFontColor, color);
+        updateSettings();
+    }
+}
+
+void OptionsDialog::on_pbAddressZeroByteFontColor_clicked()
+{
+    QColor color = QColorDialog::getColor(currentSwatchColor(ui->lbAddressZeroByteFontColor), this);
+
+    if (color.isValid())
+    {
+        setColor(ui->lbAddressZeroByteFontColor, color);
         updateSettings();
     }
 }
@@ -771,6 +786,7 @@ void OptionsDialog::updateAreaControls()
     const bool addressEnabled = ui->cbAddressArea->isChecked();
     ui->pbAddressAreaColor->setEnabled(addressEnabled);
     ui->pbAddressFontColor->setEnabled(addressEnabled);
+    ui->pbAddressZeroByteFontColor->setEnabled(addressEnabled);
 
     // Enable/disable ASCII Area controls based on checkbox
     bool asciiEnabled = ui->cbAsciiArea->isChecked();

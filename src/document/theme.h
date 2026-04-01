@@ -24,6 +24,7 @@ struct EditorTheme
     // Address area
     QColor addressAreaColor;
     QColor addressFontColor;
+    QColor addressZeroByteFontColor;
 
     // Hex area
     QColor hexAreaBgColor;

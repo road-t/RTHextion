@@ -353,7 +353,7 @@ bool PointersDialog::validateRangeInputs()
 
     const qint64 begin = parseHexField(ui->leRangeBegin->text(), &beginOk);
     const qint64 end = parseHexField(ui->leRangeEnd->text(), &endOk);
-    const qint64 fileSize = _hexEdit->data().size();
+    const qint64 fileSize = _hexEdit->dataSize();
 
     const bool relationValid = beginOk && endOk && begin >= 0 && end >= 0 && begin <= end && begin <= fileSize && end <= fileSize;
     const bool valid = relationValid;

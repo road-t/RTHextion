@@ -878,6 +878,7 @@ HexEditor::HexEditor(QWidget *parent) : QAbstractScrollArea(parent), _addressAre
     setHexAreaGridColor(QColor(0x99, 0x99, 0x99));
     _cursorCharColor = QColor(0x00, 0x60, 0xFF, 0x80);
     _zeroByteFontColor = QColor(0xCC, 0xCC, 0xCC);
+    _addressZeroByteFontColor = QColor();  // invalid = use addressFontColor
 
     connect(&_cursorTimer, SIGNAL(timeout()), this, SLOT(updateCursor()));
     connect(verticalScrollBar(), SIGNAL(valueChanged(int)), this, SLOT(adjust()));
@@ -1101,6 +1102,17 @@ void HexEditor::setZeroByteFontColor(const QColor &color)
     viewport()->update();
 }
 
+QColor HexEditor::addressZeroByteFontColor()
+{
+    return _addressZeroByteFontColor;
+}
+
+void HexEditor::setAddressZeroByteFontColor(const QColor &color)
+{
+    _addressZeroByteFontColor = color;
+    viewport()->update();
+}
+
 void HexEditor::setAddressOffset(qint64 addressOffset)
 {
     _addressOffset = addressOffset;
@@ -1124,35 +1136,15 @@ void HexEditor::setAddressWidth(int addressWidth)
 
 int HexEditor::addressWidth()
 {
-    auto size = _chunks->size();
-
+    // Compute the minimum number of hex digits needed to represent the largest address
+    qint64 size = _chunks->size();
     int n = 1;
-
-    if (size > Q_INT64_C(0x100000000))
+    while (size >= 0x10)
     {
-        n += 8;
-        size /= Q_INT64_C(0x100000000);
+        size >>= 4;
+        ++n;
     }
-    else if (size > 0x10000)
-    {
-        n += 4;
-        size /= 0x10000;
-    }
-    else if (size > 0x100)
-    {
-        n += 2;
-        size /= 0x100;
-    }
-    else if (size > 0x10)
-    {
-        n += 1;
-    }
-    else if (n > _addressWidth)
-    {
-        return n;
-    }
-
-    return _addressWidth;
+    return qMax(n, _addressWidth);
 }
 
 void HexEditor::setAsciiArea(bool asciiArea)
@@ -1529,7 +1521,20 @@ Datas HexEditor::getValue(qint64 offset)
 {
     Datas value{};
 
-    value.leDword = qFromLittleEndian<quint32_le>(_chunks->data(offset, 4));
+    // Fast path: read from already-buffered visible data to avoid IO
+    const qint64 relOfs = offset - _bPosFirst;
+    if (relOfs >= 0 && relOfs + 4 <= _dataShown.size())
+    {
+        memcpy(&value, _dataShown.constData() + relOfs, 4);
+        return value;
+    }
+
+    // Fall back to chunks (triggers IO only for out-of-view offsets)
+    const QByteArray buf = _chunks->data(offset, 4);
+    if (buf.size() >= 4)
+        memcpy(&value, buf.constData(), 4);
+    else if (!buf.isEmpty())
+        memcpy(&value, buf.constData(), buf.size());
 
     return value;
 }
@@ -1887,6 +1892,11 @@ QByteArray HexEditor::dataAt(qint64 pos, qint64 count)
     return _chunks->data(pos, count);
 }
 
+qint64 HexEditor::dataSize() const
+{
+    return _chunks->size();
+}
+
 bool HexEditor::write(QIODevice &iODevice, qint64 pos, qint64 count)
 {
     return _chunks->write(iODevice, pos, count);
@@ -2014,7 +2024,7 @@ qint64 HexEditor::relativeSearch(const QByteArray &ba, qint64 from)
 
 void HexEditor::jumpTo(qint64 offset, bool relative)
 {
-    auto newPos = qBound(0LL, (relative ? (_cursorPosition / 2) + offset : offset), static_cast<qint64>(data().size()));
+    auto newPos = qBound(0LL, (relative ? (_cursorPosition / 2) + offset : offset), dataSize());
 
     setCursorPosition(newPos * 2);
     resetSelection(_cursorPosition);
@@ -3006,8 +3016,24 @@ void HexEditor::paintEvent(QPaintEvent *event)
                     const qint64 rawAddr = _bPosFirst + row * _bytesPerLine + _addressOffset;
                     const quint64 maskedAddr = static_cast<quint64>(rawAddr) & addrMask;
                     address = QString("%1").arg(maskedAddr, _addrDigits, 16, QChar('0'));
-                    painter.setPen(QPen(_addressFontColor));
-                    painter.drawText(_pxPosAdrX - pxOfsX, pxPosY, hexCaps() ? address.toUpper() : address);
+                    if (_hexCaps) address = address.toUpper();
+
+                    if (_addressZeroByteFontColor.isValid() && _addressZeroByteFontColor != _addressFontColor)
+                    {
+                        int xPx = _pxPosAdrX - pxOfsX;
+                        for (int d = 0; d < address.size(); ++d)
+                        {
+                            const bool isZeroDigit = (address[d] == QLatin1Char('0'));
+                            painter.setPen(QPen(isZeroDigit ? _addressZeroByteFontColor : _addressFontColor));
+                            painter.drawText(xPx, pxPosY, address.mid(d, 1));
+                            xPx += _pxCharWidth;
+                        }
+                    }
+                    else
+                    {
+                        painter.setPen(QPen(_addressFontColor));
+                        painter.drawText(_pxPosAdrX - pxOfsX, pxPosY, address);
+                    }
                 }
 
                 painter.setFont(originalFont);
@@ -3121,7 +3147,7 @@ void HexEditor::paintEvent(QPaintEvent *event)
                     // cursor image for pointed data
                     if (isPointedByte)
                     {
-                        QImage ptrIcon = QImage(":/images/pointer.png");
+                        static const QImage ptrIcon(QStringLiteral(":/images/pointer.png"));
 
                         if (!isSelectedByte && !isHighlightedByte && !isChangedByte)
                             c = _brushPointed.color();
@@ -3741,7 +3767,7 @@ void HexEditor::adjust()
 
     auto value = verticalScrollBar()->value();
 
-    _bPosFirst = value * _bytesPerLine;
+    _bPosFirst = static_cast<qint64>(value) * _bytesPerLine;
     _bPosLast = _bPosFirst + (_rowsShown * _bytesPerLine) - 1;
 
     if (_bPosLast >= _chunks->size())
@@ -3790,8 +3816,22 @@ void HexEditor::dataChangedPrivate(int)
 
 void HexEditor::refresh()
 {
+    // If cursor is within the already-visible range, ensureVisible() won't
+    // change scrollbar values and adjust()/readBuffers() won't be called.
+    // In that case, skip the redundant readBuffers().
+    const qint64 oldFirst = _bPosFirst;
+    const qint64 oldLast  = _bPosLast;
+
     ensureVisible();
-    readBuffers();
+
+    // If ensureVisible changed the scroll position, adjust() was triggered
+    // which already called readBuffers(). Only re-read if nothing changed.
+    if (_bPosFirst == oldFirst && _bPosLast == oldLast)
+    {
+        // Buffers are still valid — no need to re-read from IO.
+        // Just schedule a repaint.
+        viewport()->update();
+    }
 }
 
 uint32_t HexEditor::computeAsciiAreaMaxWidthForBytesPerLine(int bytesPerLine)

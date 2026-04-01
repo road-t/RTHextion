@@ -69,6 +69,11 @@ QByteArray Chunks::data(qint64 pos, qint64 maxSize, QByteArray *highlighted)
         if ((pos + maxSize) > _size)
             maxSize = _size - pos;
 
+    // Pre-allocate buffer to avoid repeated reallocations
+    buffer.reserve(static_cast<int>(qMin(maxSize, qint64(INT_MAX))));
+    if (highlighted)
+        highlighted->reserve(static_cast<int>(qMin(maxSize, qint64(INT_MAX))));
+
     _ioDevice->open(QIODevice::ReadOnly);
 
     while (maxSize > 0)
@@ -83,29 +88,30 @@ QByteArray Chunks::data(qint64 pos, qint64 maxSize, QByteArray *highlighted)
             // counter to justify the read pointer to the original data, if
             // data in between was deleted or inserted.
 
-            chunk = _chunks[chunkIdx];
-            if (chunk.absPos > pos)
+            const Chunk &chunkRef = _chunks[chunkIdx];
+            chunk.absPos = chunkRef.absPos;
+            if (chunkRef.absPos > pos)
                 chunksLoopOngoing = false;
             else
             {
-                chunkIdx += 1;
                 qint64 count;
-                qint64 chunkOfs = pos - chunk.absPos;
-                if (maxSize > ((qint64)chunk.data.size() - chunkOfs))
+                qint64 chunkOfs = pos - chunkRef.absPos;
+                if (maxSize > ((qint64)chunkRef.data.size() - chunkOfs))
                 {
-                    count = (qint64)chunk.data.size() - chunkOfs;
-                    ioDelta += CHUNK_SIZE - chunk.data.size();
+                    count = (qint64)chunkRef.data.size() - chunkOfs;
+                    ioDelta += CHUNK_SIZE - chunkRef.data.size();
                 }
                 else
                     count = maxSize;
                 if (count > 0)
                 {
-                    buffer += chunk.data.mid(chunkOfs, (int)count);
+                    buffer += chunkRef.data.mid(chunkOfs, (int)count);
                     maxSize -= count;
                     pos += count;
                     if (highlighted)
-                        *highlighted += chunk.dataChanged.mid(chunkOfs, (int)count);
+                        *highlighted += chunkRef.dataChanged.mid(chunkOfs, (int)count);
                 }
+                chunkIdx += 1;
             }
         }
 
@@ -298,23 +304,19 @@ qint64 Chunks::size()
 
 int Chunks::getChunkIndex(qint64 absPos)
 {
-    // This routine checks, if there is already a copied chunk available. If os, it
-    // returns a reference to it. If there is no copied chunk available, original
-    // data will be copied into a new chunk.
+    // Fast path: binary search for an existing chunk that contains absPos.
+    int foundIdx = findChunkIdx(absPos);
+    if (foundIdx >= 0)
+        return foundIdx;
 
-    int foundIdx = -1;
+    // Chunk not found — we need to load it from the IODevice.
+    // Walk linearly to compute insertIdx and ioDelta.
     int insertIdx = 0;
     qint64 ioDelta = 0;
 
-
-    for (int idx=0; idx < _chunks.size(); idx++)
+    for (int idx = 0; idx < _chunks.size(); idx++)
     {
-        Chunk chunk = _chunks[idx];
-        if ((absPos >= chunk.absPos) && (absPos < (chunk.absPos + chunk.data.size())))
-        {
-            foundIdx = idx;
-            break;
-        }
+        const Chunk &chunk = _chunks[idx];
         if (absPos < chunk.absPos)
         {
             insertIdx = idx;
@@ -324,23 +326,66 @@ int Chunks::getChunkIndex(qint64 absPos)
         insertIdx = idx + 1;
     }
 
-    if (foundIdx == -1)
+    Chunk newChunk;
+    qint64 readAbsPos = absPos - ioDelta;
+    qint64 readPos = (readAbsPos & READ_CHUNK_MASK);
+    _ioDevice->open(QIODevice::ReadOnly);
+    _ioDevice->seek(readPos);
+    newChunk.data = _ioDevice->read(CHUNK_SIZE);
+    _ioDevice->close();
+    newChunk.absPos = absPos - (readAbsPos - readPos);
+    newChunk.originalData = newChunk.data;
+    newChunk.dataChanged = QByteArray(newChunk.data.size(), char(0));
+    newChunk.hasOriginal = QByteArray(newChunk.data.size(), char(1));
+    _chunks.insert(insertIdx, newChunk);
+
+    evictCleanChunks();
+
+    return insertIdx;
+}
+
+int Chunks::findChunkIdx(qint64 absPos) const
+{
+    // Binary search: _chunks is sorted by absPos.
+    int lo = 0, hi = _chunks.size() - 1;
+    while (lo <= hi)
     {
-        Chunk newChunk;
-        qint64 readAbsPos = absPos - ioDelta;
-        qint64 readPos = (readAbsPos & READ_CHUNK_MASK);
-        _ioDevice->open(QIODevice::ReadOnly);
-        _ioDevice->seek(readPos);
-        newChunk.data = _ioDevice->read(CHUNK_SIZE);
-        _ioDevice->close();
-        newChunk.absPos = absPos - (readAbsPos - readPos);
-        newChunk.originalData = newChunk.data;
-        newChunk.dataChanged = QByteArray(newChunk.data.size(), char(0));
-        newChunk.hasOriginal = QByteArray(newChunk.data.size(), char(1));
-        _chunks.insert(insertIdx, newChunk);
-        foundIdx = insertIdx;
+        int mid = lo + (hi - lo) / 2;
+        const Chunk &c = _chunks[mid];
+        if (absPos < c.absPos)
+            hi = mid - 1;
+        else if (absPos >= c.absPos + c.data.size())
+            lo = mid + 1;
+        else
+            return mid; // found: absPos is within this chunk
     }
-    return foundIdx;
+    return -1;
+}
+
+void Chunks::evictCleanChunks()
+{
+    // Remove unmodified chunks when we exceed the limit.
+    // Evict from the front (oldest loaded) to keep recently accessed chunks.
+    if (_chunks.size() <= MAX_CACHED_CHUNKS)
+        return;
+
+    int toEvict = _chunks.size() - MAX_CACHED_CHUNKS;
+    int idx = 0;
+    while (toEvict > 0 && idx < _chunks.size())
+    {
+        // Only evict chunks with no modifications and standard size (not inserted/deleted)
+        const Chunk &c = _chunks[idx];
+        if (c.data.size() == CHUNK_SIZE
+            && c.dataChanged == QByteArray(CHUNK_SIZE, char(0)))
+        {
+            _chunks.removeAt(idx);
+            --toEvict;
+        }
+        else
+        {
+            ++idx;
+        }
+    }
 }
 
 

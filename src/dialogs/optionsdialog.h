@@ -39,6 +39,7 @@ private slots:
     void on_pbHighlightingColor_clicked();
     void on_pbAddressAreaColor_clicked();
     void on_pbAddressFontColor_clicked();
+    void on_pbAddressZeroByteFontColor_clicked();
     void on_pbAsciiAreaColor_clicked();
     void on_pbAsciiFontColor_clicked();
     void on_pbHexFontColor_clicked();
@@ -128,6 +129,7 @@ private:
         QColor highlightingColor;
         QColor addressAreaColor;
         QColor addressFontColor;
+        QColor addressZeroByteFontColor;
         QColor asciiAreaColor;
         QColor asciiFontColor;
         QColor pointedColor;

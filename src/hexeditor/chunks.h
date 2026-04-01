@@ -62,11 +62,15 @@ public:
 
 private:
     int getChunkIndex(qint64 absPos);
+    int findChunkIdx(qint64 absPos) const;  // binary search, returns index or -1
+    void evictCleanChunks();                // evict unmodified chunks when over limit
 
     QIODevice * _ioDevice;
     qint64 _pos;
     qint64 _size;
     QList<Chunk> _chunks;
+
+    static const int MAX_CACHED_CHUNKS = 512;  // ~2 MB of unmodified chunks max
 
 #ifdef MODUL_TEST
 public:

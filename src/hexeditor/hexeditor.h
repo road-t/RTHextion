@@ -89,6 +89,9 @@ class HEXEDITOR_API HexEditor : public QAbstractScrollArea
     */
     Q_PROPERTY(QColor addressFontColor READ addressFontColor WRITE setAddressFontColor)
 
+    /*! Color used to render zero digits in the address area. */
+    Q_PROPERTY(QColor addressZeroByteFontColor READ addressZeroByteFontColor WRITE setAddressZeroByteFontColor)
+
     /*! Property ascii area color sets (setAsciiAreaColor()) the backgorund
     color of ascii areas. You can also read the color (asciiAreaColor()).
     */
@@ -232,6 +235,10 @@ public:
     delivering \param count bytes.
     */
     QByteArray dataAt(qint64 pos, qint64 count=-1);
+
+    /*! Returns the total size of the data without loading it all into memory.
+    */
+    qint64 dataSize() const;
 
     /*! Gives back the data into a \param iODevice starting at position \param pos
     and delivering \param count bytes.
@@ -425,6 +432,9 @@ public:
 
     QColor zeroByteFontColor();
     void setZeroByteFontColor(const QColor &color);
+
+    QColor addressZeroByteFontColor();
+    void setAddressZeroByteFontColor(const QColor &color);
 
     QColor multibyteFrameColor();
     void setMultibyteFrameColor(const QColor &color);
@@ -631,6 +641,7 @@ private:
     QColor _addressAreaColor;
     QColor _asciiAreaColor;
     QColor _addressFontColor;
+    QColor _addressZeroByteFontColor;
     QColor _asciiFontColor;
     QColor _hexFontColor;
     QColor _hexAreaBackgroundColor;

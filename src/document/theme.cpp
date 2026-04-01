@@ -68,6 +68,7 @@ EditorTheme EditorTheme::defaultLight()
     t.cursorFrameColor = QColor(Qt::black);
     t.addressAreaColor = QColor(240, 240, 240);
     t.addressFontColor = QColor(Qt::black);
+    t.addressZeroByteFontColor = QColor(Qt::black);
     t.hexAreaBgColor = QColor(Qt::white);
     t.hexFontColor = QColor(Qt::black);
     t.zeroByteFontColor = QColor(0xCC, 0xCC, 0xCC);
@@ -101,6 +102,7 @@ EditorTheme EditorTheme::defaultDark()
     t.cursorFrameColor = QColor(0xAA, 0xAA, 0xAA);
     t.addressAreaColor = QColor(45, 45, 45);
     t.addressFontColor = QColor(0xCC, 0xCC, 0xCC);
+    t.addressZeroByteFontColor = QColor(0xCC, 0xCC, 0xCC);
     t.hexAreaBgColor = QColor(35, 35, 35);
     t.hexFontColor = QColor(0xDD, 0xDD, 0xDD);
     t.zeroByteFontColor = QColor(0x55, 0x55, 0x55);
@@ -142,6 +144,7 @@ QJsonObject EditorTheme::toJson() const
     c[QStringLiteral("cursorFrameColor")] = colorToJson(cursorFrameColor);
     c[QStringLiteral("addressAreaColor")] = colorToJson(addressAreaColor);
     c[QStringLiteral("addressFontColor")] = colorToJson(addressFontColor);
+    c[QStringLiteral("addressZeroByteFontColor")] = colorToJson(addressZeroByteFontColor);
     c[QStringLiteral("hexAreaBgColor")] = colorToJson(hexAreaBgColor);
     c[QStringLiteral("hexFontColor")] = colorToJson(hexFontColor);
     c[QStringLiteral("zeroByteFontColor")] = colorToJson(zeroByteFontColor);
@@ -179,6 +182,7 @@ EditorTheme EditorTheme::fromJson(const QJsonObject &o)
     t.cursorFrameColor = colorFromJson(c.value(QStringLiteral("cursorFrameColor")), def.cursorFrameColor);
     t.addressAreaColor = colorFromJson(c.value(QStringLiteral("addressAreaColor")), def.addressAreaColor);
     t.addressFontColor = colorFromJson(c.value(QStringLiteral("addressFontColor")), def.addressFontColor);
+    t.addressZeroByteFontColor = colorFromJson(c.value(QStringLiteral("addressZeroByteFontColor")), def.addressZeroByteFontColor);
     t.hexAreaBgColor = colorFromJson(c.value(QStringLiteral("hexAreaBgColor")), def.hexAreaBgColor);
     t.hexFontColor = colorFromJson(c.value(QStringLiteral("hexFontColor")), def.hexFontColor);
     t.zeroByteFontColor = colorFromJson(c.value(QStringLiteral("zeroByteFontColor")), def.zeroByteFontColor);
@@ -216,6 +220,7 @@ void EditorTheme::applyToSettings() const
     s.setValue(QStringLiteral("CursorFrameColor"), cursorFrameColor);
     s.setValue(QStringLiteral("AddressAreaColor"), addressAreaColor);
     s.setValue(QStringLiteral("AddressFontColor"), addressFontColor);
+    s.setValue(QStringLiteral("AddressZeroByteFontColor"), addressZeroByteFontColor);
     s.setValue(QStringLiteral("HexAreaBackgroundColor"), hexAreaBgColor);
     s.setValue(QStringLiteral("HexFontColor"), hexFontColor);
     s.setValue(QStringLiteral("ZeroByteFontColor"), zeroByteFontColor);
@@ -251,6 +256,7 @@ EditorTheme EditorTheme::fromCurrentSettings()
     t.cursorFrameColor = s.value(QStringLiteral("CursorFrameColor"), def.cursorFrameColor).value<QColor>();
     t.addressAreaColor = s.value(QStringLiteral("AddressAreaColor"), def.addressAreaColor).value<QColor>();
     t.addressFontColor = s.value(QStringLiteral("AddressFontColor"), def.addressFontColor).value<QColor>();
+    t.addressZeroByteFontColor = s.value(QStringLiteral("AddressZeroByteFontColor"), def.addressZeroByteFontColor).value<QColor>();
     t.hexAreaBgColor = s.value(QStringLiteral("HexAreaBackgroundColor"), def.hexAreaBgColor).value<QColor>();
     t.hexFontColor = s.value(QStringLiteral("HexFontColor"), def.hexFontColor).value<QColor>();
     t.zeroByteFontColor = s.value(QStringLiteral("ZeroByteFontColor"), def.zeroByteFontColor).value<QColor>();
