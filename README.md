@@ -1,6 +1,6 @@
 # RTHextion v2.0 - Retrogames Translation Hex Editor
 
-A hex editor for retrogames translation and ROMHacking, a tribute to 00's Translhextion16c by Januschan. 
+A hex editor for retrogames translation and ROMHacking, a tribute to 00's Translhextion by Januschan. 
 
 ## Features
 - Translation projects support:
