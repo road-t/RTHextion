@@ -47,6 +47,7 @@ Cannot write file %1:\n%2.=Impossible d'écrire le fichier %1 :\n%2.
 Cannot write project file to %1=Impossible d'écrire le fichier de projet vers %1
 Changes=Modifications
 Changes map background=Arrière-plan de la carte des modifications
+Character=Caractère
 Clean all=Effacer tout
 Clear=Effacer
 Clear all data and changes?=Effacer toutes les données et modifications ?

@@ -47,6 +47,7 @@ Cannot write file %1:\n%2.=Não é possível gravar o arquivo %1:\n%2.
 Cannot write project file to %1=Não é possível gravar o arquivo de projeto em %1
 Changes=Alterações
 Changes map background=Fundo do mapa de alterações
+Character=Caractere
 Clean all=Limpe tudo
 Clear=Claro
 Clear all data and changes?=Clear all data and changes?
@@ -388,7 +389,7 @@ Split by character:=Dividido por caractere:
 Split by pointers=Dividir por ponteiros
 Status bar=Barra de status
 Stop=Parar
-Stop character=Parar caractere
+Stop character=Caractere de parada
 Switch encoding back to the default when a file is closed=Alterar o encoding para o padrão ao fechar o arquivoTry to detect text encoding for unknown file types=Tentar detectar encoding de texto para tipos de arquivo desconhecidosTable=Tabela
 Table=Tabela
 Table 1=Tabela 1

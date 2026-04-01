@@ -47,6 +47,7 @@ Cannot write file %1:\n%2.=无法写入文件 %1：\n%2。
 Cannot write project file to %1=无法将项目文件写入 %1
 Changes=更改
 Changes map background=更改映射背景
+Character=字符
 Clean all=全部清洁
 Clear=清除
 Clear all data and changes?=清除所有数据和更改?
