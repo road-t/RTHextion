@@ -3020,11 +3020,16 @@ void HexEditor::paintEvent(QPaintEvent *event)
 
                     if (_addressZeroByteFontColor.isValid() && _addressZeroByteFontColor != _addressFontColor)
                     {
+                        // Find first non-zero digit to limit coloring to leading zeros only
+                        int firstNonZero = 0;
+                        while (firstNonZero < address.size() - 1 && address[firstNonZero] == QLatin1Char('0'))
+                            ++firstNonZero;
+
                         int xPx = _pxPosAdrX - pxOfsX;
                         for (int d = 0; d < address.size(); ++d)
                         {
-                            const bool isZeroDigit = (address[d] == QLatin1Char('0'));
-                            painter.setPen(QPen(isZeroDigit ? _addressZeroByteFontColor : _addressFontColor));
+                            const bool isLeadingZero = (d < firstNonZero);
+                            painter.setPen(QPen(isLeadingZero ? _addressZeroByteFontColor : _addressFontColor));
                             painter.drawText(xPx, pxPosY, address.mid(d, 1));
                             xPx += _pxCharWidth;
                         }
