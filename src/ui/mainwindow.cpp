@@ -421,7 +421,7 @@ void MainWindow::about()
 
     // Build translated body parts separately to avoid huge translation strings
     QString versionLine = QStringLiteral("%1 v%2").arg(AppInfo::Name).arg(AppInfo::Version);
-    QString descriptionLine = tr("This is a hex editor for retro game translation/ROM hacking.\nA tribute to Translhextion16c editor made by Januschan in early 00's.");
+    QString descriptionLine = tr("This is a hex editor for retro game translation/ROM hacking.\nA tribute to Translhextion editor made by Januschan in early 00's.");
     QString copyrightLine = tr("Ilya 'Road Tripper' Annikov © 2021-2026. All rights reserved.");
     QString githubLine = QStringLiteral("GitHub: https://github.com/road-t/RTHextion");
 
@@ -474,29 +474,38 @@ void MainWindow::onHexDataChangedAt(qint64 offset)
     if (m_closing || !m_document)
         return;
 
-    const QByteArray currentData = hexEdit->data();
+    const qint64 newSize = hexEdit->dataSize();
+
     if (m_changeTrackingSnapshot.isNull()) {
-        m_changeTrackingSnapshot = currentData;
+        if (newSize <= 256 * 1024 * 1024)
+            m_changeTrackingSnapshot = hexEdit->data();
+        else
+            m_changeTrackingSnapshot = QByteArray("");
         return;
     }
 
     const qint64 oldSize = m_changeTrackingSnapshot.size();
-    const qint64 newSize = currentData.size();
 
     if (oldSize == newSize && offset >= 0 && offset < newSize) {
+        // Same size: only a single overwrite. Read just the changed byte(s)
+        // from the already-buffered visible data or chunks (not the whole file).
         const char oldByte = m_changeTrackingSnapshot.at(static_cast<int>(offset));
-        const char newByte = currentData.at(static_cast<int>(offset));
+        const QByteArray oneByte = hexEdit->dataAt(offset, 1);
+        const char newByte = oneByte.isEmpty() ? oldByte : oneByte.at(0);
         if (oldByte != newByte) {
             applyIncrementalOriginalByteChange(m_document->originalBytes, offset, oldByte, newByte);
             m_changeTrackingSnapshot[static_cast<int>(offset)] = newByte;
         }
         // A macro (e.g. multi-byte overwrite from script insert) fires
-        // dataChangedAt only once with the last byte's offset.  Detect by
-        // checking whether snapshot and current still disagree elsewhere.
-        if (memcmp(m_changeTrackingSnapshot.constData(), currentData.constData(), newSize) != 0) {
-            for (qint64 i = 0; i < newSize; ++i) {
+        // dataChangedAt only once with the last byte's offset.  Detect nearby
+        // bytes that may also have changed (scan a small window, not the whole file).
+        {
+            const qint64 scanStart = qMax<qint64>(0, offset - 64);
+            const qint64 scanEnd = qMin(newSize, offset + 65);
+            const QByteArray region = hexEdit->dataAt(scanStart, scanEnd - scanStart);
+            for (qint64 i = scanStart; i < scanEnd && (i - scanStart) < region.size(); ++i) {
                 const char ob = m_changeTrackingSnapshot.at(static_cast<int>(i));
-                const char nb = currentData.at(static_cast<int>(i));
+                const char nb = region.at(static_cast<int>(i - scanStart));
                 if (ob != nb) {
                     applyIncrementalOriginalByteChange(m_document->originalBytes, i, ob, nb);
                     m_changeTrackingSnapshot[static_cast<int>(i)] = nb;
@@ -509,7 +518,10 @@ void MainWindow::onHexDataChangedAt(qint64 offset)
         const qint64 delta = newSize - oldSize;
         if (delta != 0 && offset >= 0 && !m_document->originalBytes.isEmpty())
             adjustOriginalBytesForSizeChange(m_document->originalBytes, offset, delta);
-        m_changeTrackingSnapshot = currentData;
+        if (newSize <= 256 * 1024 * 1024)
+            m_changeTrackingSnapshot = hexEdit->data();
+        else
+            m_changeTrackingSnapshot = QByteArray("");
     }
 
     if (m_changesUiUpdateTimer)
@@ -623,7 +635,10 @@ void MainWindow::revert()
             m_currentSession->file.setFileName(curFile);
             if (hexEdit->setData(m_currentSession->file))
             {
-                m_changeTrackingSnapshot = hexEdit->data();
+                if (hexEdit->dataSize() <= 256 * 1024 * 1024)
+                    m_changeTrackingSnapshot = hexEdit->data();
+                else
+                    m_changeTrackingSnapshot = QByteArray("");
                 resetNavigationHistory();
                 statusBar()->showMessage(tr("File reverted"), 2000);
             }
@@ -924,7 +939,7 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
 {
     PointerListModel *model = hexEdit->pointers();
     const qint64 pointerStart = hexEdit->pointerStartAt(bytePos, currentPointerSize());
-    const qint64 fileSize = hexEdit->data().size();
+    const qint64 fileSize = hexEdit->dataSize();
 
     const bool hasSelection  = hexEdit->getSelectionEnd() - hexEdit->getSelectionBegin() > 1;
     const bool isOverwrite   = hexEdit->overwriteMode();
@@ -1591,7 +1606,7 @@ void MainWindow::goToFileBeginning()
 
 void MainWindow::goToFileEnd()
 {
-    hexEdit->jumpTo(hexEdit->data().size());
+    hexEdit->jumpTo(hexEdit->dataSize());
 }
 
 bool MainWindow::loadTable()
@@ -2537,7 +2552,7 @@ void MainWindow::restoreSession(EditorSession *session)
     // Sync status bar with restored session
     if (hexEdit) {
         setAddress(hexEdit->getCurrentOffset());
-        setSize(hexEdit->data().size());
+        setSize(hexEdit->dataSize());
         setSelection(hexEdit->getSelectionBegin(), hexEdit->getSelectionEnd());
         setOverwriteMode(hexEdit->overwriteMode());
         updateValuePanels();
@@ -2847,7 +2862,7 @@ void MainWindow::createActions()
             else
             {
                 const qint64 pos = hexEdit->cursorPosition() / 2;
-                ba = ba.left(static_cast<int>(std::min<qint64>(ba.size(), hexEdit->data().size() - pos)));
+                ba = ba.left(static_cast<int>(std::min<qint64>(ba.size(), hexEdit->dataSize() - pos)));
                 hexEdit->replace(pos, ba.size(), ba);
                 hexEdit->setCursorPosition(2 * (pos + ba.size()));
             }
@@ -3564,7 +3579,7 @@ void MainWindow::createStatusBar()
     lbSize->setMinimumWidth(70);
     statusBar()->addPermanentWidget(lbSize);
     if (hexEdit)
-        setSize(hexEdit->data().size());
+        setSize(hexEdit->dataSize());
 
     // Overwrite Mode Label
     lbOverwriteMode = new QPushButton();
@@ -4333,7 +4348,13 @@ void MainWindow::loadFile(const QString &fileName)
         return;
     }
 
-    m_changeTrackingSnapshot = hexEdit->data();
+    // For files up to ~256MB, keep full snapshot for incremental change tracking.
+    // For larger files, skip the snapshot to avoid doubling RAM usage.
+    static const qint64 kSnapshotSizeLimit = 256 * 1024 * 1024;
+    if (hexEdit->dataSize() <= kSnapshotSizeLimit)
+        m_changeTrackingSnapshot = hexEdit->data();
+    else
+        m_changeTrackingSnapshot = QByteArray(""); // non-null empty → change tracking disabled for large files
     hexEdit->setShowOriginal(false);
     if (m_changesDock)
         m_changesDock->setShowOriginalChecked(false);
@@ -4450,7 +4471,7 @@ void MainWindow::loadFile(const QString &fileName)
         const QVariant savedPos = settings.value(key);
         settings.endGroup();
         if (savedPos.isValid()) {
-            const qint64 fileSize = hexEdit->data().size();
+            const qint64 fileSize = hexEdit->dataSize();
             const qint64 bytePos = qBound(0LL, savedPos.toLongLong(), fileSize > 0 ? fileSize - 1 : 0LL);
             if (bytePos > 0) {
                 hexEdit->setCursorPosition(bytePos * 2);
@@ -4492,6 +4513,7 @@ void MainWindow::readSettings()
     hexEdit->setSelectionColor(settings.value("SelectionColor", palette().highlight().color()).value<QColor>());
     hexEdit->setFont(settings.value("WidgetFont", QFont("Courier New", 14)).value<QFont>());
     hexEdit->setAddressFontColor(settings.value("AddressFontColor", palette().color(QPalette::WindowText)).value<QColor>());
+    hexEdit->setAddressZeroByteFontColor(settings.value("AddressZeroByteFontColor", settings.value("AddressFontColor", palette().color(QPalette::WindowText)).value<QColor>()).value<QColor>());
     hexEdit->setAsciiAreaColor(settings.value("AsciiAreaColor", palette().alternateBase().color()).value<QColor>());
     hexEdit->setAsciiFontColor(settings.value("AsciiFontColor", palette().color(QPalette::WindowText)).value<QColor>());
     hexEdit->setHexFontColor(settings.value("HexFontColor", palette().color(QPalette::WindowText)).value<QColor>());
@@ -4700,9 +4722,9 @@ void MainWindow::updateNavigationActions()
     if (toolbarLastPositionAct)
         toolbarLastPositionAct->setEnabled(hasNext);
     if (toFileBeginningAct)
-        toFileBeginningAct->setEnabled(hexEdit && hexEdit->data().size() > 0);
+        toFileBeginningAct->setEnabled(hexEdit && hexEdit->dataSize() > 0);
     if (toFileEndAct)
-        toFileEndAct->setEnabled(hexEdit && hexEdit->data().size() > 0);
+        toFileEndAct->setEnabled(hexEdit && hexEdit->dataSize() > 0);
 }
 
 void MainWindow::toggleDarkTheme(bool enabled)
@@ -4781,6 +4803,7 @@ void MainWindow::updateHexEditorSettings()
         editor->setSelectionColor(settings.value("SelectionColor").value<QColor>());
         editor->setFont(settings.value("WidgetFont").value<QFont>());
         editor->setAddressFontColor(settings.value("AddressFontColor").value<QColor>());
+        editor->setAddressZeroByteFontColor(settings.value("AddressZeroByteFontColor", settings.value("AddressFontColor").value<QColor>()).value<QColor>());
         editor->setAsciiAreaColor(settings.value("AsciiAreaColor").value<QColor>());
         editor->setAsciiFontColor(settings.value("AsciiFontColor").value<QColor>());
         editor->setHexFontColor(settings.value("HexFontColor").value<QColor>());
