@@ -3948,6 +3948,18 @@ void HexEditor::clearLineBreaks()
     }
 }
 
+void HexEditor::clearLineBreaksInRange(qint64 from, qint64 to)
+{
+    auto lo = std::lower_bound(_lineBreaks.begin(), _lineBreaks.end(), from);
+    auto hi = std::upper_bound(lo, _lineBreaks.end(), to);
+    if (lo == hi)
+        return;
+    _lineBreaks.erase(lo, hi);
+    adjust();
+    viewport()->update();
+    emit lineBreaksChanged();
+}
+
 qint64 HexEditor::totalVisualRows() const
 {
     const qint64 fileSize = _chunks->size();

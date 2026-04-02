@@ -354,6 +354,7 @@ public:
     void removeLineBreak(qint64 offset);
     void toggleLineBreak(qint64 offset);
     void clearLineBreaks();
+    void clearLineBreaksInRange(qint64 from, qint64 to);
     // Direct (non-undoable) variants used internally by undo commands
     void addLineBreakDirect(qint64 offset);
     void removeLineBreakDirect(qint64 offset);

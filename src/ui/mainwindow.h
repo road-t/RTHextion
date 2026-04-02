@@ -74,6 +74,8 @@ private slots:
     void setSize(qint64 size);
     void showOptionsDialog();
     void showSearchDialog();
+    void showVirtualFormatDialog(qint64 rangeFrom = -1, qint64 rangeTo = -1);
+    void removeVirtualFormatting(qint64 rangeFrom = -1, qint64 rangeTo = -1);
     void showPointersDialog();
     void pointersUpdated();
     void hexEditContextMenu(const QPoint &globalPos, qint64 bytePos);
@@ -153,6 +155,7 @@ private:
     void retranslateUi();
     bool maybeSave();
     bool maybeSaveProject();
+    bool hasProjectData() const;
     void updateWindowTitle();
     void updateActionStates();
     void readSettings();
@@ -313,6 +316,8 @@ private:
 
     QAction *findAct;
     QAction *findNextAct;
+    QAction *virtualFormatAct = nullptr;
+    QAction *removeVirtualFormattingAct = nullptr;
     QAction *gotoAct;
     QAction *previousPositionAct = nullptr;
     QAction *nextPositionAct = nullptr;

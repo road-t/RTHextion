@@ -38,6 +38,7 @@
 #include "QtWidgets/qpushbutton.h"
 #include "appinfo.h"
 #include "FillWithDialog.h"
+#include "VirtualFormatDialog.h"
 #include "langtranslator.h"
 #include "mainwindow.h"
 #include "DockTitleBar.h"
@@ -662,7 +663,7 @@ void MainWindow::optionsAccepted()
 void MainWindow::pointersUpdated()
 {
     showPointersAct->setEnabled(!hexEdit->pointers()->empty());
-    if (m_document && !m_document->projectFilePath.isEmpty())
+    if (m_document)
         m_projectModified = true;
 }
 
@@ -694,9 +695,15 @@ bool MainWindow::save()
     else
         ok = saveFile(curFile);
 
-    // Also save project if one is open and named
-    if (ok && m_document && !m_document->projectFilePath.isEmpty())
-        saveProjectImpl(m_document->projectFilePath);
+    if (ok && m_document) {
+        if (!m_document->projectFilePath.isEmpty()) {
+            // Project already has a file — save it
+            saveProjectImpl(m_document->projectFilePath);
+        } else if (m_projectModified && hasProjectData()) {
+            // Project data exists but no project file yet — prompt Save As
+            saveProjectAs();
+        }
+    }
 
     return ok;
 }
@@ -906,6 +913,81 @@ void MainWindow::showSearchDialog()
     }
 
     searchDialog->show();
+}
+
+void MainWindow::showVirtualFormatDialog(qint64 rangeFrom, qint64 rangeTo)
+{
+    if (!hexEdit) return;
+
+    const QVector<TableTab> tables = m_tablesDock ? m_tablesDock->allTables() : QVector<TableTab>();
+    VirtualFormatDialog dlg(tables, this);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+
+    const QByteArray needle = dlg.character();
+    const int lines = dlg.lines();
+    const bool ignoreRepeated = dlg.ignoreRepeated();
+    if (needle.isEmpty() || lines <= 0)
+        return;
+
+    // Determine search range
+    const qint64 searchFrom = (rangeFrom >= 0) ? rangeFrom : 0;
+    const qint64 searchTo   = (rangeTo >= 0)   ? rangeTo   : hexEdit->dataSize();
+
+    // Collect line break offsets
+    QVector<qint64> newBreaks = hexEdit->lineBreaks();
+    qint64 from = searchFrom;
+    while (from < searchTo) {
+        qint64 pos = hexEdit->indexOf(needle, from);
+        if (pos < 0 || pos + needle.size() > searchTo)
+            break;
+
+        qint64 breakOffset = pos + needle.size() - 1;
+
+        if (ignoreRepeated) {
+            // Skip consecutive repeats of the needle — advance to the last one
+            while (true) {
+                qint64 nextPos = hexEdit->indexOf(needle, pos + needle.size());
+                if (nextPos == pos + needle.size() && nextPos + needle.size() <= searchTo) {
+                    pos = nextPos;
+                    breakOffset = pos + needle.size() - 1;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        for (int i = 0; i < lines; ++i)
+            newBreaks.append(breakOffset);
+        from = pos + needle.size();
+    }
+
+    hexEdit->setLineBreaks(newBreaks);
+}
+
+void MainWindow::removeVirtualFormatting(qint64 rangeFrom, qint64 rangeTo)
+{
+    if (!hexEdit) return;
+    if (hexEdit->lineBreaks().isEmpty()) return;
+
+    const bool hasRange = (rangeFrom >= 0 && rangeTo >= 0);
+
+    // Use addButton(tr(...)) so button labels go through LangTranslator regardless
+    // of whether the platform shows a native sheet (e.g. macOS NSAlert).
+    QMessageBox box(QMessageBox::Question, QString(),
+                    tr("Remove all virtual line breaks?"),
+                    QMessageBox::NoButton, this);
+    QPushButton *yesBtn = box.addButton(tr("Yes"), QMessageBox::YesRole);
+    box.addButton(tr("Cancel"), QMessageBox::RejectRole);
+    box.exec();
+
+    if (box.clickedButton() != yesBtn)
+        return;
+
+    if (hasRange)
+        hexEdit->clearLineBreaksInRange(rangeFrom, rangeTo);
+    else
+        hexEdit->clearLineBreaks();
 }
 
 void MainWindow::showPointersDialog()
@@ -1298,11 +1380,15 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         auto clipActs = addClipboardActions(menu);
 
         QAction *fillWithAct1 = nullptr;
+        QAction *vfFormatAct1 = nullptr;
+        QAction *vfRemoveAct1 = nullptr;
         if (hasSelection) {
             menu.addSeparator();
             editScriptAct1 = menu.addAction(tr("Edit script..."));
             if (!isReadOnly)
                 fillWithAct1 = menu.addAction(tr("Fill with..."));
+            vfFormatAct1 = menu.addAction(tr("Virtually format") + "...");
+            vfRemoveAct1 = menu.addAction(tr("Remove virtual formatting"));
         }
 
         QAction *chosen = menu.exec(globalPos);
@@ -1331,6 +1417,14 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
                 hexEdit->setCursorPosition(2 * (selBegin + len));
                 hexEdit->ensureVisible();
             }
+        }
+        else if (vfFormatAct1 && chosen == vfFormatAct1)
+        {
+            showVirtualFormatDialog(hexEdit->getSelectionBegin(), hexEdit->getSelectionEnd());
+        }
+        else if (vfRemoveAct1 && chosen == vfRemoveAct1)
+        {
+            removeVirtualFormatting(hexEdit->getSelectionBegin(), hexEdit->getSelectionEnd());
         }
         else if (addPointerActs.contains(chosen))
         {
@@ -1395,11 +1489,15 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         auto clipActs = addClipboardActions(menu);
 
         QAction *fillWithAct2 = nullptr;
+        QAction *vfFormatAct2 = nullptr;
+        QAction *vfRemoveAct2 = nullptr;
         if (hasSelection) {
             menu.addSeparator();
             editScriptAct2 = menu.addAction(tr("Edit script..."));
             if (!isReadOnly)
                 fillWithAct2 = menu.addAction(tr("Fill with..."));
+            vfFormatAct2 = menu.addAction(tr("Virtually format") + "...");
+            vfRemoveAct2 = menu.addAction(tr("Remove virtual formatting"));
         }
 
         QAction *chosen = menu.exec(globalPos);
@@ -1433,6 +1531,18 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
                 hexEdit->setCursorPosition(2 * (selBegin + len));
                 hexEdit->ensureVisible();
             }
+            return;
+        }
+
+        if (vfFormatAct2 && chosen == vfFormatAct2)
+        {
+            showVirtualFormatDialog(hexEdit->getSelectionBegin(), hexEdit->getSelectionEnd());
+            return;
+        }
+
+        if (vfRemoveAct2 && chosen == vfRemoveAct2)
+        {
+            removeVirtualFormatting(hexEdit->getSelectionBegin(), hexEdit->getSelectionEnd());
             return;
         }
 
@@ -1522,11 +1632,15 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
 
     QAction *editScriptAct3 = nullptr;
     QAction *fillWithAct3 = nullptr;
+    QAction *vfFormatAct3 = nullptr;
+    QAction *vfRemoveAct3 = nullptr;
     if (hasSelection) {
         menu.addSeparator();
         editScriptAct3 = menu.addAction(tr("Edit script..."));
         if (!isReadOnly)
             fillWithAct3 = menu.addAction(tr("Fill with..."));
+        vfFormatAct3 = menu.addAction(tr("Virtually format") + "...");
+        vfRemoveAct3 = menu.addAction(tr("Remove virtual formatting"));
     }
 
     QAction *chosen = menu.exec(globalPos);
@@ -1608,6 +1722,14 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
             hexEdit->setCursorPosition(2 * (selBegin + len));
             hexEdit->ensureVisible();
         }
+    }
+    else if (vfFormatAct3 && chosen == vfFormatAct3)
+    {
+        showVirtualFormatDialog(hexEdit->getSelectionBegin(), hexEdit->getSelectionEnd());
+    }
+    else if (vfRemoveAct3 && chosen == vfRemoveAct3)
+    {
+        removeVirtualFormatting(hexEdit->getSelectionBegin(), hexEdit->getSelectionEnd());
     }
     else if (chosen == quickSearchAct)
     {
@@ -1707,7 +1829,7 @@ bool MainWindow::loadTable()
         rememberDirectory(kLastTableDirKey, fileName);
         tableFilePath = fileName;
         addToRecentTables(fileName);
-        if (m_document && !m_document->projectFilePath.isEmpty())
+        if (m_document)
             m_projectModified = true;
         statusBar()->showMessage(tr("Table loaded"), 2000);
     }
@@ -1919,6 +2041,8 @@ void MainWindow::retranslateUi()
     findAct->setStatusTip(tr("Show the dialog for finding and replacing"));
     findNextAct->setText(tr("Find next"));
     findNextAct->setStatusTip(tr("Find next occurrence of the searched pattern"));
+    virtualFormatAct->setText(tr("Virtually format") + QString("..."));
+    removeVirtualFormattingAct->setText(tr("Remove virtual formatting"));
     gotoAct->setText(tr("Jump to offset") + QString("..."));
     gotoAct->setStatusTip(tr("Go to specified offset"));
     previousPositionAct->setText(tr("Previous position"));
@@ -2124,7 +2248,7 @@ void MainWindow::onDockTableContentChanged()
     hexEdit->viewport()->update();
     hexEdit->update();
 
-    if (!m_restoringTableDockState && m_document && !m_document->projectFilePath.isEmpty())
+    if (!m_restoringTableDockState && m_document)
         m_projectModified = true;
 
     if (pointersDialog)
@@ -2465,6 +2589,8 @@ void MainWindow::connectEditorSignals(HexEditor *editor)
         m_projectModified = true;
         if (m_currentSession)
             m_currentSession->projectModified = true;
+        if (removeVirtualFormattingAct)
+            removeVirtualFormattingAct->setEnabled(hexEdit && !hexEdit->lineBreaks().isEmpty());
         updateTabTitle(m_tabWidget->currentIndex());
     });
 }
@@ -3045,6 +3171,13 @@ void MainWindow::createActions()
     findNextAct->setStatusTip(tr("Find next occurrence of the searched pattern"));
     connect(findNextAct, SIGNAL(triggered()), this, SLOT(findNext()));
 
+    virtualFormatAct = new QAction(tr("Virtually format") + "...", this);
+    connect(virtualFormatAct, &QAction::triggered, this, [this]() { showVirtualFormatDialog(); });
+
+    removeVirtualFormattingAct = new QAction(tr("Remove virtual formatting"), this);
+    removeVirtualFormattingAct->setEnabled(false);
+    connect(removeVirtualFormattingAct, &QAction::triggered, this, [this]() { removeVirtualFormatting(); });
+
     gotoAct = new QAction(tr("Jump to offset") + QString("..."), this);
     gotoAct->setShortcut(QKeySequence::FindNext); // ctrl/cmd + G
     gotoAct->setStatusTip(tr("Go to specified offset"));
@@ -3424,6 +3557,9 @@ void MainWindow::createMenus()
     editMenu->addSeparator();
     editMenu->addAction(findAct);
     editMenu->addAction(findNextAct);
+    editMenu->addSeparator();
+    editMenu->addAction(virtualFormatAct);
+    editMenu->addAction(removeVirtualFormattingAct);
 
     changesMenu = menuBar()->addMenu(tr("Changes"));
     changesMenu->addAction(showChangesAct);
@@ -5031,8 +5167,24 @@ void MainWindow::setCurrentFile(const QString &fileName)
 
 bool MainWindow::maybeSaveProject()
 {
-    if (!m_document || m_document->projectFilePath.isEmpty() || !m_projectModified)
+    if (!m_document || !m_projectModified)
         return true;
+
+    // Project data exists but has never been saved to a project file
+    if (m_document->projectFilePath.isEmpty()) {
+        if (!hasProjectData())
+            return true;
+
+        QMessageBox::StandardButton result = QMessageBox::warning(
+            this,
+            QString::fromLatin1(AppInfo::Name),
+            tr("The project has unsaved changes.\nDo you want to save the project?"),
+            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+
+        if (result == QMessageBox::Save)
+            return saveProjectAs();
+        return result != QMessageBox::Cancel;
+    }
 
     QMessageBox::StandardButton result = QMessageBox::warning(
         this,
@@ -5044,6 +5196,19 @@ bool MainWindow::maybeSaveProject()
         return saveProjectImpl(m_document->projectFilePath);
 
     return result != QMessageBox::Cancel;
+}
+
+bool MainWindow::hasProjectData() const
+{
+    if (!hexEdit)
+        return false;
+    if (m_tablesDock && m_tablesDock->count() > 0)
+        return true;
+    if (hexEdit->pointers() && !hexEdit->pointers()->empty())
+        return true;
+    if (!hexEdit->lineBreaks().isEmpty())
+        return true;
+    return false;
 }
 
 bool MainWindow::maybeSave()
@@ -5076,6 +5241,9 @@ void MainWindow::updateActionStates()
     // Save Project is only enabled after the project has been given a path
     if (saveProjectAct)
         saveProjectAct->setEnabled(m_document && !m_document->projectFilePath.isEmpty());
+
+    if (removeVirtualFormattingAct)
+        removeVirtualFormattingAct->setEnabled(hexEdit && !hexEdit->lineBreaks().isEmpty());
 
     // Create IPS patch only when project has tracked original bytes
     if (createIpsPatchAct)
