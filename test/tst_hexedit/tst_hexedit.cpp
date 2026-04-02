@@ -604,6 +604,269 @@ private slots:
         QByteArray reEncoded = editor.encodeTextForCurrentEncoding(decoded);
         QCOMPARE(reEncoded, bytes);
     }
+
+    // ---- Line breaks: basic API ----
+
+    void lineBreaksEmptyByDefault()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(64, 'A'));
+        QVERIFY(editor.lineBreaks().isEmpty());
+    }
+
+    void setLineBreaksSingle()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(64, 'A'));
+        QVector<qint64> breaks = {10};
+        editor.setLineBreaks(breaks);
+        QCOMPARE(editor.lineBreaks().size(), 1);
+        QCOMPARE(editor.lineBreaks().at(0), qint64(10));
+    }
+
+    void setLineBreaksMultiple()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(64, 'A'));
+        QVector<qint64> breaks = {5, 20, 15, 10};
+        editor.setLineBreaks(breaks);
+        // setLineBreaks sorts the vector
+        QCOMPARE(editor.lineBreaks().size(), 4);
+        QCOMPARE(editor.lineBreaks().at(0), qint64(5));
+        QCOMPARE(editor.lineBreaks().at(1), qint64(10));
+        QCOMPARE(editor.lineBreaks().at(2), qint64(15));
+        QCOMPARE(editor.lineBreaks().at(3), qint64(20));
+    }
+
+    void setLineBreaksOverwritesPrevious()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(64, 'A'));
+        editor.setLineBreaks({5, 10});
+        QCOMPARE(editor.lineBreaks().size(), 2);
+
+        editor.setLineBreaks({30});
+        QCOMPARE(editor.lineBreaks().size(), 1);
+        QCOMPARE(editor.lineBreaks().at(0), qint64(30));
+    }
+
+    void addLineBreakDirectInsertsInOrder()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(64, 'A'));
+        editor.addLineBreakDirect(20);
+        editor.addLineBreakDirect(5);
+        editor.addLineBreakDirect(15);
+        QCOMPARE(editor.lineBreaks().size(), 3);
+        QCOMPARE(editor.lineBreaks().at(0), qint64(5));
+        QCOMPARE(editor.lineBreaks().at(1), qint64(15));
+        QCOMPARE(editor.lineBreaks().at(2), qint64(20));
+    }
+
+    void removeLineBreakDirectRemovesExisting()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(64, 'A'));
+        editor.setLineBreaks({5, 10, 20});
+        editor.removeLineBreakDirect(10);
+        QCOMPARE(editor.lineBreaks().size(), 2);
+        QCOMPARE(editor.lineBreaks().at(0), qint64(5));
+        QCOMPARE(editor.lineBreaks().at(1), qint64(20));
+    }
+
+    void removeLineBreakDirectNonExistentIsNoOp()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(64, 'A'));
+        editor.setLineBreaks({5, 10, 20});
+        editor.removeLineBreakDirect(15);  // not present
+        QCOMPARE(editor.lineBreaks().size(), 3);
+    }
+
+    void toggleLineBreakAddsAndRemoves()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(64, 'A'));
+        // Toggle on
+        editor.toggleLineBreak(10);
+        QCOMPARE(editor.lineBreaks().size(), 1);
+        QCOMPARE(editor.lineBreaks().at(0), qint64(10));
+        // Toggle off
+        editor.toggleLineBreak(10);
+        QVERIFY(editor.lineBreaks().isEmpty());
+    }
+
+    // ---- Line breaks: clearLineBreaks ----
+
+    void clearLineBreaksRemovesAll()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(64, 'A'));
+        editor.setLineBreaks({5, 10, 20, 30, 50});
+        QCOMPARE(editor.lineBreaks().size(), 5);
+        editor.clearLineBreaks();
+        QVERIFY(editor.lineBreaks().isEmpty());
+    }
+
+    void clearLineBreaksOnEmptyIsNoOp()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(64, 'A'));
+        QSignalSpy spy(&editor, &HexEditor::lineBreaksChanged);
+        editor.clearLineBreaks();
+        // Should not emit signal when already empty
+        QCOMPARE(spy.count(), 0);
+    }
+
+    // ---- Line breaks: clearLineBreaksInRange ----
+
+    void clearLineBreaksInRangeMiddle()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(64, 'A'));
+        editor.setLineBreaks({5, 10, 15, 20, 30, 50});
+        editor.clearLineBreaksInRange(10, 30);
+        // Should remove 10, 15, 20, 30 — keeps 5 and 50
+        QCOMPARE(editor.lineBreaks().size(), 2);
+        QCOMPARE(editor.lineBreaks().at(0), qint64(5));
+        QCOMPARE(editor.lineBreaks().at(1), qint64(50));
+    }
+
+    void clearLineBreaksInRangeAll()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(64, 'A'));
+        editor.setLineBreaks({5, 10, 20});
+        editor.clearLineBreaksInRange(0, 63);
+        QVERIFY(editor.lineBreaks().isEmpty());
+    }
+
+    void clearLineBreaksInRangeNoneInRange()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(64, 'A'));
+        editor.setLineBreaks({5, 10, 50});
+        QSignalSpy spy(&editor, &HexEditor::lineBreaksChanged);
+        editor.clearLineBreaksInRange(20, 40);
+        // No breaks in [20,40], so nothing removed, no signal
+        QCOMPARE(editor.lineBreaks().size(), 3);
+        QCOMPARE(spy.count(), 0);
+    }
+
+    void clearLineBreaksInRangeExactBoundary()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(64, 'A'));
+        editor.setLineBreaks({10, 20, 30});
+        // Range exactly [10, 10] should remove only offset 10
+        editor.clearLineBreaksInRange(10, 10);
+        QCOMPARE(editor.lineBreaks().size(), 2);
+        QCOMPARE(editor.lineBreaks().at(0), qint64(20));
+        QCOMPARE(editor.lineBreaks().at(1), qint64(30));
+    }
+
+    void clearLineBreaksInRangeEdgesOnly()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(64, 'A'));
+        editor.setLineBreaks({0, 63});
+        editor.clearLineBreaksInRange(0, 0);
+        QCOMPARE(editor.lineBreaks().size(), 1);
+        QCOMPARE(editor.lineBreaks().at(0), qint64(63));
+    }
+
+    // ---- Line breaks: signals ----
+
+    void setLineBreaksEmitsSignal()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(64, 'A'));
+        QSignalSpy spy(&editor, &HexEditor::lineBreaksChanged);
+        editor.setLineBreaks({10, 20});
+        QCOMPARE(spy.count(), 1);
+    }
+
+    void addLineBreakDirectEmitsSignal()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(64, 'A'));
+        QSignalSpy spy(&editor, &HexEditor::lineBreaksChanged);
+        editor.addLineBreakDirect(10);
+        QCOMPARE(spy.count(), 1);
+    }
+
+    void clearLineBreaksEmitsSignal()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(64, 'A'));
+        editor.setLineBreaks({10});
+        QSignalSpy spy(&editor, &HexEditor::lineBreaksChanged);
+        editor.clearLineBreaks();
+        QCOMPARE(spy.count(), 1);
+    }
+
+    void clearLineBreaksInRangeEmitsSignal()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(64, 'A'));
+        editor.setLineBreaks({10, 20, 30});
+        QSignalSpy spy(&editor, &HexEditor::lineBreaksChanged);
+        editor.clearLineBreaksInRange(15, 25);
+        QCOMPARE(spy.count(), 1);
+    }
+
+    void toggleLineBreakEmitsSignal()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(64, 'A'));
+        QSignalSpy spy(&editor, &HexEditor::lineBreaksChanged);
+        editor.toggleLineBreak(10);
+        QCOMPARE(spy.count(), 1);
+        editor.toggleLineBreak(10);
+        QCOMPARE(spy.count(), 2);
+    }
+
+    // ---- Line breaks: duplicate offsets ----
+
+    void setLineBreaksAllowsDuplicates()
+    {
+        // Multiple breaks at same offset = multiple empty rows
+        HexEditor editor;
+        editor.setData(QByteArray(64, 'A'));
+        QVector<qint64> breaks = {10, 10, 10};
+        editor.setLineBreaks(breaks);
+        QCOMPARE(editor.lineBreaks().size(), 3);
+    }
+
+    // ---- Line breaks: undo-based addLineBreak / removeLineBreak ----
+
+    void addLineBreakUndoable()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(64, 'A'));
+        editor.addLineBreak(10);
+        QCOMPARE(editor.lineBreaks().size(), 1);
+        QCOMPARE(editor.lineBreaks().at(0), qint64(10));
+    }
+
+    void removeLineBreakUndoable()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(64, 'A'));
+        editor.addLineBreak(10);
+        QCOMPARE(editor.lineBreaks().size(), 1);
+        editor.removeLineBreak(10);
+        QVERIFY(editor.lineBreaks().isEmpty());
+    }
+
+    void removeLineBreakUndoableNonExistentIsNoOp()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(64, 'A'));
+        editor.addLineBreak(10);
+        editor.removeLineBreak(20);  // not present
+        QCOMPARE(editor.lineBreaks().size(), 1);
+    }
 };
 
 QTEST_MAIN(TstHexEdit)
