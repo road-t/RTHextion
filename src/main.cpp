@@ -2,6 +2,7 @@
 #include <QCommandLineParser>
 #include <QIcon>
 #include <QLocale>
+#include <QScreen>
 #include <QSettings>
 #include <QFile>
 #include <QStringList>
@@ -173,7 +174,21 @@ int main(int argc, char *argv[])
         mainWin->loadFile(parser.positionalArguments().at(0));
     }
 
-    QTimer::singleShot(0, mainWin, &QWidget::show);
+    const bool firstLaunch = !settings.contains(QStringLiteral("WindowGeometry"));
+    if (firstLaunch) {
+#ifdef Q_OS_WIN
+        QTimer::singleShot(0, mainWin, &QWidget::showMaximized);
+#else
+        QTimer::singleShot(0, mainWin, [mainWin]() {
+            if (QScreen *screen = QApplication::primaryScreen()) {
+                mainWin->setGeometry(screen->availableGeometry());
+            }
+            mainWin->show();
+        });
+#endif
+    } else {
+        QTimer::singleShot(0, mainWin, &QWidget::show);
+    }
 
     return app.exec();
 }

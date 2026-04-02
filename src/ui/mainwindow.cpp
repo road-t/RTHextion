@@ -2461,6 +2461,12 @@ void MainWindow::connectEditorSignals(HexEditor *editor)
     connect(editor, SIGNAL(selectionChanged(qint64, qint64)), this, SLOT(setSelection(qint64, qint64)));
     connect(editor, SIGNAL(currentAddressChanged(qint64)), this, SLOT(setAddress(qint64)));
     connect(editor, SIGNAL(currentSizeChanged(qint64)), this, SLOT(setSize(qint64)));
+    connect(editor, &HexEditor::lineBreaksChanged, this, [this]() {
+        m_projectModified = true;
+        if (m_currentSession)
+            m_currentSession->projectModified = true;
+        updateTabTitle(m_tabWidget->currentIndex());
+    });
 }
 
 void MainWindow::disconnectEditorSignals(HexEditor *editor)
@@ -2472,6 +2478,7 @@ void MainWindow::disconnectEditorSignals(HexEditor *editor)
     disconnect(editor, SIGNAL(selectionChanged(qint64, qint64)), this, SLOT(setSelection(qint64, qint64)));
     disconnect(editor, SIGNAL(currentAddressChanged(qint64)), this, SLOT(setAddress(qint64)));
     disconnect(editor, SIGNAL(currentSizeChanged(qint64)), this, SLOT(setSize(qint64)));
+    disconnect(editor, &HexEditor::lineBreaksChanged, this, nullptr);
 }
 
 void MainWindow::saveCurrentSession()
@@ -2594,6 +2601,7 @@ void MainWindow::restoreSession(EditorSession *session)
     }
 
     // Sync UI with restored session
+    setWindowModified(hexEdit ? hexEdit->isModified() : false);
     updateWindowTitle();
     updateActionStates();
     updateNavigationActions();
@@ -2642,7 +2650,7 @@ void MainWindow::updateTabTitle(int index)
         title = tr("New file");
     else
         title = QFileInfo(s->curFile).fileName();
-    if (s->editor && s->editor->isModified())
+    if ((s->editor && s->editor->isModified()) || s->projectModified)
         title += QStringLiteral(" *");
     m_tabWidget->setTabText(index, title);
     m_tabWidget->setTabToolTip(index, s->curFile);
@@ -4136,7 +4144,16 @@ void MainWindow::openProjectFile(const QString &path)
     if (!m_restoringProjectUi)
         pointersUpdated();
 
-    // 6. Cursor position
+    // 6. Alignment (virtual line breaks) — block signal to avoid marking project modified on load
+    {
+        const QSignalBlocker blocker(hexEdit);
+        if (!doc.alignmentOffsets.isEmpty())
+            hexEdit->setLineBreaks(doc.alignmentOffsets);
+        else
+            hexEdit->clearLineBreaks();
+    }
+
+    // 7. Cursor position
     if (doc.cursorPosition > 0) {
         hexEdit->setCursorPosition(doc.cursorPosition);
         hexEdit->ensureVisible();
@@ -4247,6 +4264,7 @@ bool MainWindow::saveProjectImpl(const QString &path)
     m_document->dockLayoutState = saveState();
     m_document->tablesColumnsState = m_tablesDock ? m_tablesDock->saveColumnsState() : QByteArray();
     m_document->cursorPosition = hexEdit->cursorPosition();
+    m_document->alignmentOffsets = hexEdit->lineBreaks();
 
     // Recompute tracked diffs byte-by-byte.
     // If project already has an original baseline (e.g. loaded via "Load original"),
@@ -4363,8 +4381,11 @@ bool MainWindow::saveProjectImpl(const QString &path)
     }
     addToRecentProjects(path);
     m_projectModified = false;
+    if (m_currentSession)
+        m_currentSession->projectModified = false;
     updateWindowTitle();
     updateActionStates();
+    updateTabTitle(m_tabWidget->currentIndex());
 
     statusBar()->showMessage(tr("Project saved"), 2000);
     return true;
@@ -4553,10 +4574,9 @@ void MainWindow::loadFile(const QString &fileName)
 void MainWindow::readSettings()
 {
     QSettings settings;
-    QPoint pos = settings.value("pos", QPoint(200, 200)).toPoint();
-    QSize size = settings.value("size", QSize(610, 460)).toSize();
-    move(pos);
-    resize(size);
+    const QByteArray geom = settings.value("WindowGeometry").toByteArray();
+    if (!geom.isEmpty())
+        restoreGeometry(geom);
 
     const bool darkTheme = settings.value("DarkTheme", false).toBool();
     if (showDarkThemeAct)
@@ -4582,7 +4602,7 @@ void MainWindow::readSettings()
     hexEdit->setSelectionColor(settings.value("SelectionColor", palette().highlight().color()).value<QColor>());
     hexEdit->setFont(settings.value("WidgetFont", QFont("Courier New", 14)).value<QFont>());
     hexEdit->setAddressFontColor(settings.value("AddressFontColor", palette().color(QPalette::WindowText)).value<QColor>());
-    hexEdit->setAddressZeroByteFontColor(settings.value("AddressZeroByteFontColor", settings.value("AddressFontColor", palette().color(QPalette::WindowText)).value<QColor>()).value<QColor>());
+    hexEdit->setAddressZeroByteFontColor(settings.value("AddressZeroByteFontColor", QColor(0xCC, 0xCC, 0xCC)).value<QColor>());
     hexEdit->setAsciiAreaColor(settings.value("AsciiAreaColor", palette().alternateBase().color()).value<QColor>());
     hexEdit->setAsciiFontColor(settings.value("AsciiFontColor", palette().color(QPalette::WindowText)).value<QColor>());
     hexEdit->setHexFontColor(settings.value("HexFontColor", palette().color(QPalette::WindowText)).value<QColor>());
@@ -5102,8 +5122,7 @@ void MainWindow::writeSettings()
     QSettings settings;
 
     // Save window geometry
-    settings.setValue("pos", pos());
-    settings.setValue("size", size());
+    settings.setValue("WindowGeometry", saveGeometry());
     settings.setValue(kMainWindowStateKey, saveState());
 
     // Save dock column states

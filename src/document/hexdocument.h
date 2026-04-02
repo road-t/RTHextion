@@ -78,6 +78,9 @@ public:
     /// Used by updateChangedBytesHighlight() to place changedRange correctly.
     qint64 originalFileSize = -1;
 
+    // --- Alignment (virtual line breaks) ---
+    QVector<qint64> alignmentOffsets;       // sorted byte offsets for visual line breaks
+
     // --- Project file ---
     QString projectFilePath;                // path to the .rthp file (empty = unsaved)
     QString projectName;                    // human-readable project name (from title: key)

@@ -347,6 +347,17 @@ public:
     */
     QString toReadableString();
 
+    // ---- Virtual line breaks (alignment) ----
+    QVector<qint64> lineBreaks() const;
+    void setLineBreaks(const QVector<qint64> &breaks);
+    void addLineBreak(qint64 offset);
+    void removeLineBreak(qint64 offset);
+    void toggleLineBreak(qint64 offset);
+    void clearLineBreaks();
+    // Direct (non-undoable) variants used internally by undo commands
+    void addLineBreakDirect(qint64 offset);
+    void removeLineBreakDirect(qint64 offset);
+
 
 public slots:
     /*! Redoes the last operation. If there is no operation to redo, i.e.
@@ -384,6 +395,9 @@ signals:
 
     /*! The signal is emitted when redo availability changes. */
     void redoAvailable(bool available);
+
+    /*! The signal is emitted when virtual line breaks are added, removed, or cleared. */
+    void lineBreaksChanged();
 
     /*! The signal is emitted when the right mouse button is pressed and the
         context menu should be shown. The point is in global screen coordinates.
@@ -605,6 +619,14 @@ private:
     void ensureTableDisplayCache();
     void restoreTopVisibleByte(qint64 topByte);
 
+    // Virtual line break helpers
+    qint64 totalVisualRows() const;
+    qint64 byteOffsetForVisualRow(qint64 visualRow) const;
+    qint64 visualRowForByte(qint64 bytePos) const;
+    qint64 firstByteOfVisualRowContaining(qint64 bytePos) const;
+    int    bytesOnVisualRowAt(qint64 byteOffset) const;
+    int    visibleRowForByte(qint64 bytePos) const;  // row index in _visualRowStartBytes
+
 private slots:
     void adjust();                              // recalc pixel positions
     void dataChangedPrivate(int idx=0);         // emit dataChanged() signal
@@ -735,6 +757,11 @@ private:
     QSet<qint64> _changedPositions;                 // byte positions with project-level changes
     qint64 _changedRangeStart = -1;
     qint64 _changedRangeEnd = -1;
+
+    // Virtual line breaks
+    QVector<qint64> _lineBreaks;                    // sorted byte offsets: row ends after this byte
+    QVector<qint64> _visualRowStartBytes;           // precomputed absolute byte offsets for visible rows
+    int _lineBreakCmdCount = 0;                     // # of line-break undo commands at or below current undo index
     /*! \endcond docNever */
 };
 

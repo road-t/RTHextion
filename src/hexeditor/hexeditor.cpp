@@ -849,6 +849,34 @@ namespace
 
         return state;
     }
+
+    static const int kLineBreakCmdId = 5678;
+
+    class LineBreakAddCommand : public QUndoCommand
+    {
+    public:
+        LineBreakAddCommand(HexEditor *editor, qint64 offset, QUndoCommand *parent = nullptr)
+            : QUndoCommand(parent), _editor(editor), _offset(offset) {}
+        int id() const override { return kLineBreakCmdId; }
+        void redo() override { _editor->addLineBreakDirect(_offset); }
+        void undo() override { _editor->removeLineBreakDirect(_offset); }
+    private:
+        HexEditor *_editor;
+        qint64 _offset;
+    };
+
+    class LineBreakRemoveCommand : public QUndoCommand
+    {
+    public:
+        LineBreakRemoveCommand(HexEditor *editor, qint64 offset, QUndoCommand *parent = nullptr)
+            : QUndoCommand(parent), _editor(editor), _offset(offset) {}
+        int id() const override { return kLineBreakCmdId; }
+        void redo() override { _editor->removeLineBreakDirect(_offset); }
+        void undo() override { _editor->addLineBreakDirect(_offset); }
+    private:
+        HexEditor *_editor;
+        qint64 _offset;
+    };
 }
 
 // ********************************************************************** Constructor, destructor
@@ -878,7 +906,7 @@ HexEditor::HexEditor(QWidget *parent) : QAbstractScrollArea(parent), _addressAre
     setHexAreaGridColor(QColor(0x99, 0x99, 0x99));
     _cursorCharColor = QColor(0x00, 0x60, 0xFF, 0x80);
     _zeroByteFontColor = QColor(0xCC, 0xCC, 0xCC);
-    _addressZeroByteFontColor = QColor();  // invalid = use addressFontColor
+    _addressZeroByteFontColor = QColor(0xCC, 0xCC, 0xCC);  // same default as _zeroByteFontColor
 
     connect(&_cursorTimer, SIGNAL(timeout()), this, SLOT(updateCursor()));
     connect(verticalScrollBar(), SIGNAL(valueChanged(int)), this, SLOT(adjust()));
@@ -1196,17 +1224,28 @@ void HexEditor::setCursorPosition(qint64 position)
 
     // 2. Calc new position of cursor
     _bPosCurrent = position / 2;
-    auto line = ((_bPosCurrent - _bPosFirst) / _bytesPerLine + 1);
+
+    // Absolute visual row of the cursor (whole-file row number)
+    const qint64 absVisRow = visualRowForByte(_bPosCurrent);
+    // Absolute first byte of the cursor's visual row (for byteInLine / column)
+    const qint64 absRowStart = byteOffsetForVisualRow(absVisRow);
+    int byteInLine = static_cast<int>(_bPosCurrent - absRowStart);
+
+    // Screen row = absVisRow minus the top visible row (may be negative or >= _rowsShown)
+    const qint64 topRow = static_cast<qint64>(verticalScrollBar()->value());
+    int visRow = static_cast<int>(absVisRow - topRow);
+    auto line = visRow + 1;
     const int rowStridePx = _pxCharHeight + kHexRowExtraGapPx;
     _pxCursorY = line * rowStridePx;
-    auto x = (position % (2 * _bytesPerLine));
+    auto x = byteInLine * 2 + static_cast<int>(position % 2);
 
     _cursorPosition = position;
 
     // ascii area cursor
-    const int byteInLine = x / 2;
     int asciiOffsetPx = 0;
     int asciiCursorWidthPx = _pxCharWidth;
+    // Buffer offset of cursor's row start (may be negative when cursor is above visible area)
+    const int bufRowStart = static_cast<int>(absRowStart - _bPosFirst);
 
     if (_asciiArea)
     {
@@ -1223,7 +1262,6 @@ void HexEditor::setCursorPosition(qint64 position)
         if (_tb && !_tbDisplayChars.isEmpty())
         {
             const QFontMetrics fm(font());
-            const int bufRowStart = (int)((_bPosCurrent - _bPosFirst) / _bytesPerLine * _bytesPerLine);
             int lastLeadOffsetPx = 0;
             int lastLeadWidth = _pxCharWidth + 2;
 
@@ -1258,7 +1296,6 @@ void HexEditor::setCursorPosition(qint64 position)
         else if (!_encodingChars.isEmpty())
         {
             const QFontMetrics fm(font());
-            const int bufRowStart = (int)((_bPosCurrent - _bPosFirst) / _bytesPerLine * _bytesPerLine);
             int lastLeadOffsetPx = 0;
             int lastLeadWidth = _pxCharWidth + 2;
 
@@ -1293,16 +1330,16 @@ void HexEditor::setCursorPosition(qint64 position)
         {
             for (int col = 0; col < byteInLine; ++col)
             {
-                const qint64 bytePos = (_bPosCurrent / _bytesPerLine) * _bytesPerLine + col;
-                const uint8_t bv = (bytePos < _dataShown.size())
+                const qint64 bytePos = bufRowStart + col;
+                const uint8_t bv = (bytePos >= 0 && bytePos < _dataShown.size())
                     ? static_cast<uint8_t>(_dataShown.at(bytePos))
                     : 0;
                 const int baseW = (_tb && !_tbSymbolWidthPxCache.isEmpty()) ? _tbSymbolWidthPxCache[bv] : _pxCharWidth;
                 asciiOffsetPx += baseW + slotGapPx(baseW);
             }
 
-            const qint64 curBytePos = (_bPosCurrent / _bytesPerLine) * _bytesPerLine + byteInLine;
-            const uint8_t curBv = (curBytePos < _dataShown.size())
+            const qint64 curBytePos = bufRowStart + byteInLine;
+            const uint8_t curBv = (curBytePos >= 0 && curBytePos < _dataShown.size())
                 ? static_cast<uint8_t>(_dataShown.at(curBytePos))
                 : 0;
             const int baseW = (_tb && !_tbSymbolWidthPxCache.isEmpty()) ? _tbSymbolWidthPxCache[curBv] : _pxCharWidth;
@@ -1341,13 +1378,14 @@ void HexEditor::setCursorPosition(qint64 position)
         int hexCursorWidthPx = _pxCharWidth * 2 + 4;
         int hexCursorStartPx = _pxCursorX;
         if (span > 1 && _bytesPerLine > 0) {
-            const int curRowStart = (bufIdx / _bytesPerLine) * _bytesPerLine;
+            const int curRowStart = bufRowStart;
+            const int rowBytes = bytesOnVisualRowAt(absRowStart);
             const int segStart    = qMax(leadBufIdx, curRowStart);
-            const int segEnd      = qMin(leadBufIdx + span, curRowStart + _bytesPerLine);
+            const int segEnd      = qMin(leadBufIdx + span, curRowStart + rowBytes);
             const int bytesOnRow  = segEnd - segStart;
             if (bytesOnRow > 0) {
                 hexCursorWidthPx = (bytesOnRow - 1) * hexStridePx + _pxCharWidth * 2 + 4;
-                hexCursorStartPx = (segStart % _bytesPerLine) * hexStridePx + _pxPosHexX;
+                hexCursorStartPx = (segStart - curRowStart) * hexStridePx + _pxPosHexX;
             }
         }
         _hexCursorRect = QRect(hexCursorStartPx - scrollX - 2,
@@ -1408,9 +1446,12 @@ qint64 HexEditor::cursorPosition(QPoint pos)
         const int inByteX = relX - byteIndex * hexStridePx;
         const int nibble = (inByteX >= _pxCharWidth) ? 1 : 0;
         int x = byteIndex * 2 + nibble;
-        int y = (posY / rowStridePx) * 2 * _bytesPerLine;
+        int row = posY / rowStridePx;
+        if (row < 0 || row >= _visualRowStartBytes.size())
+            return -1;
+        qint64 rowByteStart = _visualRowStartBytes[row] - _bPosFirst;
 
-        result = _bPosFirst * 2 + x + y;
+        result = _bPosFirst * 2 + static_cast<qint64>(rowByteStart) * 2 + x;
     }
     else if (_asciiArea && (posX >= _pxPosAsciiX) && (posX < (_pxPosAsciiX + kAsciiAreaLeftPaddingPx + static_cast<int>(_asciiAreaMaxWidth))))
     {
@@ -1423,13 +1464,16 @@ qint64 HexEditor::cursorPosition(QPoint pos)
         };
 
         const int row = posY / rowStridePx;
-        if (row < 0)
+        if (row < 0 || row >= _visualRowStartBytes.size())
             return -1;
 
         const int xPx = qMax(0, posX - (_pxPosAsciiX + kAsciiAreaLeftPaddingPx));
-        auto y = row * 2 * _bytesPerLine;
-        const qint64 rowStart = static_cast<qint64>(row) * _bytesPerLine;
-        const qint64 rowEnd = qMin(rowStart + _bytesPerLine, static_cast<qint64>(_dataShown.size()));
+        const qint64 rowByteStart = _visualRowStartBytes[row] - _bPosFirst;
+        int bytesThisRowAscii = (row + 1 < _visualRowStartBytes.size())
+            ? static_cast<int>(_visualRowStartBytes[row + 1] - _visualRowStartBytes[row])
+            : _bytesPerLine;
+        const qint64 rowStart = rowByteStart;
+        const qint64 rowEnd = qMin(rowStart + bytesThisRowAscii, static_cast<qint64>(_dataShown.size()));
 
         if (rowStart >= rowEnd)
             return -1;
@@ -1489,7 +1533,7 @@ qint64 HexEditor::cursorPosition(QPoint pos)
             }
         }
 
-        result = _bPosFirst * 2 + byteCol * 2 + y;
+        result = _bPosFirst * 2 + static_cast<qint64>(rowByteStart) * 2 + byteCol * 2;
     }
 
     return result;
@@ -1937,11 +1981,14 @@ void HexEditor::replace(qint64 pos, qint64 len, const QByteArray &ba)
 // ********************************************************************** Utility functions
 void HexEditor::ensureVisible()
 {
-    if (_cursorPosition < (_bPosFirst * 2))
-        verticalScrollBar()->setValue((int)(_cursorPosition / 2 / _bytesPerLine));
+    const qint64 cursorByte = _cursorPosition / 2;
+    const qint64 cursorVisRow = visualRowForByte(cursorByte);
 
-    if (_cursorPosition > ((_bPosFirst + (_rowsShown - 1) * _bytesPerLine) * 2))
-        verticalScrollBar()->setValue((int)(_cursorPosition / 2 / _bytesPerLine) - _rowsShown + 1);
+    if (_cursorPosition < (_bPosFirst * 2))
+        verticalScrollBar()->setValue(static_cast<int>(cursorVisRow));
+
+    if (_cursorPosition > (_bPosLast * 2 + 1))
+        verticalScrollBar()->setValue(static_cast<int>(cursorVisRow) - _rowsShown + 1);
 
     if (_pxCursorX < horizontalScrollBar()->value())
         horizontalScrollBar()->setValue(_pxCursorX);
@@ -2073,6 +2120,10 @@ void HexEditor::redo()
 {
     if (!_undoStack->canRedo())
         return;
+    // Pre-update lb count before indexChanged fires in redo()
+    const QUndoCommand *redoCmd = _undoStack->command(_undoStack->index());
+    if (redoCmd && redoCmd->id() == kLineBreakCmdId)
+        ++_lineBreakCmdCount;
     _undoStack->redo();
     setCursorPosition(_chunks->pos() * 2);
     refresh();
@@ -2118,6 +2169,13 @@ void HexEditor::undo()
 {
     if (!_undoStack->canUndo())
         return;
+    // Pre-update lb count before indexChanged fires in undo()
+    const int idx = _undoStack->index();
+    if (idx > 0) {
+        const QUndoCommand *undoCmd = _undoStack->command(idx - 1);
+        if (undoCmd && undoCmd->id() == kLineBreakCmdId)
+            --_lineBreakCmdCount;
+    }
     _undoStack->undo();
     setCursorPosition(_chunks->pos() * 2);
     refresh();
@@ -2210,6 +2268,23 @@ void HexEditor::keyPressEvent(QKeyEvent *event)
         return;
     }
 
+    // Virtual line break: Enter adds a break before the current byte
+    if (event->key() == Qt::Key_Return && event->modifiers() == Qt::NoModifier) {
+        qint64 brk = _cursorPosition / 2;
+        if (brk > 0) {
+            addLineBreak(brk - 1);
+        }
+        event->accept();
+        return;
+    }
+
+    // Pre-compute visual row info for navigation
+    const qint64 navByte = _cursorPosition / 2;
+    const qint64 navNibble = _cursorPosition % 2;
+    const qint64 navVisRow = visualRowForByte(navByte);
+    const qint64 navRowStart = byteOffsetForVisualRow(navVisRow);
+    const int navCol = static_cast<int>(navByte - navRowStart);
+
     // Cursor movements
     if (event->matches(QKeySequence::MoveToNextChar))
     {
@@ -2241,39 +2316,58 @@ void HexEditor::keyPressEvent(QKeyEvent *event)
 
     if (event->matches(QKeySequence::MoveToEndOfLine))
     {
-        qint64 pos = _cursorPosition - (_cursorPosition % (2 * _bytesPerLine)) + (2 * _bytesPerLine) - 1;
+        qint64 rowBytes = bytesOnVisualRowAt(navRowStart);
+        qint64 pos = (navRowStart + rowBytes - 1) * 2 + 1;
         setCursorPosition(pos);
         resetSelection(_cursorPosition);
     }
 
     if (event->matches(QKeySequence::MoveToStartOfLine))
     {
-        qint64 pos = _cursorPosition - (_cursorPosition % (2 * _bytesPerLine));
+        qint64 pos = navRowStart * 2;
         setCursorPosition(pos);
         resetSelection(_cursorPosition);
     }
 
     if (event->matches(QKeySequence::MoveToPreviousLine))
     {
-        setCursorPosition(_cursorPosition - (2 * _bytesPerLine));
+        if (navVisRow > 0) {
+            qint64 prevRowStart = byteOffsetForVisualRow(navVisRow - 1);
+            int prevRowBytes = bytesOnVisualRowAt(prevRowStart);
+            qint64 newByte = prevRowStart + qMin(navCol, prevRowBytes - 1);
+            setCursorPosition(newByte * 2 + navNibble);
+        }
         resetSelection(_cursorPosition);
     }
 
     if (event->matches(QKeySequence::MoveToNextLine))
     {
-        setCursorPosition(_cursorPosition + (2 * _bytesPerLine));
+        qint64 nextRowStart = byteOffsetForVisualRow(navVisRow + 1);
+        if (nextRowStart < _chunks->size()) {
+            int nextRowBytes = bytesOnVisualRowAt(nextRowStart);
+            qint64 newByte = nextRowStart + qMin(navCol, qMax(0, nextRowBytes - 1));
+            setCursorPosition(newByte * 2 + navNibble);
+        }
         resetSelection(_cursorPosition);
     }
 
     if (event->matches(QKeySequence::MoveToNextPage))
     {
-        setCursorPosition(_cursorPosition + (((_rowsShown - 1) * 2 * _bytesPerLine)));
+        qint64 targetRow = qMin(navVisRow + _rowsShown - 1, totalVisualRows() - 1);
+        qint64 targetRowStart = byteOffsetForVisualRow(targetRow);
+        int targetRowBytes = bytesOnVisualRowAt(targetRowStart);
+        qint64 newByte = targetRowStart + qMin(navCol, qMax(0, targetRowBytes - 1));
+        setCursorPosition(newByte * 2 + navNibble);
         resetSelection(_cursorPosition);
     }
 
     if (event->matches(QKeySequence::MoveToPreviousPage))
     {
-        setCursorPosition(_cursorPosition - (((_rowsShown - 1) * 2 * _bytesPerLine)));
+        qint64 targetRow = qMax<qint64>(0, navVisRow - _rowsShown + 1);
+        qint64 targetRowStart = byteOffsetForVisualRow(targetRow);
+        int targetRowBytes = bytesOnVisualRowAt(targetRowStart);
+        qint64 newByte = targetRowStart + qMin(navCol, qMax(0, targetRowBytes - 1));
+        setCursorPosition(newByte * 2 + navNibble);
         resetSelection(_cursorPosition);
     }
 
@@ -2320,42 +2414,61 @@ void HexEditor::keyPressEvent(QKeyEvent *event)
 
     if (event->matches(QKeySequence::SelectEndOfLine))
     {
-        qint64 pos = _cursorPosition - (_cursorPosition % (2 * _bytesPerLine)) + (2 * _bytesPerLine) - 1;
+        qint64 rowBytes = bytesOnVisualRowAt(navRowStart);
+        qint64 pos = (navRowStart + rowBytes - 1) * 2 + 1;
         setCursorPosition(pos);
         setSelection(pos);
     }
 
     if (event->matches(QKeySequence::SelectStartOfLine))
     {
-        qint64 pos = _cursorPosition - (_cursorPosition % (2 * _bytesPerLine));
+        qint64 pos = navRowStart * 2;
         setCursorPosition(pos);
         setSelection(pos);
     }
 
     if (event->matches(QKeySequence::SelectPreviousLine))
     {
-        qint64 pos = _cursorPosition - (2 * _bytesPerLine);
-        setCursorPosition(pos);
-        setSelection(pos);
+        if (navVisRow > 0) {
+            qint64 prevRowStart = byteOffsetForVisualRow(navVisRow - 1);
+            int prevRowBytes = bytesOnVisualRowAt(prevRowStart);
+            qint64 newByte = prevRowStart + qMin(navCol, prevRowBytes - 1);
+            qint64 pos = newByte * 2 + navNibble;
+            setCursorPosition(pos);
+            setSelection(pos);
+        }
     }
 
     if (event->matches(QKeySequence::SelectNextLine))
     {
-        qint64 pos = _cursorPosition + (2 * _bytesPerLine);
-        setCursorPosition(pos);
-        setSelection(pos);
+        qint64 nextRowStart = byteOffsetForVisualRow(navVisRow + 1);
+        if (nextRowStart < _chunks->size()) {
+            int nextRowBytes = bytesOnVisualRowAt(nextRowStart);
+            qint64 newByte = nextRowStart + qMin(navCol, qMax(0, nextRowBytes - 1));
+            qint64 pos = newByte * 2 + navNibble;
+            setCursorPosition(pos);
+            setSelection(pos);
+        }
     }
 
     if (event->matches(QKeySequence::SelectNextPage))
     {
-        qint64 pos = _cursorPosition + ((_rowsShown - 1) * 2 * _bytesPerLine);
+        qint64 targetRow = qMin(navVisRow + _rowsShown - 1, totalVisualRows() - 1);
+        qint64 targetRowStart = byteOffsetForVisualRow(targetRow);
+        int targetRowBytes = bytesOnVisualRowAt(targetRowStart);
+        qint64 newByte = targetRowStart + qMin(navCol, qMax(0, targetRowBytes - 1));
+        qint64 pos = newByte * 2 + navNibble;
         setCursorPosition(pos);
         setSelection(pos);
     }
 
     if (event->matches(QKeySequence::SelectPreviousPage))
     {
-        qint64 pos = _cursorPosition - ((_rowsShown - 1) * 2 * _bytesPerLine);
+        qint64 targetRow = qMax<qint64>(0, navVisRow - _rowsShown + 1);
+        qint64 targetRowStart = byteOffsetForVisualRow(targetRow);
+        int targetRowBytes = bytesOnVisualRowAt(targetRowStart);
+        qint64 newByte = targetRowStart + qMin(navCol, qMax(0, targetRowBytes - 1));
+        qint64 pos = newByte * 2 + navNibble;
         setCursorPosition(pos);
         setSelection(pos);
     }
@@ -2494,19 +2607,34 @@ void HexEditor::keyPressEvent(QKeyEvent *event)
                     /* Backspace */
                     if ((event->key() == Qt::Key_Backspace) && (event->modifiers() == Qt::NoModifier))
                     {
+                        // First check for a virtual line break to remove
+                        bool removedBreak = false;
+                        if (!_lineBreaks.isEmpty()) {
+                            qint64 brkOffset = _bPosCurrent - 1;
+                            if (brkOffset >= 0) {
+                                auto it = std::lower_bound(_lineBreaks.constBegin(), _lineBreaks.constEnd(), brkOffset);
+                                if (it != _lineBreaks.constEnd() && *it == brkOffset) {
+                                    removeLineBreak(brkOffset);
+                                    removedBreak = true;
+                                }
+                            }
+                        }
+
+                        if (!removedBreak) {
+                        if (!_overwriteMode)
+                        {
+                            // In INSERT mode backspace only removes line breaks (handled above).
+                            // No data deletion — do nothing.
+                        }
+                        else
                         if (getSelectionEnd() - getSelectionBegin() > 1)
                         {
                             _bPosCurrent = getSelectionBegin();
                             setCursorPosition(2 * _bPosCurrent);
 
-                            if (_overwriteMode)
                             {
                                 QByteArray ba = QByteArray(getSelectionEnd() - getSelectionBegin(), char(0));
                                 replace(_bPosCurrent, ba.size(), ba);
-                            }
-                            else
-                            {
-                                remove(_bPosCurrent, getSelectionEnd() - getSelectionBegin());
                             }
                             resetSelection(2 * _bPosCurrent);
                         }
@@ -2517,10 +2645,7 @@ void HexEditor::keyPressEvent(QKeyEvent *event)
                                 behindLastByte = true;
 
                             _bPosCurrent -= 1;
-                            if (_overwriteMode)
-                                replace(_bPosCurrent, char(0));
-                            else
-                                remove(_bPosCurrent, 1);
+                            replace(_bPosCurrent, char(0));
 
                             if (!behindLastByte)
                                 _bPosCurrent -= 1;
@@ -2528,6 +2653,7 @@ void HexEditor::keyPressEvent(QKeyEvent *event)
                             setCursorPosition(2 * _bPosCurrent);
                             resetSelection(2 * _bPosCurrent);
                         }
+                        } // !removedBreak
                     }
                     else
 
@@ -2999,7 +3125,12 @@ void HexEditor::paintEvent(QPaintEvent *event)
 
             {
                 QString address;
-                auto rowsCount = (_dataShown.size() / _bytesPerLine);
+                auto rowsCount = 0;
+                for (int i = 0; i < _visualRowStartBytes.size(); ++i) {
+                    if (_visualRowStartBytes[i] < _bPosFirst + _dataShown.size())
+                        rowsCount = i;
+                    else break;
+                }
 
                 const QFont originalFont = painter.font();
                 QFont boldFont = originalFont;
@@ -3013,7 +3144,12 @@ void HexEditor::paintEvent(QPaintEvent *event)
 
                 for (int row = 0, pxPosY = _pxCharHeight; row <= rowsCount; row++, pxPosY += rowStridePx)
                 {
-                    const qint64 rawAddr = _bPosFirst + row * _bytesPerLine + _addressOffset;
+                    // Skip empty rows (duplicate line breaks produce rows with same start byte)
+                    if (row + 1 < _visualRowStartBytes.size()
+                        && _visualRowStartBytes[row] == _visualRowStartBytes[row + 1])
+                        continue;
+
+                    const qint64 rawAddr = _visualRowStartBytes[row] + _addressOffset;
                     const quint64 maskedAddr = static_cast<quint64>(rawAddr) & addrMask;
                     address = QString("%1").arg(maskedAddr, _addrDigits, 16, QChar('0'));
                     if (_hexCaps) address = address.toUpper();
@@ -3101,14 +3237,19 @@ void HexEditor::paintEvent(QPaintEvent *event)
             int pxPosY = pxPosStartY + row * rowStridePx;
             int pxPosX = _pxPosHexX - pxOfsX;
             int pxPosAsciiX2 = _pxPosAsciiX + kAsciiAreaLeftPaddingPx - pxOfsX;
-            qint64 bPosLine = row * _bytesPerLine;
+            qint64 bPosLine = _visualRowStartBytes[row] - _bPosFirst;
+            int bytesThisRow = (row + 1 < _visualRowStartBytes.size())
+                ? static_cast<int>(_visualRowStartBytes[row + 1] - _visualRowStartBytes[row])
+                : _bytesPerLine;
+            bytesThisRow = qMin(bytesThisRow, static_cast<int>(_dataShown.size() - bPosLine));
+            if (bPosLine < 0 || bytesThisRow <= 0) continue;
 
             const bool useTbMultiByte = useTbDisplayCache;
             const qint64 rowStart = bPosLine;
-            const qint64 rowEnd = qMin(bPosLine + _bytesPerLine, (qint64)_dataShown.size());
+            const qint64 rowEnd = qMin(bPosLine + bytesThisRow, (qint64)_dataShown.size());
 
             // can be slow here
-            for (int colIdx = 0; ((bPosLine + colIdx) < _dataShown.size() && (colIdx < _bytesPerLine)); colIdx++)
+            for (int colIdx = 0; ((bPosLine + colIdx) < _dataShown.size() && (colIdx < bytesThisRow)); colIdx++)
             {
                 QColor c = viewport()->palette().color(QPalette::Base);
 
@@ -3170,17 +3311,16 @@ void HexEditor::paintEvent(QPaintEvent *event)
                     {
                         // Draw pointer frame only at the first byte of the pointer on each row
                         // The frame is clipped to the current line so it doesn't bleed into ASCII area
-                        const int colInLine = static_cast<int>(posBa % _bytesPerLine);
+                        const int colInLine = colIdx;
 
                         // We draw a partial frame segment on every row that the pointer occupies
                         // Determine how many bytes of this pointer are on the current row starting from colIdx
                         const int ptrEndByteExcl = static_cast<int>((pointerStart - _bPosFirst) + actualPtrSize);
-                        const int rowEndCol = _bytesPerLine; // exclusive
 
                         if (posBa == pointerStart || colInLine == 0)
                         {
                             // First pointer byte on this row — draw frame segment
-                            const int bytesOnThisRow = qMin(ptrEndByteExcl - static_cast<int>(bPosLine + colIdx), rowEndCol - colInLine);
+                            const int bytesOnThisRow = qMin(ptrEndByteExcl - static_cast<int>(bPosLine + colIdx), bytesThisRow - colInLine);
 
                             if (bytesOnThisRow > 0)
                             {
@@ -3728,6 +3868,7 @@ qint64 HexEditor::getSelectionEnd()
 void HexEditor::init()
 {
     _undoStack->clear();
+    _lineBreakCmdCount = 0;
     setAddressOffset(0);
     resetSelection(0);
     setCursorPosition(0);
@@ -3735,6 +3876,182 @@ void HexEditor::init()
 
     _baseModified = false;
     _modified = false;
+}
+
+// ── Virtual line breaks ────────────────────────────────────────
+
+QVector<qint64> HexEditor::lineBreaks() const { return _lineBreaks; }
+
+void HexEditor::setLineBreaks(const QVector<qint64> &breaks)
+{
+    _lineBreaks = breaks;
+    std::sort(_lineBreaks.begin(), _lineBreaks.end());
+    adjust();
+    viewport()->update();
+    emit lineBreaksChanged();
+}
+
+void HexEditor::addLineBreakDirect(qint64 offset)
+{
+    auto it = std::upper_bound(_lineBreaks.begin(), _lineBreaks.end(), offset);
+    _lineBreaks.insert(it, offset);
+    adjust();
+    viewport()->update();
+    emit lineBreaksChanged();
+}
+
+void HexEditor::removeLineBreakDirect(qint64 offset)
+{
+    auto it = std::lower_bound(_lineBreaks.begin(), _lineBreaks.end(), offset);
+    if (it != _lineBreaks.end() && *it == offset) {
+        _lineBreaks.erase(it);
+        adjust();
+        viewport()->update();
+        emit lineBreaksChanged();
+    }
+}
+
+void HexEditor::addLineBreak(qint64 offset)
+{
+    ++_lineBreakCmdCount;  // pre-update before indexChanged fires
+    _undoStack->push(new LineBreakAddCommand(this, offset));
+}
+
+void HexEditor::removeLineBreak(qint64 offset)
+{
+    auto it = std::lower_bound(_lineBreaks.constBegin(), _lineBreaks.constEnd(), offset);
+    if (it != _lineBreaks.constEnd() && *it == offset) {
+        ++_lineBreakCmdCount;  // pre-update before indexChanged fires
+        _undoStack->push(new LineBreakRemoveCommand(this, offset));
+    }
+}
+
+void HexEditor::toggleLineBreak(qint64 offset)
+{
+    auto it = std::lower_bound(_lineBreaks.begin(), _lineBreaks.end(), offset);
+    if (it != _lineBreaks.end() && *it == offset)
+        _lineBreaks.erase(it);
+    else
+        _lineBreaks.insert(it, offset);
+    adjust();
+    viewport()->update();
+    emit lineBreaksChanged();
+}
+
+void HexEditor::clearLineBreaks()
+{
+    if (!_lineBreaks.isEmpty()) {
+        _lineBreaks.clear();
+        adjust();
+        viewport()->update();
+        emit lineBreaksChanged();
+    }
+}
+
+qint64 HexEditor::totalVisualRows() const
+{
+    const qint64 fileSize = _chunks->size();
+    if (fileSize == 0) return 0;
+    if (_lineBreaks.isEmpty())
+        return (fileSize + _bytesPerLine - 1) / _bytesPerLine;
+
+    qint64 total = 0;
+    qint64 segStart = 0;
+    for (qint64 brk : _lineBreaks) {
+        if (brk >= fileSize) continue;
+        if (brk < segStart) {
+            // Duplicate break → empty row
+            total += 1;
+            continue;
+        }
+        qint64 segSize = brk - segStart + 1;
+        total += (segSize + _bytesPerLine - 1) / _bytesPerLine;
+        segStart = brk + 1;
+    }
+    if (segStart < fileSize) {
+        qint64 segSize = fileSize - segStart;
+        total += (segSize + _bytesPerLine - 1) / _bytesPerLine;
+    }
+    return total;
+}
+
+qint64 HexEditor::byteOffsetForVisualRow(qint64 visualRow) const
+{
+    const qint64 fileSize = _chunks->size();
+    if (_lineBreaks.isEmpty())
+        return qMin(visualRow * _bytesPerLine, fileSize);
+
+    qint64 rowsSoFar = 0;
+    qint64 segStart = 0;
+    for (qint64 brk : _lineBreaks) {
+        if (brk >= fileSize) continue;
+        if (brk < segStart) {
+            // Duplicate break → empty row
+            if (rowsSoFar == visualRow)
+                return segStart;  // empty row maps to segStart
+            rowsSoFar += 1;
+            continue;
+        }
+        qint64 segSize = brk - segStart + 1;
+        qint64 segRows = (segSize + _bytesPerLine - 1) / _bytesPerLine;
+        if (rowsSoFar + segRows > visualRow)
+            return segStart + (visualRow - rowsSoFar) * _bytesPerLine;
+        rowsSoFar += segRows;
+        segStart = brk + 1;
+    }
+    return qMin(segStart + (visualRow - rowsSoFar) * _bytesPerLine, fileSize);
+}
+
+qint64 HexEditor::visualRowForByte(qint64 bytePos) const
+{
+    const qint64 fileSize = _chunks->size();
+    if (_lineBreaks.isEmpty())
+        return bytePos / _bytesPerLine;
+
+    qint64 rowsSoFar = 0;
+    qint64 segStart = 0;
+    for (qint64 brk : _lineBreaks) {
+        if (brk >= fileSize) continue;
+        if (brk < segStart) {
+            // Duplicate break → empty row (no bytes)
+            rowsSoFar += 1;
+            continue;
+        }
+        if (bytePos <= brk)
+            return rowsSoFar + (bytePos - segStart) / _bytesPerLine;
+        qint64 segSize = brk - segStart + 1;
+        rowsSoFar += (segSize + _bytesPerLine - 1) / _bytesPerLine;
+        segStart = brk + 1;
+    }
+    return rowsSoFar + (bytePos - segStart) / _bytesPerLine;
+}
+
+qint64 HexEditor::firstByteOfVisualRowContaining(qint64 bytePos) const
+{
+    return byteOffsetForVisualRow(visualRowForByte(bytePos));
+}
+
+int HexEditor::bytesOnVisualRowAt(qint64 byteOffset) const
+{
+    const qint64 fileSize = _chunks->size();
+    if (byteOffset >= fileSize) return 0;
+    int maxBytes = static_cast<int>(qMin<qint64>(_bytesPerLine, fileSize - byteOffset));
+
+    auto it = std::lower_bound(_lineBreaks.constBegin(), _lineBreaks.constEnd(), byteOffset);
+    if (it != _lineBreaks.constEnd() && *it < byteOffset + maxBytes)
+        return static_cast<int>(*it - byteOffset + 1);
+
+    return maxBytes;
+}
+
+int HexEditor::visibleRowForByte(qint64 bytePos) const
+{
+    if (_visualRowStartBytes.size() < 2) return 0;
+    for (int i = 0; i < _visualRowStartBytes.size() - 1; ++i) {
+        if (bytePos >= _visualRowStartBytes[i] && bytePos < _visualRowStartBytes[i + 1])
+            return i;
+    }
+    return _visualRowStartBytes.size() - 2;
 }
 
 void HexEditor::adjust()
@@ -3765,18 +4082,28 @@ void HexEditor::adjust()
     const int rowStridePx = _pxCharHeight + kHexRowExtraGapPx;
     _rowsShown = ((viewport()->height() - 4) / rowStridePx);
 
-    const qint64 lineCount = (_chunks->size() + _bytesPerLine - 1) / _bytesPerLine;
+    const qint64 lineCount = totalVisualRows();
 
     verticalScrollBar()->setRange(0, qMax<qint64>(0, lineCount - _rowsShown));
     verticalScrollBar()->setPageStep(_rowsShown);
 
     auto value = verticalScrollBar()->value();
 
-    _bPosFirst = static_cast<qint64>(value) * _bytesPerLine;
-    _bPosLast = _bPosFirst + (_rowsShown * _bytesPerLine) - 1;
+    _bPosFirst = byteOffsetForVisualRow(value);
 
+    // Precompute absolute byte offsets for each visible row
+    _visualRowStartBytes.resize(_rowsShown + 1);
+    {
+        for (int i = 0; i <= _rowsShown; ++i) {
+            _visualRowStartBytes[i] = byteOffsetForVisualRow(value + i);
+        }
+    }
+
+    _bPosLast = _visualRowStartBytes[_rowsShown] - 1;
     if (_bPosLast >= _chunks->size())
         _bPosLast = _chunks->size() - 1;
+    if (_bPosLast < _bPosFirst)
+        _bPosLast = _bPosFirst;
 
     readBuffers();
     setCursorPosition(_cursorPosition);
@@ -3804,7 +4131,7 @@ void HexEditor::adjust()
 
 void HexEditor::dataChangedPrivate(int)
 {
-    _modified = _baseModified || (_undoStack->index() != 0);
+    _modified = _baseModified || ((_undoStack->index() - _lineBreakCmdCount) != 0);
 
     invalidateAsciiAreaWidthCache();
 

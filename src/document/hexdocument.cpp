@@ -240,6 +240,13 @@ bool HexDocument::saveProject(const QString &path,
     if (originalFileSize >= 0)
         out << "original_file_size: " << originalFileSize << "\n";
 
+    // Alignment (virtual line breaks)
+    if (!alignmentOffsets.isEmpty()) {
+        out << "\nalignment:\n";
+        for (qint64 off : alignmentOffsets)
+            out << "  - 0x" << QString::number(off, 16).toUpper() << "\n";
+    }
+
     f.close();
     projectFilePath = path;
     return true;
@@ -384,9 +391,10 @@ bool HexDocument::loadProject(const QString &path)
     showChanges = false;
     changesHexMode = false;
     originalBytes.clear();
+    alignmentOffsets.clear();
     originalFileSize = -1;
 
-    enum class Section { Root, Pointers, TableEntries, Original, Tables, TablesEntries };
+    enum class Section { Root, Pointers, TableEntries, Original, Tables, TablesEntries, Alignment };
     Section section = Section::Root;
 
     // Temp for building a pointer entry
@@ -438,6 +446,10 @@ bool HexDocument::loadProject(const QString &path)
         }
         if (stripped == QLatin1String("tables:")) {
             switchSection(Section::Tables);
+            continue;
+        }
+        if (stripped == QLatin1String("alignment:")) {
+            switchSection(Section::Alignment);
             continue;
         }
 
@@ -567,6 +579,20 @@ bool HexDocument::loadProject(const QString &path)
         }
 
         // --- Original section: each line is "  - HH: HHHH..." ---
+        if (section == Section::Alignment) {
+            if (!stripped.startsWith(QLatin1String("- "))) {
+                section = Section::Root;
+            } else {
+                QString entry = stripped.mid(2).trimmed();
+                bool ok = false;
+                qint64 off = entry.startsWith(QLatin1String("0x"), Qt::CaseInsensitive)
+                    ? entry.mid(2).toLongLong(&ok, 16) : entry.toLongLong(&ok);
+                if (ok && off >= 0)
+                    alignmentOffsets.append(off);
+                continue;
+            }
+        }
+
         if (section == Section::Original) {
             if (!stripped.startsWith(QLatin1String("- "))) {
                 section = Section::Root;
