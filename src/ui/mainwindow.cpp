@@ -33,6 +33,7 @@
 #ifdef Q_OS_MAC
 #include "macostheme.h"
 #endif
+#include "theme.h"
 #include <algorithm>
 
 #include "QtWidgets/qpushbutton.h"
@@ -4726,7 +4727,24 @@ void MainWindow::readSettings()
     if (!geom.isEmpty())
         restoreGeometry(geom);
 
-    const bool darkTheme = settings.value("DarkTheme", false).toBool();
+    bool darkTheme;
+    if (settings.contains(QStringLiteral("DarkTheme"))) {
+        darkTheme = settings.value(QStringLiteral("DarkTheme")).toBool();
+    } else {
+        // First launch: detect system dark mode
+#ifdef Q_OS_WIN
+        QSettings reg(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
+                      QSettings::NativeFormat);
+        darkTheme = reg.value(QStringLiteral("AppsUseLightTheme"), 1).toInt() == 0;
+#else
+        darkTheme = false;
+#endif
+        if (darkTheme) {
+            // Apply dark editor color defaults on first launch
+            EditorTheme::defaultDark().applyToSettings();
+        }
+        settings.setValue(QStringLiteral("DarkTheme"), darkTheme);
+    }
     if (showDarkThemeAct)
         showDarkThemeAct->setChecked(darkTheme);
     else
@@ -4989,19 +5007,28 @@ void MainWindow::applyDarkTheme(bool enabled)
         dark.setColor(QPalette::WindowText, Qt::white);
         dark.setColor(QPalette::Base, QColor(35, 35, 35));
         dark.setColor(QPalette::AlternateBase, QColor(53, 53, 53));
-        dark.setColor(QPalette::ToolTipBase, Qt::white);
+        dark.setColor(QPalette::ToolTipBase, QColor(53, 53, 53));
         dark.setColor(QPalette::ToolTipText, Qt::white);
         dark.setColor(QPalette::Text, Qt::white);
         dark.setColor(QPalette::Button, QColor(53, 53, 53));
         dark.setColor(QPalette::ButtonText, Qt::white);
         dark.setColor(QPalette::BrightText, Qt::red);
+        dark.setColor(QPalette::Light, QColor(80, 80, 80));
+        dark.setColor(QPalette::Midlight, QColor(70, 70, 70));
+        dark.setColor(QPalette::Mid, QColor(50, 50, 50));
+        dark.setColor(QPalette::Dark, QColor(35, 35, 35));
+        dark.setColor(QPalette::Shadow, QColor(20, 20, 20));
         dark.setColor(QPalette::Highlight, QColor(42, 130, 218));
         dark.setColor(QPalette::HighlightedText, Qt::black);
         qApp->setPalette(dark);
+        qApp->setStyleSheet(QStringLiteral(
+            "QToolTip { color: #ffffff; background-color: #353535; border: 1px solid #555555; }"
+        ));
     } else {
         if (!m_lightStyleName.isEmpty())
             QApplication::setStyle(QStyleFactory::create(m_lightStyleName));
         qApp->setPalette(m_lightPalette);
+        qApp->setStyleSheet(QString());
     }
 #endif
     if (m_tabWidget)
