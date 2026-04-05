@@ -3,9 +3,7 @@
 #include <QTextStream>
 #include <QDebug>
 #include <QtGlobal>
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 #include <QStringConverter>
-#endif
 
 QString LangTranslator::s_currentLanguage = QStringLiteral("en");
 
@@ -26,11 +24,7 @@ bool LangTranslator::load(const QString &filename)
     }
 
     QTextStream in(&file);
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     in.setEncoding(QStringConverter::Utf8);
-#else
-    in.setCodec("UTF-8");
-#endif
 
     while (!in.atEnd())
     {

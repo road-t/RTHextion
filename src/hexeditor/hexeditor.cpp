@@ -13,10 +13,8 @@
 #include <QSet>
 #include <QSettings>
 #include <QUndoCommand>
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
 #include <QStringDecoder>
 #include <QStringEncoder>
-#endif
 
 #include "hexeditor.h"
 #include "hexscrollmap.h"
@@ -234,13 +232,11 @@ namespace
             return out;
         }
 
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
         for (const QByteArray &codecName : codecCandidates(encoding)) {
             auto dec = QStringDecoder(codecName.constData());
             if (dec.isValid())
                 return dec(data);
         }
-#endif
         // Fallback to iconv for codecs not supported by QStringDecoder (CJK, etc.)
         QString result = decodeWithIconv(data, encoding);
         if (!result.isEmpty())
@@ -253,7 +249,6 @@ namespace
         if (encoding == QLatin1String("ASCII"))
             return text.toLatin1();
 
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
         for (const QByteArray &codecName : codecCandidates(encoding)) {
             auto enc = QStringEncoder(codecName.constData());
             if (!enc.isValid())
@@ -262,7 +257,6 @@ namespace
             if (!out.isEmpty() || text.isEmpty())
                 return out;
         }
-#endif
         // Fallback to iconv for codecs not supported by QStringEncoder
         if (!isSingleByteEncoding(encoding)) {
             QByteArray result = encodeWithIconv(text, encoding);
@@ -486,10 +480,9 @@ namespace
         }
 
         // --- Other multi-byte encodings (Shift-JIS, GB2312, UTF-16, etc.) ---
-        // Try QStringDecoder first (Qt6), then iconv as fallback
+        // Try QStringDecoder first, then iconv as fallback
         {
             bool usedQtDecoder = false;
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
             {
                 QByteArray selectedCodec;
                 bool validDecoder = false;
@@ -542,7 +535,6 @@ namespace
                     }
                 }
             }
-#endif
             // iconv fallback: two-pass decode for CJK and stateful encodings.
             // Pass 1: decode entire buffer with iconv (robust: EILSEQ → U+FFFD, keep going).
             // Pass 2: determine character boundaries, assign result entries.
@@ -908,10 +900,10 @@ HexEditor::HexEditor(QWidget *parent) : QAbstractScrollArea(parent), _addressAre
     _zeroByteFontColor = QColor(0xCC, 0xCC, 0xCC);
     _addressZeroByteFontColor = QColor(0xCC, 0xCC, 0xCC);  // same default as _zeroByteFontColor
 
-    connect(&_cursorTimer, SIGNAL(timeout()), this, SLOT(updateCursor()));
-    connect(verticalScrollBar(), SIGNAL(valueChanged(int)), this, SLOT(adjust()));
-    connect(horizontalScrollBar(), SIGNAL(valueChanged(int)), this, SLOT(adjust()));
-    connect(_undoStack, SIGNAL(indexChanged(int)), this, SLOT(dataChangedPrivate(int)));
+    connect(&_cursorTimer, &QTimer::timeout, this, &HexEditor::updateCursor);
+    connect(verticalScrollBar(), &QAbstractSlider::valueChanged, this, &HexEditor::adjust);
+    connect(horizontalScrollBar(), &QAbstractSlider::valueChanged, this, &HexEditor::adjust);
+    connect(_undoStack, &QUndoStack::indexChanged, this, &HexEditor::dataChangedPrivate);
 
 //    _cursorTimer.setInterval(500);
 //    _cursorTimer.start();

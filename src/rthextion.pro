@@ -53,6 +53,7 @@ HEADERS = \
     dockwidgets/TablesDockWidget.h \
     dockwidgets/PointersDockWidget.h \
     dockwidgets/ChangesDockWidget.h \
+    dockwidgets/BaseDockWidget.h \
     # utils
     utils/Datas.h \
     utils/encodingdetect.h \
@@ -87,6 +88,7 @@ SOURCES = \
     dockwidgets/TablesDockWidget.cpp \
     dockwidgets/PointersDockWidget.cpp \
     dockwidgets/ChangesDockWidget.cpp \
+    dockwidgets/BaseDockWidget.cpp \
     # utils
     utils/byteglue.cpp
 

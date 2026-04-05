@@ -897,7 +897,7 @@ void MainWindow::showOptionsDialog()
     if (!optionsDialog)
     {
         optionsDialog = new OptionsDialog(this);
-        connect(optionsDialog, SIGNAL(accepted()), this, SLOT(optionsAccepted()));
+        connect(optionsDialog, &QDialog::accepted, this, &MainWindow::optionsAccepted);
     }
     optionsDialog->show();
 }
@@ -1007,7 +1007,7 @@ void MainWindow::showPointersDialog()
     if (!pointersDialog)
     {
         pointersDialog = new PointersDialog(hexEdit, this);
-        connect(pointersDialog, SIGNAL(accepted()), this, SLOT(pointersUpdated()));
+        connect(pointersDialog, &QDialog::accepted, this, &MainWindow::pointersUpdated);
         connect(pointersDialog, &PointersDialog::searchCompleted, this, &MainWindow::onQuickSearchCompleted);
         pointersDialog->setDock(m_pointersDock);
     }
@@ -1748,7 +1748,7 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         if (!pointersDialog)
         {
             pointersDialog = new PointersDialog(hexEdit, this);
-            connect(pointersDialog, SIGNAL(accepted()), this, SLOT(pointersUpdated()));
+            connect(pointersDialog, &QDialog::accepted, this, &MainWindow::pointersUpdated);
             connect(pointersDialog, &PointersDialog::searchCompleted, this, &MainWindow::onQuickSearchCompleted);
             pointersDialog->setDock(m_pointersDock);
         }
@@ -2597,13 +2597,13 @@ EditorSession *MainWindow::createSession()
 
 void MainWindow::connectEditorSignals(HexEditor *editor)
 {
-    connect(editor, SIGNAL(overwriteModeChanged(bool)), this, SLOT(setOverwriteMode(bool)));
-    connect(editor, SIGNAL(dataChanged()), this, SLOT(dataChanged()));
+    connect(editor, &HexEditor::overwriteModeChanged, this, &MainWindow::setOverwriteMode);
+    connect(editor, &HexEditor::dataChanged, this, &MainWindow::dataChanged);
     connect(editor, &HexEditor::dataChangedAt, this, &MainWindow::onHexDataChangedAt);
     connect(editor, &HexEditor::contextMenuRequested, this, &MainWindow::hexEditContextMenu);
-    connect(editor, SIGNAL(selectionChanged(qint64, qint64)), this, SLOT(setSelection(qint64, qint64)));
-    connect(editor, SIGNAL(currentAddressChanged(qint64)), this, SLOT(setAddress(qint64)));
-    connect(editor, SIGNAL(currentSizeChanged(qint64)), this, SLOT(setSize(qint64)));
+    connect(editor, &HexEditor::selectionChanged, this, &MainWindow::setSelection);
+    connect(editor, &HexEditor::currentAddressChanged, this, &MainWindow::setAddress);
+    connect(editor, &HexEditor::currentSizeChanged, this, &MainWindow::setSize);
     connect(editor, &HexEditor::lineBreaksChanged, this, [this]() {
         if (m_document)
             m_document->markDirty();
