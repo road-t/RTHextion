@@ -251,7 +251,16 @@ private slots:
         TranslationTable table;
         table.setItem(0x41, QStringLiteral("A"));
 
-        QVERIFY(doc.saveProject(projectPath, &table));
+        DocTableEntry entry;
+        entry.name = QStringLiteral("Table 1");
+        entry.table = &table;
+        QVector<DocTableEntry> tables;
+        tables.append(entry);
+
+        QVERIFY(doc.saveProject(projectPath, tables, 0));
+
+        // Don't let ~HexDocument delete un-owned table
+        entry.table = nullptr;
 
         HexDocument loaded;
         QVERIFY(loaded.loadProject(projectPath));
