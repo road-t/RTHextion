@@ -1,6 +1,7 @@
 #ifndef CHANGESDOCKWIDGET_H
 #define CHANGESDOCKWIDGET_H
 
+#include "BaseDockWidget.h"
 #include <QDockWidget>
 #include <QTableWidget>
 #include <QToolButton>
@@ -12,7 +13,7 @@
 
 class TranslationTable;
 
-class ChangesDockWidget : public QDockWidget
+class ChangesDockWidget : public BaseDockWidget
 {
     Q_OBJECT
 
@@ -43,25 +44,23 @@ public:
     void setShowOriginalChecked(bool checked);
     void setShowOriginalEnabled(bool enabled);
 
-    void setCollapsed(bool collapsed);
-    bool isCollapsed() const;
-    void resetCollapse();
-
     QByteArray saveColumnsState() const;
     void restoreColumnsState(const QByteArray &state);
 
-    void retranslateUi();
+    void retranslateUi() override;
 
 signals:
     void showChangesToggled(bool checked);
     void showOriginalToggled(bool show);
     void jumpToOffset(qint64 offset);
 
+protected:
+    void onPaletteChanged() override;
+
 private slots:
     void onRowDoubleClicked(const QModelIndex &index);
 
 private:
-    QWidget     *m_contentWidget  = nullptr;
     QTableWidget *m_table         = nullptr;
     QToolButton  *m_showChangesBtn = nullptr;
     QToolButton  *m_currentBtn    = nullptr;
@@ -71,9 +70,6 @@ private:
     QToolButton  *m_hexBtn        = nullptr;
     QButtonGroup *m_displayModeGroup = nullptr;
     bool          m_hexMode       = false;
-    bool          m_collapsed     = false;
-    int           m_savedExpandedWidth = -1;
-    int           m_savedExpandedHeight = -1;
 
     // Stored parameters for re-rendering when display mode is toggled
     QVector<QPair<qint64, QByteArray>> m_lastOriginals;

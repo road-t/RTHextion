@@ -11,6 +11,7 @@
 #include <QToolButton>
 #include <QMenu>
 
+#include "BaseDockWidget.h"
 #include "translationtable.h"
 
 class HexEditor;
@@ -25,7 +26,7 @@ struct TableTab
 
 /// Dock widget that contains a QTabWidget with one tab per translation table.
 /// Provides add / duplicate / remove / export actions and Ctrl+N shortcuts.
-class TablesDockWidget : public QDockWidget
+class TablesDockWidget : public BaseDockWidget
 {
     Q_OBJECT
 
@@ -76,15 +77,7 @@ public:
     /// (only one table can be original at a time).
     void setTableOriginal(int index, bool original);
 
-    /// Retranslate UI strings.
-    void retranslateUi();
-
-    /// Collapse or expand the dock content (hides inner widget, keeps dock visible).
-    void setCollapsed(bool collapsed);
-    bool isCollapsed() const { return m_collapsed; }
-
-    /// Force-reset collapse state (called when dock changes area).
-    void resetCollapse();
+    void retranslateUi() override;
 
     /// Undo stack (exposed so main window can connect undo/redo actions).
     QUndoStack *undoStack() const { return m_undoStack; }
@@ -116,6 +109,9 @@ signals:
     /// Emitted when user requests semi-auto table generation from the dock toolbar.
     void generateTableRequested();
 
+protected:
+    void onPaletteChanged() override;
+
 private slots:
     void onTabChanged(int index);
     void onTabMoved(int from, int to);
@@ -143,7 +139,6 @@ private:
     /// Push a snapshot-based undo command.
     void pushUndoSnapshot(const QString &description);
 
-    QWidget *m_contentWidget = nullptr;
     QTabWidget *m_tabs = nullptr;
     QToolBar *m_toolbar = nullptr;
     QUndoStack *m_undoStack = nullptr;
@@ -164,9 +159,6 @@ private:
     QVector<TableTab> m_tables;
     int m_nextTableNumber = 1;
     bool m_ignoreChanges = false;  // guard for programmatic edits
-    bool m_collapsed = false;
-    int m_savedExpandedWidth = -1;
-    int m_savedExpandedHeight = -1;
 
     // Snapshot stored before a destructive operation so undo can restore it
     QVector<TableTab> m_pendingSnapshot;

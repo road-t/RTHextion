@@ -8,10 +8,12 @@
 #include <QToolButton>
 #include <QPointer>
 
+#include "BaseDockWidget.h"
+
 class HexEditor;
 class PointerListModel;
 
-class PointersDockWidget : public QDockWidget
+class PointersDockWidget : public BaseDockWidget
 {
     Q_OBJECT
 
@@ -31,11 +33,7 @@ public:
     /// Refresh the view (e.g. after external model changes).
     void refreshView();
 
-    void setCollapsed(bool collapsed);
-    bool isCollapsed() const;
-    void resetCollapse();
-
-    void retranslateUi();
+    void retranslateUi() override;
 
 signals:
     void findPointersRequested();
@@ -58,13 +56,13 @@ private slots:
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
+    void onPaletteChanged() override;
 
 private:
     void updateButtonStates();
 
     QPointer<HexEditor>      m_hexEdit;
     QPointer<PointerListModel> m_model;
-    QWidget            *m_contentWidget = nullptr;
     QTableView         *m_view       = nullptr;
     QToolBar           *m_toolbar    = nullptr;
     QAction            *m_findAct    = nullptr;
@@ -72,9 +70,6 @@ private:
     QAction            *m_deleteAct  = nullptr;
     QAction            *m_cleanAllAct = nullptr;
     QToolButton        *m_showPointersBtn = nullptr;
-    bool                m_collapsed = false;
-    int                 m_savedExpandedWidth = -1;
-    int                 m_savedExpandedHeight = -1;
 };
 
 #endif // POINTERSDOCKWIDGET_H
