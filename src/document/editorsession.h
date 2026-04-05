@@ -34,7 +34,6 @@ public:
     QVector<TableTab> tableSnapshot;
     int tableActiveIndex = -1;
 
-    bool projectModified = false;
     QByteArray changeTrackingSnapshot;
 
     RomType detectedRomType = RomType::Unknown;

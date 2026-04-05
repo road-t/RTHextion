@@ -552,7 +552,7 @@ void MainWindow::closeFile()
     const bool hadProject = m_document && !m_document->projectFilePath.isEmpty();
     m_document->projectFilePath.clear();
     m_document->projectName.clear();
-    m_projectModified = false;
+    m_document->clearDirty();
     m_document->originalBytes.clear();
     m_document->originalFileSize = -1;
     hexEdit->setData(QByteArray());
@@ -664,7 +664,7 @@ void MainWindow::pointersUpdated()
 {
     showPointersAct->setEnabled(!hexEdit->pointers()->empty());
     if (m_document)
-        m_projectModified = true;
+        m_document->markDirty();
 }
 
 void MainWindow::findNext()
@@ -699,9 +699,20 @@ bool MainWindow::save()
         if (!m_document->projectFilePath.isEmpty()) {
             // Project already has a file — save it
             saveProjectImpl(m_document->projectFilePath);
-        } else if (m_projectModified && hasProjectData()) {
-            // Project data exists but no project file yet — prompt Save As
-            saveProjectAs();
+        } else if (hasProjectData()) {
+            // Project data exists but no project file yet — ask user
+            QMessageBox msgBox(this);
+            msgBox.setIcon(QMessageBox::Information);
+            msgBox.setWindowTitle(QString::fromLatin1(AppInfo::Name));
+            msgBox.setText(tr("This file has project data (tables, pointers, formatting) "
+                              "that is not saved in the file itself."));
+            msgBox.setInformativeText(tr("To preserve all changes, save the project."));
+            auto *btnSaveProject = msgBox.addButton(tr("Save Project"), QMessageBox::AcceptRole);
+            msgBox.addButton(tr("File Only"), QMessageBox::RejectRole);
+            msgBox.setDefaultButton(btnSaveProject);
+            msgBox.exec();
+            if (msgBox.clickedButton() == btnSaveProject)
+                saveProjectAs();
         }
     }
 
@@ -1830,7 +1841,7 @@ bool MainWindow::loadTable()
         tableFilePath = fileName;
         addToRecentTables(fileName);
         if (m_document)
-            m_projectModified = true;
+            m_document->markDirty();
         statusBar()->showMessage(tr("Table loaded"), 2000);
     }
 
@@ -2249,7 +2260,7 @@ void MainWindow::onDockTableContentChanged()
     hexEdit->update();
 
     if (!m_restoringTableDockState && m_document)
-        m_projectModified = true;
+        m_document->markDirty();
 
     if (pointersDialog)
         pointersDialog->refreshFromTable();
@@ -2541,6 +2552,13 @@ EditorSession *MainWindow::createSession()
     session->editor = new HexEditor;
     session->isUntitled = true;
 
+    // When the document's dirty flag changes, refresh the tab title star.
+    session->document->setDirtyChangedCallback([this, session] {
+        const int tabIdx = m_sessions.indexOf(session);
+        if (tabIdx >= 0)
+            updateTabTitle(tabIdx);
+    });
+
     if (m_tabWidget->isHidden())
         m_tabWidget->show();
 
@@ -2586,9 +2604,10 @@ void MainWindow::connectEditorSignals(HexEditor *editor)
     connect(editor, SIGNAL(currentAddressChanged(qint64)), this, SLOT(setAddress(qint64)));
     connect(editor, SIGNAL(currentSizeChanged(qint64)), this, SLOT(setSize(qint64)));
     connect(editor, &HexEditor::lineBreaksChanged, this, [this]() {
-        m_projectModified = true;
+        if (m_document)
+            m_document->markDirty();
         if (m_currentSession)
-            m_currentSession->projectModified = true;
+            updateTabTitle(m_tabWidget->currentIndex());
         if (removeVirtualFormattingAct)
             removeVirtualFormattingAct->setEnabled(hexEdit && !hexEdit->lineBreaks().isEmpty());
         updateTabTitle(m_tabWidget->currentIndex());
@@ -2619,7 +2638,6 @@ void MainWindow::saveCurrentSession()
     m_currentSession->isUntitled = isUntitled;
     m_currentSession->curOffset = curOffset;
     m_currentSession->table = tb;
-    m_currentSession->projectModified = m_projectModified;
     m_currentSession->changeTrackingSnapshot = m_changeTrackingSnapshot;
     m_currentSession->detectedRomType = m_detectedRomType;
     m_currentSession->pointerOffset = m_pointerOffset;
@@ -2633,7 +2651,7 @@ void MainWindow::saveCurrentSession()
     m_currentSession->tablesDockVisible = m_tablesDock->isVisible();
     m_currentSession->tablesDockVisibilityInitialized = true;
     if (m_document)
-        m_document->useTable = useTableAct && useTableAct->isChecked();
+        m_document->useTable = (useTableAct && useTableAct->isChecked());
 
     // Save Find/Replace dialog state for this tab
     if (searchDialog) {
@@ -2664,7 +2682,6 @@ void MainWindow::restoreSession(EditorSession *session)
     tableFilePath = session->tableFilePath;
     isUntitled = session->isUntitled;
     curOffset = session->curOffset;
-    m_projectModified = session->projectModified;
     m_changeTrackingSnapshot = session->changeTrackingSnapshot;
     m_detectedRomType = session->detectedRomType;
     m_pointerOffset = session->pointerOffset;
@@ -2708,9 +2725,6 @@ void MainWindow::restoreSession(EditorSession *session)
     saveTableAct->setEnabled(hasTables);
     saveTableAsAct->setEnabled(hasTables);
     useTableAct->setChecked(hasTables && m_document && m_document->useTable);
-
-    // Keep the persisted project-modified state exactly as it was for this tab.
-    m_projectModified = session->projectModified;
 
     if (m_pointersDock && m_pointersDock->isVisible())
         m_pointersDock->refreshView();
@@ -2776,7 +2790,7 @@ void MainWindow::updateTabTitle(int index)
         title = tr("New file");
     else
         title = QFileInfo(s->curFile).fileName();
-    if ((s->editor && s->editor->isModified()) || s->projectModified)
+    if ((s->editor && s->editor->isModified()) || (s->document && s->document->isDirty()))
         title += QStringLiteral(" *");
     m_tabWidget->setTabText(index, title);
     m_tabWidget->setTabToolTip(index, s->curFile);
@@ -4159,7 +4173,7 @@ void MainWindow::openProjectFile(const QString &path)
         // Close current file/project without prompting (we're about to reload)
         m_document->projectFilePath.clear();
         m_document->projectName.clear();
-        m_projectModified = false;
+        m_document->clearDirty();
         m_document->originalBytes.clear();
         m_document->originalFileSize = -1;
         hexEdit->setData(QByteArray());
@@ -4257,22 +4271,22 @@ void MainWindow::openProjectFile(const QString &path)
     }
 
     // 3. Encoding
-    m_currentEncoding = doc.currentEncoding;
-    hexEdit->setCurrentEncoding(doc.currentEncoding);
+    m_currentEncoding = doc.currentEncoding();
+    hexEdit->setCurrentEncoding(doc.currentEncoding());
     if (lbEncoding)
-        lbEncoding->setText(doc.currentEncoding);
+        lbEncoding->setText(doc.currentEncoding());
     syncEncodingMenu();
 
     // 4. ROM type + byte order
-    m_detectedRomType = doc.romType;
-    m_pointerOffset = doc.pointerOffset;
-    m_pointerSize = doc.pointerSize;
+    m_detectedRomType = doc.romType();
+    m_pointerOffset = doc.pointerOffset();
+    m_pointerSize = doc.pointerSize();
     {
         const QSignalBlocker blocker(cbRomType);
-        cbRomType->setCurrentIndex(static_cast<int>(doc.romType));
-        syncRomTypeMenu(static_cast<int>(doc.romType));
+        cbRomType->setCurrentIndex(static_cast<int>(doc.romType()));
+        syncRomTypeMenu(static_cast<int>(doc.romType()));
     }
-    hexEdit->byteOrder = doc.byteOrder;
+    hexEdit->byteOrder = doc.byteOrder();
     updateEndiannesLabel();
 
     // 5. Pointers
@@ -4283,8 +4297,8 @@ void MainWindow::openProjectFile(const QString &path)
     // 6. Alignment (virtual line breaks) — block signal to avoid marking project modified on load
     {
         const QSignalBlocker blocker(hexEdit);
-        if (!doc.alignmentOffsets.isEmpty())
-            hexEdit->setLineBreaks(doc.alignmentOffsets);
+        if (!doc.alignmentOffsets().isEmpty())
+            hexEdit->setLineBreaks(doc.alignmentOffsets());
         else
             hexEdit->clearLineBreaks();
     }
@@ -4306,7 +4320,7 @@ void MainWindow::openProjectFile(const QString &path)
     rememberDirectory(QStringLiteral("kLastProjectDirKey"), path);
     m_tablesDock->setProjectName(m_document->projectName);
     statusBar()->showMessage(tr("Project loaded"), 2000);
-    m_projectModified = false;
+    m_document->clearDirty();
     updateWindowTitle();
     updateActionStates();
 
@@ -4331,7 +4345,7 @@ void MainWindow::openProjectFile(const QString &path)
     updateDockAreaActions();
 
     m_restoringProjectUi = false;
-    m_projectModified = false;
+    m_document->clearDirty();
     if (!m_document->originalBytes.isEmpty()) {
         refreshChangesView();
         enforceBottomDockEqualWidth();
@@ -4388,19 +4402,19 @@ bool MainWindow::saveProjectImpl(const QString &path)
     m_document->filePath = curFile;
     m_document->tableFilePath = tableFilePath;
     m_document->useTable = (useTableAct && useTableAct->isChecked());
-    m_document->currentEncoding = m_currentEncoding;
-    m_document->romType = m_detectedRomType;
-    m_document->pointerOffset = m_pointerOffset;
-    m_document->pointerSize = m_pointerSize;
-    m_document->byteOrder = hexEdit->byteOrder;
+    m_document->setCurrentEncoding(m_currentEncoding);
+    m_document->setRomType(m_detectedRomType);
+    m_document->setPointerOffset(m_pointerOffset);
+    m_document->setPointerSize(m_pointerSize);
+    m_document->setByteOrder(hexEdit->byteOrder);
     m_document->snapshotPointers(hexEdit->pointers());
-    m_document->showPointers = showPointersAct && showPointersAct->isChecked();
-    m_document->showChanges  = showChangesAct  && showChangesAct->isChecked();
-    m_document->changesHexMode = m_changesDock && m_changesDock->hexMode();
+    m_document->showPointers = (showPointersAct && showPointersAct->isChecked());
+    m_document->showChanges = (showChangesAct  && showChangesAct->isChecked());
+    m_document->changesHexMode = (m_changesDock && m_changesDock->hexMode());
     m_document->dockLayoutState = saveState();
     m_document->tablesColumnsState = m_tablesDock ? m_tablesDock->saveColumnsState() : QByteArray();
     m_document->cursorPosition = hexEdit->cursorPosition();
-    m_document->alignmentOffsets = hexEdit->lineBreaks();
+    m_document->setAlignmentOffsets(hexEdit->lineBreaks());
 
     // Recompute tracked diffs byte-by-byte.
     // If project already has an original baseline (e.g. loaded via "Load original"),
@@ -4516,9 +4530,7 @@ bool MainWindow::saveProjectImpl(const QString &path)
         settings.setValue(QStringLiteral("LastProjectFile"), path);
     }
     addToRecentProjects(path);
-    m_projectModified = false;
-    if (m_currentSession)
-        m_currentSession->projectModified = false;
+    m_document->clearDirty();
     updateWindowTitle();
     updateActionStates();
     updateTabTitle(m_tabWidget->currentIndex());
@@ -4540,7 +4552,7 @@ void MainWindow::loadFile(const QString &fileName)
     // Clear project state when loading a new file directly
     m_document->projectFilePath.clear();
     m_document->projectName.clear();
-    m_projectModified = false;
+    m_document->clearDirty();
 
     const QString canonicalIncoming = QFileInfo(fileName).canonicalFilePath();
     const QString incomingPath = canonicalIncoming.isEmpty() ? fileName : canonicalIncoming;
@@ -5167,7 +5179,7 @@ void MainWindow::setCurrentFile(const QString &fileName)
 
 bool MainWindow::maybeSaveProject()
 {
-    if (!m_document || !m_projectModified)
+    if (!m_document || !m_document->isDirty())
         return true;
 
     // Project data exists but has never been saved to a project file
@@ -5601,7 +5613,7 @@ void MainWindow::toggleShowChanges()
         m_document->showChanges = show;
 
     if (!m_restoringProjectUi && m_document && !m_document->projectFilePath.isEmpty())
-        m_projectModified = true;
+        m_document->markDirty();
 }
 
 void MainWindow::updateChangedBytesHighlight()
@@ -6173,8 +6185,8 @@ void MainWindow::onRomTypeChanged(int index)
     m_pointerOffset = defaultPointerOffset(m_detectedRomType);
     m_pointerSize = defaultPointerSize(m_detectedRomType);
     if (m_document) {
-        m_document->pointerOffset = m_pointerOffset;
-        m_document->pointerSize = m_pointerSize;
+        m_document->setPointerOffset(m_pointerOffset);
+        m_document->setPointerSize(m_pointerSize);
     }
 
     // Update byte order to match the new ROM type
@@ -6204,10 +6216,13 @@ void MainWindow::onMenuRomTypeTriggered(QAction *action)
     m_detectedRomType = static_cast<RomType>(index);
     m_pointerOffset = defaultPointerOffset(m_detectedRomType);
     m_pointerSize = defaultPointerSize(m_detectedRomType);
-    if (m_document) {
-        m_document->pointerOffset = m_pointerOffset;
-        m_document->pointerSize = m_pointerSize;
+
+    if (m_document)
+    {
+        m_document->setPointerOffset(m_pointerOffset);
+        m_document->setPointerSize(m_pointerSize);
     }
+
     hexEdit->byteOrder = defaultByteOrder(m_detectedRomType);
     updateEndiannesLabel();
     setAddress(hexEdit->getCurrentOffset());
@@ -6217,9 +6232,9 @@ void MainWindow::setCurrentPointerOffset(qint64 offset)
 {
     m_pointerOffset = offset;
     if (m_document)
-        m_document->pointerOffset = m_pointerOffset;
+        m_document->setPointerOffset(m_pointerOffset);
     if (!m_restoringProjectUi && m_document && !m_document->projectFilePath.isEmpty())
-        m_projectModified = true;
+        m_document->markDirty();
 }
 
 void MainWindow::setCurrentPointerSize(int size)
@@ -6228,9 +6243,9 @@ void MainWindow::setCurrentPointerSize(int size)
         return;
     m_pointerSize = size;
     if (m_document)
-        m_document->pointerSize = m_pointerSize;
+        m_document->setPointerSize(m_pointerSize);
     if (!m_restoringProjectUi && m_document && !m_document->projectFilePath.isEmpty())
-        m_projectModified = true;
+        m_document->markDirty();
 }
 
 void MainWindow::syncRomTypeMenu(int index)

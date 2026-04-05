@@ -1449,7 +1449,13 @@ qint64 HexEditor::cursorPosition(QPoint pos)
         int row = posY / rowStridePx;
         if (row < 0 || row >= _visualRowStartBytes.size())
             return -1;
-        qint64 rowByteStart = _visualRowStartBytes[row] - _bPosFirst;
+        const qint64 rowAbsStart = _visualRowStartBytes[row];
+        const int bytesThisRow = (row + 1 < _visualRowStartBytes.size())
+            ? static_cast<int>(_visualRowStartBytes[row + 1] - rowAbsStart)
+            : static_cast<int>(qMax(qint64(0), qMin((qint64)_bytesPerLine, _chunks->size() - rowAbsStart)));
+        if (bytesThisRow <= 0 || byteIndex >= bytesThisRow)
+            return -1;
+        qint64 rowByteStart = rowAbsStart - _bPosFirst;
 
         result = _bPosFirst * 2 + static_cast<qint64>(rowByteStart) * 2 + x;
     }
@@ -1483,6 +1489,7 @@ qint64 HexEditor::cursorPosition(QPoint pos)
         int accumulated = 0;
         int byteCol = 0; // lead byte of the entry being hit
 
+        bool hitSlot = false;
         if (_tb && !_tbDisplayChars.isEmpty())
         {
             const QFontMetrics fm(font());
@@ -1494,8 +1501,7 @@ qint64 HexEditor::cursorPosition(QPoint pos)
                 const int baseW = qMax(_pxCharWidth, fm.horizontalAdvance(_tbDisplayChars[idx]));
                 const int slotW = baseW + slotGapPx(baseW);
                 byteCol = col;
-                if (xPx < accumulated + slotW)
-                    break;
+                if (xPx < accumulated + slotW) { hitSlot = true; break; }
                 accumulated += slotW;
             }
         }
@@ -1511,8 +1517,7 @@ qint64 HexEditor::cursorPosition(QPoint pos)
                 const int baseW = qMax(_pxCharWidth, fm.horizontalAdvance(_encodingChars[idx]));
                 const int slotW = baseW + slotGapPx(baseW);
                 byteCol = col;
-                if (xPx < accumulated + slotW)
-                    break;
+                if (xPx < accumulated + slotW) { hitSlot = true; break; }
                 accumulated += slotW;
             }
         }
@@ -1527,11 +1532,15 @@ qint64 HexEditor::cursorPosition(QPoint pos)
                 if (xPx < accumulated + slotW)
                 {
                     byteCol = col;
+                    hitSlot = true;
                     break;
                 }
                 accumulated += slotW;
             }
         }
+
+        if (!hitSlot)
+            return -1;
 
         result = _bPosFirst * 2 + static_cast<qint64>(rowByteStart) * 2 + byteCol * 2;
     }

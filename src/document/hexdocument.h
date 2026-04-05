@@ -5,6 +5,8 @@
 #include <QVector>
 #include <QPair>
 #include <QMap>
+#include <QByteArray>
+#include <functional>
 
 #include "Datas.h"
 #include "romdetect.h"
@@ -12,7 +14,7 @@
 class TranslationTable;
 class PointerListModel;
 
-/// A named translation table entry for multi-table support.
+// A named translation table entry for multi-table support.
 struct DocTableEntry
 {
     QString name;
@@ -20,98 +22,138 @@ struct DocTableEntry
     bool isOriginal = false;            // true if this is the "original" encoding table
 };
 
-/// Per-file document state: everything that belongs to a single opened file
-/// and should be saved/restored as part of a project.
+// Per-file document state: everything that belongs to a single opened file
+// and should be saved/restored as part of a project.
+//
+// Properties that are serialised into the .rthp project file are tracked for
+// changes: calling a setter with a value different from the current one marks
+// the document as "dirty" (project needs saving).
 class HexDocument
 {
 public:
     HexDocument();
     ~HexDocument();
 
-    // --- File ---
+    // ---- Dirty (project-modified) tracking ----
+
+    // True when any project-relevant property has changed since the last
+    // clearDirty() call (i.e. since the project was saved).
+    bool isDirty() const { return m_dirty; }
+
+    // Explicitly mark the document as dirty (e.g. after external changes to
+    // tables, pointers, or virtual formatting that the document owns).
+    void markDirty();
+
+    // Clear the dirty flag (called after a successful project save).
+    void clearDirty();
+
+    // Install a callback that is invoked whenever the dirty flag transitions
+    // from clean → dirty.  Used by MainWindow to update tab title / star.
+    void setDirtyChangedCallback(std::function<void()> cb) { m_onDirtyChanged = std::move(cb); }
+
+    // ---- File (not dirty-tracked — metadata only) ----
+
     QString filePath;                       // canonical path to the data file
     bool    isUntitled = true;              // true when no file has been opened
 
-    // --- Translation tables (multi-table) ---
-    QVector<DocTableEntry> tables;          // all embedded tables (owned)
-    int activeTableIndex = -1;              // -1 = no active table
+    // ---- Project file (not dirty-tracked — save path only) ----
+
+    QString projectFilePath;                // path to the .rthp file (empty = unsaved)
+
+    // ---- Project name ----
+
+    QString projectName;
+
+    // ---- Translation tables (multi-table) ----
+
+    QVector<DocTableEntry> tables;
+    int activeTableIndex = -1;
 
     // Legacy single-table fields (populated when loading old projects)
     QString            tableFilePath;       // path to .tbl file (empty = none)
     TranslationTable  *translationTable = nullptr;  // in-memory table (owned)
-    bool               useTable = false;    // whether the table is active
 
-    // --- Encoding ---
-    QString currentEncoding = QStringLiteral("ASCII");
+    bool useTable = false;
 
-    // --- ROM / endianness ---
-    RomType   romType   = RomType::Unknown;
-    ByteOrder byteOrder = ByteOrder::LittleEndian;
-    qint64    pointerOffset = 0;
-    int       pointerSize = 4; // 2 или 4, размер указателя для поиска/проекта
+    // ---- Encoding ----
 
-    // --- Pointers ---
-    /// Serialisable snapshot of the pointer list.
-    /// Each entry: (pointerOffset, encodedValue) where encodedValue has
-    /// target address + pointer byte-size encoded in bits 61-62
-    /// (see PointerListModel::encodePtrValue).
-    QVector<QPair<qint64, qint64>> pointerSnapshot;
+    const QString &currentEncoding() const { return m_currentEncoding; }
+    void setCurrentEncoding(const QString &v);
 
-    // --- Cursor position ---
-    qint64 cursorPosition = 0;              // last active cursor offset in the editor
+    // ---- ROM / endianness ----
 
-    // --- Display settings ---
-    bool showPointers = true;               // whether pointer highlighting is visible
-    bool showChanges  = false;              // whether change highlighting is visible
-    bool changesHexMode = false;            // true = changes list shows hex, false = text
-    QByteArray dockLayoutState;             // QMainWindow::saveState() snapshot for this project
-    QByteArray tablesColumnsState;          // Tables dock column widths/state for this project
+    RomType romType() const { return m_romType; }
+    void setRomType(RomType v);
 
-    // --- Original bytes (pre-modification snapshots) ---
-    /// Groups of original bytes before user modifications.
-    /// Each entry: (offset, contiguousOriginalBytes).
-    /// Used for IPS patch generation and diff display.
+    ByteOrder byteOrder() const { return m_byteOrder; }
+    void setByteOrder(ByteOrder v);
+
+    qint64 pointerOffset() const { return m_pointerOffset; }
+    void setPointerOffset(qint64 v);
+
+    int  pointerSize() const { return m_pointerSize; }
+    void setPointerSize(int v);
+
+    // ---- Pointers ----
+
+    const QVector<QPair<qint64, qint64>> &pointerSnapshot() const { return m_pointerSnapshot; }
+    void setPointerSnapshot(const QVector<QPair<qint64, qint64>> &v);
+
+    // ---- Cursor position (saved but does NOT dirty the project) ----
+
+    qint64 cursorPosition = 0;
+
+    // ---- Display settings ----
+
+    bool showPointers = true;
+    bool showChanges  = false;
+    bool changesHexMode = false;
+
+    // Dock layout / columns state — saved to project but NOT dirty-tracked
+    // (pure UI geometry; losing it is harmless).
+    QByteArray dockLayoutState;
+    QByteArray tablesColumnsState;
+
+    // ---- Original bytes (pre-modification snapshots) ----
+
     QVector<QPair<qint64, QByteArray>> originalBytes;
-
-    /// True original file size before IPS expansion or "Load original" comparison.
-    /// -1 means "not set / same as current file size".
-    /// Used by updateChangedBytesHighlight() to place changedRange correctly.
     qint64 originalFileSize = -1;
 
-    // --- Alignment (virtual line breaks) ---
-    QVector<qint64> alignmentOffsets;       // sorted byte offsets for visual line breaks
+    // ---- Alignment (virtual line breaks) ----
 
-    // --- Project file ---
-    QString projectFilePath;                // path to the .rthp file (empty = unsaved)
-    QString projectName;                    // human-readable project name (from title: key)
+    const QVector<qint64> &alignmentOffsets() const { return m_alignmentOffsets; }
+    void setAlignmentOffsets(const QVector<qint64> &v);
 
     // ---- Serialisation (YAML .rthp) ----
 
-    /// Save document metadata to a .rthp YAML file.
-    /// Pass the list of tables and active index for multi-table support.
     bool saveProject(const QString &path,
                      const QVector<DocTableEntry> &tables,
                      int activeTableIndex);
 
-    /// Legacy overload: save with a single table (backward compat).
-    bool saveProject(const QString &path, const TranslationTable *table = nullptr);
-
-    /// Load document metadata from a .rthp YAML file.
-    /// Returns true on success.  After loading, the caller must:
-    ///   1. Open `filePath` in HexEditor
-    ///   2. Load `tableFilePath` into a TranslationTable if non-empty
-    ///   3. Restore pointers from `pointerSnapshot`
     bool loadProject(const QString &path);
 
-    /// Take a snapshot of pointers from the live PointerListModel
-    /// so they can be serialised later.
     void snapshotPointers(PointerListModel *model);
-
-    /// Restore pointers from `pointerSnapshot` into a live PointerListModel.
     void restorePointers(PointerListModel *model) const;
 
 private:
-    // Simple YAML helpers (flat key-value, no nesting beyond pointer list)
+    // Dirty tracking
+    bool m_dirty = false;
+    std::function<void()> m_onDirtyChanged;
+
+    // Private data
+
+    QString m_currentEncoding = QStringLiteral("ASCII");
+
+    RomType   m_romType   = RomType::Unknown;
+    ByteOrder m_byteOrder = ByteOrder::LittleEndian;
+    qint64    m_pointerOffset = 0;
+    int       m_pointerSize = 4;
+
+    QVector<QPair<qint64, qint64>> m_pointerSnapshot;
+
+    QVector<qint64> m_alignmentOffsets;
+
+    // Simple YAML helpers
     static QString yamlEscape(const QString &s);
     static QString yamlUnescape(const QString &s);
 };

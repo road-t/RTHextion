@@ -215,7 +215,6 @@ private:
     TranslationTable* tb = nullptr;
 
     HexDocument *m_document = nullptr;
-    bool m_projectModified = false;
     bool m_closing = false;
     bool m_restoringTableDockState = false;
     bool m_restoringProjectUi = false;
