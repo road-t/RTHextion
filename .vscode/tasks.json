@@ -41,7 +41,7 @@
         {
             "label": "Generate Debug Makefiles",
             "type": "shell",
-            "command": "/opt/homebrew/opt/qt@5/bin/qmake",
+            "command": "/usr/local/bin/qmake6",
             "args": ["-config", "debug", "../src/rthextion.pro"],
             "options": {
                 "cwd": "${workspaceFolder}/build_debug"
