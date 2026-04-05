@@ -3622,8 +3622,6 @@ void MainWindow::createMenus()
     pointersMenu->addAction(showPointersAct);
 
     viewMenu = menuBar()->addMenu(tr("View"));
-    viewMenu->addAction(showDarkThemeAct);
-    viewMenu->addSeparator();
 
     panelsMenu = viewMenu->addMenu(tr("Panels"));
     panelsMenu->addAction(showAddressAreaAct);
@@ -4292,8 +4290,10 @@ void MainWindow::openProjectFile(const QString &path)
 
     // 5. Pointers
     doc.restorePointers(hexEdit->pointers());
-    if (!m_restoringProjectUi)
-        pointersUpdated();
+    // Update action state only — don't call pointersUpdated() here because it
+    // calls markDirty() which would fire the tab-title callback before the
+    // document copy (*m_document = doc) resets m_dirty to false.
+    showPointersAct->setEnabled(!hexEdit->pointers()->empty());
 
     // 6. Alignment (virtual line breaks) — block signal to avoid marking project modified on load
     {
@@ -4313,6 +4313,15 @@ void MainWindow::openProjectFile(const QString &path)
     // 7. Store project association
     *m_document = doc;
     m_document->translationTable = nullptr; // MainWindow owns tb
+    // Re-install the dirty-change callback: copy-assignment wiped it.
+    if (m_currentSession) {
+        EditorSession *session = m_currentSession;
+        m_document->setDirtyChangedCallback([this, session] {
+            const int idx = m_sessions.indexOf(session);
+            if (idx >= 0)
+                updateTabTitle(idx);
+        });
+    }
 
     // 8. Remember project as last opened
     QSettings settings;
@@ -4347,6 +4356,10 @@ void MainWindow::openProjectFile(const QString &path)
 
     m_restoringProjectUi = false;
     m_document->clearDirty();
+    // Ensure the tab title reflects the now-clean document state (anything that
+    // ran between session creation and here may have left a stale '*' via the
+    // markDirty callback or from loadFile's pointersUpdated call).
+    updateTabTitle(m_tabWidget->currentIndex());
     if (!m_document->originalBytes.isEmpty()) {
         refreshChangesView();
         enforceBottomDockEqualWidth();
