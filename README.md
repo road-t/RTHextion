@@ -27,15 +27,32 @@ A hex editor for retrogames translation and ROMHacking, a tribute to 00's Transl
 
 ## Screenshots
 
+#### Changes storage and highlighting
 <img src="assets/general_view_1.png" alt="General view" width="800" />
+
+#### Virtual formatting for structured data visualization and editing
 <img src="assets/virtual_formatting.png" alt="Virtual formatting" width="800" />
+
+#### Pointers search and navigation with real-time preview and highlighting
 <img src="assets/general_view_2.png" alt="General view" width="800" />
+
+#### Multimodal find/replace with text/hex/table mode and relative search
 <img src="assets/find_replace.png" alt="Find/Replace window" width="600" />
+
+#### Automatic pointers search with various pointer types and heuristics, real-time preview and highlighting of found pointers, and navigation to referenced locations
 <img src="assets/pointer_quick_search.png" alt="Pointer quick search" width="800" />
+
+#### Multibyte characters support and highlighting
 <img src="assets/find_pointers.png" alt="Pointers search window" width="600" />
+
+#### Pointers hints in the hex view with referenced data preview
 <img src="assets/pointer_hint.png" alt="Pointer hint" width="800" />
 <img src="assets/pointers_view.png" alt="Pointers highlighting" width="800" />
+
+#### Data offsets with found pointers
 <img src="assets/pointed_data.png" alt="Data with found pointers" width="800" />
+
+#### Script dump and in-place editing with automatic pointers update and table support
 <img src="assets/script_dump.png" alt="Script dump window" width="600" />
 
 ## Supported ROM Formats
