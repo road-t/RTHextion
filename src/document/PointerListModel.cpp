@@ -79,12 +79,14 @@ QVariant PointerListModel::data(const QModelIndex &index, int role) const
 
 void PointerListModel::sort(int column, Qt::SortOrder order)
 {
-    // Columns 1 (Pointer) and 2 (Offset) are sortable; column 0 is row #
+    // Column 1: Offset (where pointer is stored)
+    // Column 2: Pointer value (target address)
+    // Column 0 (row #) and column 3 (data) are not sortable
     if (column < 1 || column > 2)
         return;
 
     beginResetModel();
-    _sortColumn = column - 1;  // map UI column to internal sort index
+    _sortColumn = column;  // column 1 or 2 directly
     _sortOrder = order;
     rebuildRowOrder();
     endResetModel();
@@ -325,10 +327,16 @@ void PointerListModel::rebuildRowOrder()
 
     auto comparator = [this](qint64 lhs, qint64 rhs)
     {
-        if (_sortColumn == 0)
+        if (_sortColumn == 1)
         {
-            const qint64 lv = _pointers.value(lhs);
-            const qint64 rv = _pointers.value(rhs);
+            // Sort by Offset (key): where the pointer is stored
+            return (_sortOrder == Qt::AscendingOrder) ? (lhs < rhs) : (lhs > rhs);
+        }
+        else if (_sortColumn == 2)
+        {
+            // Sort by Pointer value (target address): decode and compare target values
+            const qint64 lv = decodePtrTarget(_pointers.value(lhs));
+            const qint64 rv = decodePtrTarget(_pointers.value(rhs));
 
             if (lv == rv)
                 return (_sortOrder == Qt::AscendingOrder) ? (lhs < rhs) : (lhs > rhs);

@@ -82,7 +82,7 @@ private:
     QMap<qint64, qint64> _pointers;
     QMultiMap<qint64, qint64> _offsets;
     QVector<qint64> _rowOrder;
-    int _sortColumn = 0;
+    int _sortColumn = 1;  // Default sort by Offset column (column 1)
     Qt::SortOrder _sortOrder = Qt::AscendingOrder;
 
     QStringList sectionName;
