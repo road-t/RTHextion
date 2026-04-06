@@ -2,66 +2,52 @@
 
 All notable changes to this project will be documented in this file.
 
-## [v2.0 beta 3] - 2026-04-06
+## [v2.0] - 2026-04-06
 
 ### Added
-- **Virtual formatting**: define virtual line breaks in the hex view to mirror the logical structure of file data (e.g. fixed-width records, text blocks) without modifying the file; line breaks are saved per project
-- *Virtual Format dialog*: scan for a specific byte value (hex, raw, or translation table entry) and automatically insert virtual line breaks — supports "ignore repeated" option for consecutive matches
-
-### Changed
-- Dark theme is now auto-detected from OS settings on first launch; the manual "Dark theme" menu toggle has been removed
-- Script editor toolbar icons updated (Dump Script, Insert Script)
-- Removed 'Close' from File menu
-
-### Fixed
-- Dark theme rendering issues on Windows 11 (hex area color, palette handling, style fixes)
-- Project files incorrectly marked as modified immediately after opening
-
-## [v2.0 beta 2] - 2026-04-02
-
-### Added
-- *'Fill with'* functionality
-- Address area zeros color customization
-
-### Fixed
-- Large file handling performance and memory usage optimizations
-
-### Changed
-- Find/Replace dialog simplified  
-
-## [v2.0 beta 1] - 2026-03-31
-
-### Fixed
-- Fixed various minor bugs and edge cases in pointer handling, translation table application
-- Dock windows collapsing/expanding and visibility toggling fixed
-
-### Changed
-- Find/Replace functionality significantly improved with separate tables support and better UX
-- Empty file editing — click in the hex or ASCII area of an empty file to create the first byte and immediately start typing
-
-## [v2.0 alpha] - 2026-03-20
-
-### Added
-- Projects support:
-  - Multiple tables support
-  - Pointers/data list
+- **Projects support**:
+  - Multiple translation tables per project
+  - Pointers/data list management
   - Original data import/preservation for safe editing and comparison
   - IPS patch generation and import
-- New "Changes" dock widget:
+- **New "Changes" dock widget**:
   - Live list of all modifications to the current file
-  - Hex/Text display modes
-  - Tables support
+  - Hex/Text display modes with translation table support
   - Clickable entries for quick navigation to changes
-- New Pointers dock widget:
+- **New "Pointers" dock widget**:
   - Pointer list with clickable entries for quick navigation and pointer management
-- Persistent multi-tab sessions — all open files and projects, their positions, and translation table/pointer dock state now saved automatically on exit and restored on next launch
-
-### Fixed
-- Missing and incorrect translations
+- **Persistent multi-tab sessions** — all open files, projects, their positions, and dock widget state saved automatically on exit and restored on next launch
+- **Virtual formatting**: define virtual line breaks in the hex view to mirror logical file structure (e.g. fixed-width records, text blocks) without modifying the file; line breaks are saved per project
+- **Virtual Format dialog**: scan for a specific byte value and automatically insert virtual line breaks — supports "ignore repeated" option; active translation table is pre-selected when opening the dialog
+- **New file** (Cmd/Ctrl+T): creates a new empty file in a fresh tab, opens in INSERT mode with UTF-8 encoding; toolbar button and icon added
+- **"Copy to a new tab"** context menu item: copies current selection to a new tab, preserving ROM type and byte order
+- **Tables dock — "Copy to" button**: copies the current translation table to any other tab; an overlay dims the window and highlights the tab bar for easy target selection; Use table is automatically activated in destination tab
+- **Cmd/Ctrl+W** shortcut to close the current tab
+- **Insert Script dialog enhancement**: table selector (combobox) replaces "Use table" checkbox — lists all available translation tables, disabled if none are present
+- **'Fill with'** functionality
+- **Address area zeros color** customization
 
 ### Changed
-- Table editor moved into a side dock widget for easier access and multi-table management
-- Find pointers window lost the pointers list for pointers widget
+- **Table editor** moved into a side dock widget for easier access and multi-table management
+- **Dark theme** now auto-detected from OS settings on first launch; manual "Dark theme" menu toggle removed
+- **Find/Replace functionality** significantly improved with separate tables support and better UX
+- **Find/Replace dialog** simplified
+- **Empty file editing** — click in hex or ASCII area of an empty file to create the first byte and immediately start typing
+- **Script editor toolbar icons** updated (Dump Script, Insert Script)
+- **Removed 'Close'** from File menu
+- **Preferences → Hotkeys**: "Use table" entry renamed to "New file" (Cmd/Ctrl+T); Use table no longer has a configurable shortcut
+- **Find pointers window** updated to work with new Pointers dock widget
+
+### Fixed
+- **Dark theme** rendering issues on Windows 11 (hex area color, palette handling, style fixes)
+- **Project files** incorrectly marked as modified immediately after opening
+- **Cmd/Ctrl+W** not firing when the Close action was removed from the File menu
+- **Virtual Format dialog** active table pre-selection
+- **Large file handling** performance and memory usage optimizations
+- **Dock windows** collapsing/expanding and visibility toggling
+- **Various minor bugs** in pointer handling and translation table application
+- **Missing and incorrect translations** in UI
+- **Tooltip translations** now properly update when changing language (Use table, Show pointers buttons)
 
 ## [v1.1.6] - 2026-03-14
 

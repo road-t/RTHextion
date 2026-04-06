@@ -12,7 +12,7 @@ A hex editor for retrogames translation and ROMHacking, a tribute to 00's Transl
 - **Multi-tab workspace** with persistent session — open multiple files/projects simultaneously, all tabs and their state saved and restored on restart
 - Dock widgets for convenient workflow:
   - **Pointers dock** — search data pointers and navigate to referenced locations with real-time preview
-  - **Translation tables dock** — view, edit, and switch between translation tables without leaving the editor  
+  - **Translation tables dock** — view, edit, and switch between translation tables without leaving the editor
   - **Changes dock** — track all modifications to the current file
 - Translation tables support with built-in editor and semi-automatic translation tables generation
 - Advanced data pointers search and navigation
