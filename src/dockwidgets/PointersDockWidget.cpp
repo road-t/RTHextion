@@ -154,6 +154,8 @@ void PointersDockWidget::refreshView()
 void PointersDockWidget::retranslateUi()
 {
     setWindowTitle(tr("Pointers"));
+    if (m_showPointersBtn)
+        m_showPointersBtn->setToolTip(tr("Show pointers"));
     m_findAct->setText(tr("Find pointers"));
     m_addAct->setText(tr("Add"));
     m_deleteAct->setText(tr("Delete"));

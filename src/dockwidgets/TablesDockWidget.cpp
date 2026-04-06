@@ -495,6 +495,8 @@ const QVector<TableTab> &TablesDockWidget::allTables() const
 void TablesDockWidget::retranslateUi()
 {
     setWindowTitle(tr("Tables"));
+    if (m_useTableBtn)
+        m_useTableBtn->setToolTip(tr("Use table"));
     if (m_addBtn)
         m_addBtn->setToolTip(tr("Add"));
     m_addAct->setText(tr("Blank"));
