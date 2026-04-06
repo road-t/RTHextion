@@ -4766,6 +4766,17 @@ void MainWindow::readSettings()
     else
         applyDarkTheme(darkTheme);
 
+    // If dark theme is active but the editor color settings are still from a
+    // light theme (e.g. the user enabled system dark mode after the first
+    // launch, or DarkTheme was set without migrating editor colors), apply the
+    // dark editor defaults now so text is readable.  The heuristic is simple:
+    // if dark mode is on and HexAreaBackgroundColor is either absent or has a
+    // high lightness value (> 180), the settings are light-themed.
+    if (darkTheme) {
+        const QColor hexBg = settings.value(QStringLiteral("HexAreaBackgroundColor")).value<QColor>();
+        if (!hexBg.isValid() || hexBg.lightness() > 180)
+            EditorTheme::defaultDark().applyToSettings();
+    }
 
     hexEdit->setAddressArea(settings.value("AddressArea", true).toBool());
     hexEdit->setAsciiArea(settings.value("AsciiArea", true).toBool());
