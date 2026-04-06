@@ -2,7 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
-## [v2.0 beta 2] - 2026-04-05
+## [v2.0 beta 3] - 2026-04-06
+
+### Added
+- **Virtual formatting**: define virtual line breaks in the hex view to mirror the logical structure of file data (e.g. fixed-width records, text blocks) without modifying the file; line breaks are saved per project
+- *Virtual Format dialog*: scan for a specific byte value (hex, raw, or translation table entry) and automatically insert virtual line breaks — supports "ignore repeated" option for consecutive matches
+
+### Changed
+- Dark theme is now auto-detected from OS settings on first launch; the manual "Dark theme" menu toggle has been removed
+- Script editor toolbar icons updated (Dump Script, Insert Script)
+
+### Fixed
+- Dark theme rendering issues on Windows 11 (hex area color, palette handling, style fixes)
+- Project files incorrectly marked as modified immediately after opening
+
+## [v2.0 beta 2] - 2026-04-02
 
 ### Added
 - *'Fill with'* functionality

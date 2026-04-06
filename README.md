@@ -21,6 +21,8 @@ A hex editor for retrogames translation and ROMHacking, a tribute to 00's Transl
 - Byte order switch (big-endian/little-endian/byte-swapped)
 - Auto-detect ROM type, default byte order and required pointer arithmetics
 - Customizable user interface with 7 languages (English, Russian, French, German, Spanish, Portuguese, Japanese, Chinese)
+- UI theme support (light/dark) with customizable colors and fonts
+- Virtual format support for visualizing and editing data in a structured way
 - Cross-platform support (Windows, macOS, Linux)
 
 ## Screenshots
