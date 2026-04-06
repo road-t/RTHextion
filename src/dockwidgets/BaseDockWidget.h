@@ -26,6 +26,14 @@ public:
 
     /// Paint a 16×16 eye icon using the given color.
     static QIcon makeEyeIcon(const QColor &col);
+    /// Paint a 16×16 "+" add icon.
+    static QIcon makeAddIcon(const QColor &col);
+    /// Paint a 16×16 "×" remove icon.
+    static QIcon makeRemoveIcon(const QColor &col);
+    /// Paint a 16×16 "→□" copy-to-tab icon.
+    static QIcon makeCopyToIcon(const QColor &col);
+    /// Paint a 16×16 export (↓ arrow + baseline) icon.
+    static QIcon makeExportIcon(const QColor &col);
 
 protected:
     /// Call from subclass constructor after creating the content widget.

@@ -893,6 +893,7 @@ void OptionsDialog::changeEvent(QEvent *event)
 void OptionsDialog::initHotkeysTab()
 {
     m_hotkeys = {
+        {"New file",           "hotkey_New",            QKeySequence(Qt::CTRL | Qt::Key_T)},
         {"Open...",           "hotkey_Open",          QKeySequence(QKeySequence::Open)},
         {"Save",              "hotkey_Save",           QKeySequence(QKeySequence::Save)},
         {"Save As...",        "hotkey_SaveAs",         QKeySequence(QKeySequence::SaveAs)},
@@ -903,8 +904,7 @@ void OptionsDialog::initHotkeysTab()
         {"Copy",              "hotkey_Copy",           QKeySequence(QKeySequence::Copy)},
         {"Paste",             "hotkey_Paste",          QKeySequence(QKeySequence::Paste)},
         {"Find/Replace",      "hotkey_Find",           QKeySequence(QKeySequence::Find)},
-        {"Jump to offset",    "hotkey_Goto",           QKeySequence(QKeySequence::FindNext)},
-        {"Use table",         "hotkey_UseTable",       QKeySequence(QKeySequence::AddTab)},
+        {"Jump to offset",    "hotkey_Goto",           QKeySequence(QKeySequence::FindNext)},   
         {"Find pointers",     "hotkey_FindPointers",   QKeySequence(QKeySequence::New)},
         {"Edit script",       "hotkey_EditScript",    QKeySequence(Qt::CTRL | Qt::Key_E)},
         {"Previous position", "hotkey_PrevPos",        QKeySequence(Qt::CTRL | Qt::Key_BracketLeft)},

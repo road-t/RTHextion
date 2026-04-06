@@ -9,6 +9,7 @@
 #include "QtWidgets/qabstractbutton.h"
 #include "translationtable.h"
 #include "romdetect.h"
+#include "TablesDockWidget.h"
 
 namespace Ui {
 class InsertScriptDialog;
@@ -23,6 +24,7 @@ public:
     ~InsertScriptDialog();
     void updateText();
     void setRomProfile(int pointerSize, qint64 pointerOffset);
+    void setAvailableTables(const QVector<TableTab> &tables);
 
 protected:
     void showEvent(QShowEvent *ev) override;
@@ -39,6 +41,7 @@ private:
     Ui::InsertScriptDialog *ui;
     HexEditor *hexEdit;
     TranslationTable* tb;
+    QVector<TableTab> m_tables;
     int _pointerSize = 4;
     qint64 _pointerOffset = 0;
 

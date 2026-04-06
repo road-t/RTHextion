@@ -111,11 +111,12 @@ void BaseDockWidget::resetCollapse()
 }
 
 // -----------------------------------------------------------------------
-// Theme-aware eye icon
+// Theme-aware icons
 // -----------------------------------------------------------------------
 
 QIcon BaseDockWidget::makeEyeIcon(const QColor &col)
 {
+    // On state: filled pupil. Off state: diagonal slash through pupil area.
     auto paint = [&col](bool filled) -> QPixmap {
         const int sz = 16;
         QPixmap pm(sz, sz);
@@ -123,18 +124,33 @@ QIcon BaseDockWidget::makeEyeIcon(const QColor &col)
         QPainter p(&pm);
         p.setRenderHint(QPainter::Antialiasing);
         p.setPen(QPen(col, 1.3));
-        QPainterPath lens;
+
+        // Lens shape — 30 % less tall than original (ry reduced by 0.3)
         const float cx = sz * 0.5f, cy = sz * 0.5f;
-        const float rx = sz * 0.44f, ry = sz * 0.27f;
+        const float rx = sz * 0.44f, ry = sz * 0.189f; // was 0.27f
+
+        QPainterPath lens;
         lens.moveTo(cx - rx, cy);
         lens.cubicTo(cx - rx * 0.4f, cy - ry * 2.0f,
                      cx + rx * 0.4f, cy - ry * 2.0f, cx + rx, cy);
         lens.cubicTo(cx + rx * 0.4f, cy + ry * 2.0f,
                      cx - rx * 0.4f, cy + ry * 2.0f, cx - rx, cy);
         p.drawPath(lens);
+
         const float pr = ry * 0.72f;
-        if (filled) { p.setBrush(col); p.setPen(Qt::NoPen); }
-        p.drawEllipse(QPointF(cx, cy), pr, pr);
+        if (filled) {
+            // Filled pupil (On state — table active)
+            p.setBrush(col);
+            p.setPen(Qt::NoPen);
+            p.drawEllipse(QPointF(cx, cy), pr, pr);
+        } else {
+            // Off state: unfilled pupil with diagonal slash from corner to corner
+            p.setBrush(Qt::NoBrush);
+            p.setPen(QPen(col, 1.3));
+            p.drawEllipse(QPointF(cx, cy), pr, pr);
+            // Diagonal slash from lower-left corner to upper-right corner of entire icon
+            p.drawLine(QPointF(3.5, sz - 3.5), QPointF(sz - 3.5, 3.5));
+        }
         return pm;
     };
     QIcon icon;
@@ -143,6 +159,75 @@ QIcon BaseDockWidget::makeEyeIcon(const QColor &col)
     icon.addPixmap(paint(false), QIcon::Disabled, QIcon::Off);
     return icon;
 }
+
+QIcon BaseDockWidget::makeAddIcon(const QColor &col)
+{
+    const int sz = 16;
+    QPixmap pm(sz, sz);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(col, 1.5, Qt::SolidLine, Qt::RoundCap));
+    // "+" — horizontal and vertical bars
+    p.drawLine(QPointF(3.5, 8),  QPointF(12.5, 8));
+    p.drawLine(QPointF(8,   3.5), QPointF(8,   12.5));
+    return QIcon(pm);
+}
+
+QIcon BaseDockWidget::makeRemoveIcon(const QColor &col)
+{
+    const int sz = 16;
+    QPixmap pm(sz, sz);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(col, 1.5, Qt::SolidLine, Qt::RoundCap));
+    // "−" (minus sign) — horizontal bar only
+    p.drawLine(QPointF(3.5, 8), QPointF(12.5, 8));
+    return QIcon(pm);
+}
+
+QIcon BaseDockWidget::makeCopyToIcon(const QColor &col)
+{
+    // Arrow (→) pointing into a small rectangle (target tab)
+    const int sz = 16;
+    QPixmap pm(sz, sz);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(col, 1.3, Qt::SolidLine, Qt::RoundCap));
+
+    // Arrow shaft: left side → into the rectangle
+    p.drawLine(QPointF(1.5, 8), QPointF(9, 8));
+    // Arrowhead
+    p.drawLine(QPointF(7, 5.5), QPointF(9, 8));
+    p.drawLine(QPointF(7, 10.5), QPointF(9, 8));
+    // Target rectangle (tab)
+    p.setPen(QPen(col, 1.3, Qt::SolidLine, Qt::SquareCap));
+    p.drawRect(QRectF(10, 3.5, 4.5, 9));
+    return QIcon(pm);
+}
+
+QIcon BaseDockWidget::makeExportIcon(const QColor &col)
+{
+    // Down arrow + baseline (export / save to file)
+    const int sz = 16;
+    QPixmap pm(sz, sz);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(col, 1.5, Qt::SolidLine, Qt::RoundCap));
+    // Shaft
+    p.drawLine(QPointF(8, 2),  QPointF(8, 11));
+    // Arrowhead
+    p.drawLine(QPointF(5, 8.5), QPointF(8, 11));
+    p.drawLine(QPointF(11, 8.5), QPointF(8, 11));
+    // Baseline
+    p.setPen(QPen(col, 1.5, Qt::SolidLine, Qt::SquareCap));
+    p.drawLine(QPointF(3, 13.5), QPointF(13, 13.5));
+    return QIcon(pm);
+}
+
 
 // -----------------------------------------------------------------------
 // Palette change

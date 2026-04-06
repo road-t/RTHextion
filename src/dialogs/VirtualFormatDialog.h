@@ -19,6 +19,7 @@ class VirtualFormatDialog : public QDialog
 
 public:
     explicit VirtualFormatDialog(const QVector<TableTab> &tables,
+                                 int activeTableIndex = -1,
                                  QWidget *parent = nullptr);
 
     QByteArray character() const;

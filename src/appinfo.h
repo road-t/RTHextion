@@ -3,7 +3,7 @@
 
 namespace AppInfo {
 inline constexpr const char* Name = "RTHextion";
-inline constexpr const char *Version = "2.0 beta 3";
+inline constexpr const char *Version = "2.0";
 }
 
 #endif

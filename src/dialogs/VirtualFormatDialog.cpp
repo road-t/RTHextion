@@ -22,6 +22,7 @@ static int s_vfLastLines = 1;
 static bool s_vfLastIgnoreRepeated = false;
 
 VirtualFormatDialog::VirtualFormatDialog(const QVector<TableTab> &tables,
+                                         int activeTableIndex,
                                          QWidget *parent)
     : QDialog(parent)
     , _tables(tables)
@@ -93,9 +94,12 @@ VirtualFormatDialog::VirtualFormatDialog(const QVector<TableTab> &tables,
     connect(_cbSymbol, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &VirtualFormatDialog::updateOkEnabled);
 
-    // Restore last used table selection
-    if (s_vfLastTableIndex >= 0 && s_vfLastTableIndex < _cbTable->count())
-        _cbTable->setCurrentIndex(s_vfLastTableIndex);
+    // Preselect: active table if given, otherwise last used selection
+    const int comboTarget = (activeTableIndex >= 0 && activeTableIndex < _tables.size())
+                                ? activeTableIndex + 2  // +2 for Hex/Raw
+                                : s_vfLastTableIndex;
+    if (comboTarget >= 0 && comboTarget < _cbTable->count())
+        _cbTable->setCurrentIndex(comboTarget);
 
     // Restore last used symbol
     if (_symbolStack->currentIndex() == 0) {

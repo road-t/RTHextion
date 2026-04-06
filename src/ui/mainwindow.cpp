@@ -25,11 +25,18 @@
 #include <QLocale>
 #include <QTimer>
 #include <QTabWidget>
+#include <QTabBar>
 #include <QStyleFactory>
 #include <QMouseEvent>
 #include <QChildEvent>
 #include <QInputDialog>
 #include <QFile>
+#include <QPushButton>
+#include <QPainter>
+#include <QFontMetrics>
+#include <QPointer>
+#include <memory>
+#include <functional>
 #ifdef Q_OS_MAC
 #include "macostheme.h"
 #endif
@@ -591,11 +598,19 @@ void MainWindow::closeFile()
 
 void MainWindow::newFile()
 {
-    // In multi-tab mode: create a new tab if current has content, else reuse current empty tab
-    if (m_sessions.isEmpty() || !isUntitled || (hexEdit && hexEdit->isModified())) {
-        createSession();
-    }
+    createSession();
     setCurrentFile("");
+
+    // New files start in INSERT mode with UTF-8 encoding
+    if (hexEdit) {
+        hexEdit->setOverwriteMode(false);
+        m_currentEncoding = QStringLiteral("UTF-8");
+        hexEdit->setCurrentEncoding(m_currentEncoding);
+        if (lbEncoding)
+            lbEncoding->setText(m_currentEncoding);
+        syncEncodingMenu();
+    }
+
     statusBar()->showMessage(tr("New file created"), 2000);
 }
 
@@ -932,7 +947,9 @@ void MainWindow::showVirtualFormatDialog(qint64 rangeFrom, qint64 rangeTo)
     if (!hexEdit) return;
 
     const QVector<TableTab> tables = m_tablesDock ? m_tablesDock->allTables() : QVector<TableTab>();
-    VirtualFormatDialog dlg(tables, this);
+    const int activeTableIdx = (m_tablesDock && useTableAct && useTableAct->isChecked())
+                                    ? m_tablesDock->currentIndex() : -1;
+    VirtualFormatDialog dlg(tables, activeTableIdx, this);
     if (dlg.exec() != QDialog::Accepted)
         return;
 
@@ -1130,6 +1147,7 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         QAction *copyAddress = nullptr;
         QAction *cut = nullptr;
         QAction *copy = nullptr;
+        QAction *copyToNewTab = nullptr;
         QAction *paste = nullptr;
     };
 
@@ -1152,6 +1170,8 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
             acts.copy = menu.addAction(tr("Copy"));
         acts.copy->setShortcut(QKeySequence::Copy);
         acts.copy->setEnabled(hasSelection);
+        acts.copyToNewTab = menu.addAction(tr("Copy to a new tab"));
+        acts.copyToNewTab->setEnabled(hasSelection);
         if (isHexArea)
             acts.paste = menu.addAction(tr("Paste hex values"));
         else
@@ -1225,6 +1245,35 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
                 // Hex area: space-separated uppercase hex pairs
                 QApplication::clipboard()->setText(QString::fromLatin1(raw.toHex(' ')).toUpper());
             }
+            return true;
+        }
+
+        if (chosen == acts.copyToNewTab && acts.copyToNewTab)
+        {
+            const qint64 selBegin = hexEdit->getSelectionBegin();
+            const qint64 selEnd   = hexEdit->getSelectionEnd();
+            const QByteArray raw = hexEdit->dataAt(selBegin, selEnd - selBegin);
+
+            // Remember source settings before tab switch
+            const auto srcByteOrder = hexEdit->byteOrder;
+            const auto srcRomType = m_detectedRomType;
+
+            // Create new tab and paste data
+            newFile();
+            hexEdit->insert(0, raw);
+            hexEdit->setCursorPosition(0);
+
+            // Copy settings from source tab
+            hexEdit->byteOrder = srcByteOrder;
+            m_detectedRomType = srcRomType;
+            m_pointerOffset = defaultPointerOffset(srcRomType);
+            m_pointerSize = defaultPointerSize(srcRomType);
+            if (cbRomType) {
+                const QSignalBlocker blocker(cbRomType);
+                cbRomType->setCurrentIndex(static_cast<int>(srcRomType));
+            }
+            syncRomTypeMenu(static_cast<int>(srcRomType));
+            updateEndiannesLabel();
             return true;
         }
 
@@ -1398,7 +1447,7 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
             menu.addSeparator();
             editScriptAct1 = menu.addAction(tr("Edit script..."));
             if (!isReadOnly)
-                fillWithAct1 = menu.addAction(tr("Fill with..."));
+                fillWithAct1 = menu.addAction(tr("Fill with") + "...");
             vfFormatAct1 = menu.addAction(tr("Virtually format") + "...");
             vfRemoveAct1 = menu.addAction(tr("Remove virtual formatting"));
         }
@@ -1507,7 +1556,7 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
             menu.addSeparator();
             editScriptAct2 = menu.addAction(tr("Edit script..."));
             if (!isReadOnly)
-                fillWithAct2 = menu.addAction(tr("Fill with..."));
+                fillWithAct2 = menu.addAction(tr("Fill with") + "...");
             vfFormatAct2 = menu.addAction(tr("Virtually format") + "...");
             vfRemoveAct2 = menu.addAction(tr("Remove virtual formatting"));
         }
@@ -1650,7 +1699,7 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         menu.addSeparator();
         editScriptAct3 = menu.addAction(tr("Edit script..."));
         if (!isReadOnly)
-            fillWithAct3 = menu.addAction(tr("Fill with..."));
+            fillWithAct3 = menu.addAction(tr("Fill with") + "...");
         vfFormatAct3 = menu.addAction(tr("Virtually format") + "...");
         vfRemoveAct3 = menu.addAction(tr("Remove virtual formatting"));
     }
@@ -2379,6 +2428,7 @@ void MainWindow::insertScript()
     if (!insertScriptDialog)
         insertScriptDialog = new InsertScriptDialog(hexEdit, this);
 
+    insertScriptDialog->setAvailableTables(m_tablesDock ? m_tablesDock->allTables() : QVector<TableTab>());
     insertScriptDialog->setRomProfile(currentPointerSize(), currentPointerOffset());
     insertScriptDialog->show();
 }
@@ -2420,6 +2470,8 @@ void MainWindow::init()
             this, &MainWindow::onDockTableContentChanged);
     connect(m_tablesDock, &TablesDockWidget::generateTableRequested,
             this, &MainWindow::showSemiAutoTableDialog);
+    connect(m_tablesDock, &TablesDockWidget::copyToTabRequested,
+            this, &MainWindow::startCopyTableToTab);
     connect(m_tablesDock, &TablesDockWidget::useTableToggled, this, [this](bool checked) {
         if (useTableAct->isEnabled()) {
             useTableAct->setChecked(checked);
@@ -2901,11 +2953,208 @@ void MainWindow::loadFileInNewTab(const QString &fileName)
 
 // ---------- End session / tab management ----------
 
+// ---------------------------------------------------------------------------
+// Tab-picker overlay — a frameless top-level translucent window that dims the
+// whole main window except for the tab bar, letting the user click a tab to
+// select the copy destination.
+//
+// On macOS (and generally with WA_TranslucentBackground) transparent pixels of
+// a top-level window are click-through at the OS level, so mouse events in the
+// hole go directly to the real tab bar widget. We install an event filter on
+// that tab bar to intercept the click BEFORE it switches the tab, then invoke
+// our callback which explicitly switches to the target tab and copies the table.
+// ---------------------------------------------------------------------------
+namespace {
+
+class TabPickerOverlay : public QWidget
+{
+public:
+    TabPickerOverlay(QWidget *mainWindow,
+                     QTabWidget *tabs,
+                     const QString &instructionText,
+                     std::function<void(int)> onTabSelected,
+                     std::function<void()>    onCanceled)
+        : QWidget(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint)
+        , m_tabs(tabs)
+        , m_text(instructionText)
+        , m_onTabSelected(std::move(onTabSelected))
+        , m_onCanceled(std::move(onCanceled))
+    {
+        setAttribute(Qt::WA_TranslucentBackground);
+        setAttribute(Qt::WA_DeleteOnClose);
+        setAttribute(Qt::WA_ShowWithoutActivating);
+        setGeometry(mainWindow->geometry());
+        // Intercept clicks that pass through the transparent hole to the real tab bar
+        if (m_tabs && m_tabs->tabBar())
+            m_tabs->tabBar()->installEventFilter(this);
+        show();
+    }
+
+    ~TabPickerOverlay() override
+    {
+        if (m_tabs && m_tabs->tabBar())
+            m_tabs->tabBar()->removeEventFilter(this);
+    }
+
+protected:
+    // Tab bar rect expressed in this overlay's local coordinates
+    QRect tabBarRectInOverlay() const
+    {
+        if (!m_tabs || !m_tabs->tabBar()) return {};
+        QTabBar *tb = m_tabs->tabBar();
+        return QRect(mapFromGlobal(tb->mapToGlobal(QPoint(0, 0))), tb->size());
+    }
+
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+
+        // Dim the whole overlay
+        p.fillRect(rect(), QColor(0, 0, 0, 160));
+
+        const QRect tbr = tabBarRectInOverlay();
+        if (tbr.isEmpty()) return;
+
+        // Punch a transparent hole so the real tab bar shows through
+        p.setCompositionMode(QPainter::CompositionMode_Clear);
+        p.fillRect(tbr, Qt::transparent);
+        p.setCompositionMode(QPainter::CompositionMode_SourceOver);
+
+        // Blue highlight border around the tab bar
+        p.setPen(QPen(QColor(80, 160, 255, 230), 2));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(tbr.adjusted(-2, -2, 2, 2));
+
+        // Instruction label drawn below the tab bar
+        QFont f = font();
+        f.setPointSize(11);
+        p.setFont(f);
+        const QFontMetrics fm(f);
+        const int tw = fm.horizontalAdvance(m_text);
+        const int th = fm.height();
+        const int px = qBound(4, tbr.left(), rect().right() - tw - 28);
+        const int py = qMin(tbr.bottom() + 12, rect().bottom() - th - 16);
+        const QRect bg(px, py, tw + 24, th + 12);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(30, 30, 30, 220));
+        p.drawRoundedRect(bg, 6, 6);
+        p.setPen(Qt::white);
+        p.drawText(bg, Qt::AlignCenter, m_text);
+    }
+
+    // Clicks that stayed on the dark area (not in the transparent hole)
+    void mousePressEvent(QMouseEvent *) override
+    {
+        if (m_done) return;
+        auto cb = m_onCanceled;
+        finish();
+        cb();
+    }
+
+    void keyPressEvent(QKeyEvent *event) override
+    {
+        if (event->key() == Qt::Key_Escape) {
+            auto cb = m_onCanceled;
+            finish();
+            cb();
+        } else {
+            QWidget::keyPressEvent(event);
+        }
+    }
+
+    // Intercept mouse presses on the tab bar before the tab bar switches naturally.
+    // Return true to consume the event so the tab bar does NOT switch on its own;
+    // the callback calls setCurrentIndex() explicitly.
+    bool eventFilter(QObject *obj, QEvent *event) override
+    {
+        if (!m_done && m_tabs && obj == m_tabs->tabBar()
+                && event->type() == QEvent::MouseButtonPress) {
+            auto *me = static_cast<QMouseEvent *>(event);
+            const int idx = m_tabs->tabBar()->tabAt(me->pos());
+            if (idx >= 0) {
+                auto cb = m_onTabSelected;
+                finish();
+                cb(idx);
+                return true;  // consume — tab bar must NOT switch by itself
+            }
+            // Clicked gap / empty area in the tab bar → cancel
+            auto cb = m_onCanceled;
+            finish();
+            cb();
+            return false;
+        }
+        return QWidget::eventFilter(obj, event);
+    }
+
+private:
+    void finish()
+    {
+        if (m_done) return;
+        m_done = true;
+        close();  // WA_DeleteOnClose: deferred deletion, safe to use members after this
+    }
+
+    QPointer<QTabWidget>      m_tabs;
+    QString                   m_text;
+    std::function<void(int)>  m_onTabSelected;
+    std::function<void()>     m_onCanceled;
+    bool                      m_done = false;
+};
+
+} // anonymous namespace
+
+void MainWindow::startCopyTableToTab()
+{
+    if (!m_tablesDock || m_tablesDock->count() == 0)
+        return;
+    if (m_tabWidget->count() < 2) {
+        statusBar()->showMessage(tr("Need at least 2 tabs to copy table"), 3000);
+        return;
+    }
+
+    const int srcTableIdx = m_tablesDock->currentIndex();
+    const QVector<TableTab> allTables = m_tablesDock->allTables();
+    if (srcTableIdx < 0 || srcTableIdx >= allTables.size())
+        return;
+    const TableTab tableCopy = allTables[srcTableIdx];
+    const int sourceTabIdx = m_tabWidget->currentIndex();
+
+    // Close any previous overlay
+    if (m_tabPickerOverlay) {
+        m_tabPickerOverlay->close();
+        m_tabPickerOverlay = nullptr;
+    }
+
+    const QString hint = tr("Select tab to copy table   Esc = cancel");
+    auto *overlay = new TabPickerOverlay(
+        this, m_tabWidget, hint,
+        [this, tableCopy, sourceTabIdx](int targetIdx) {
+            if (targetIdx == sourceTabIdx) {
+                statusBar()->showMessage(tr("Cannot copy table to the same tab"), 3000);
+                return;
+            }
+            m_tabWidget->setCurrentIndex(targetIdx);
+            m_tablesDock->addTable(tableCopy.name, &tableCopy.table);
+            useTableAct->setDisabled(false);
+            useTableAct->setChecked(true);
+            switchUseTable();
+            statusBar()->showMessage(tr("Table copied to tab"), 2000);
+        },
+        []() {} // cancel: nothing to do
+    );
+    m_tabPickerOverlay = overlay;
+    connect(overlay, &QObject::destroyed, this, [this]() {
+        m_tabPickerOverlay = nullptr;
+    });
+}
+
 void MainWindow::createActions()
 {
-    newAct = new QAction(tr("New"), this);
+    newAct = new QAction(QIcon(":/images/new.png"), tr("New"), this);
+    newAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_T));
     newAct->setStatusTip(tr("Create a new file"));
-    connect(newAct, SIGNAL(triggered()), this, SLOT(newFile()));
+    connect(newAct, &QAction::triggered, this, &MainWindow::newFile);
     openAct = new QAction(QIcon(":/images/open.png"), tr("Open file..."), this);
     openAct->setShortcuts(QKeySequence::Open);
     openAct->setStatusTip(tr("Open an existing file"));
@@ -2920,6 +3169,7 @@ void MainWindow::createActions()
     closeAct->setShortcuts(QKeySequence::Close);
     closeAct->setStatusTip(tr("Close the current file"));
     connect(closeAct, &QAction::triggered, this, &MainWindow::closeTab);
+    addAction(closeAct); // register shortcut even without being in a menu
 
     saveAsAct = new QAction(tr("Save As..."), this);
     saveAsAct->setShortcuts(QKeySequence::SaveAs);
@@ -2940,7 +3190,6 @@ void MainWindow::createActions()
     connect(exitAct, SIGNAL(triggered()), qApp, SLOT(closeAllWindows()));
 
     newTabAct = new QAction(tr("New Tab"), this);
-    newTabAct->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_T));
     newTabAct->setStatusTip(tr("Open a new empty tab"));
     connect(newTabAct, &QAction::triggered, this, &MainWindow::newTab);
 
@@ -3114,7 +3363,6 @@ void MainWindow::createActions()
     connect(loadTableAct, SIGNAL(triggered()), this, SLOT(loadTable()));
 
     useTableAct = new QAction(tr("Use table"), this);
-    useTableAct->setShortcuts(QKeySequence::AddTab);
     useTableAct->setCheckable(true);
     useTableAct->setChecked(true);
     useTableAct->setDisabled(true);
@@ -4064,6 +4312,7 @@ void MainWindow::createToolBars()
 {
     fileToolBar = addToolBar(tr("File"));
     fileToolBar->setObjectName("fileToolBar");
+    fileToolBar->addAction(newAct);
     fileToolBar->addAction(openAct);
     fileToolBar->addAction(saveAct);
 
@@ -4922,7 +5171,8 @@ void MainWindow::applyShortcutsFromSettings()
     pasteAct->setShortcut(s.value("hotkey_Paste",        QKeySequence(QKeySequence::Paste)).value<QKeySequence>());
     findAct->setShortcut(s.value("hotkey_Find",          QKeySequence(QKeySequence::Find)).value<QKeySequence>());
     gotoAct->setShortcut(s.value("hotkey_Goto",          QKeySequence(QKeySequence::FindNext)).value<QKeySequence>());
-    useTableAct->setShortcut(s.value("hotkey_UseTable",  QKeySequence(QKeySequence::AddTab)).value<QKeySequence>());
+    newAct->setShortcut(s.value("hotkey_New",             QKeySequence(Qt::CTRL | Qt::Key_T)).value<QKeySequence>());
+    useTableAct->setShortcut(QKeySequence()); // no shortcut — Ctrl+T is reserved for new file
     findPointersAct->setShortcut(s.value("hotkey_FindPointers", QKeySequence(QKeySequence::New)).value<QKeySequence>());
     dumpScriptAct->setShortcut(s.value("hotkey_EditScript", QKeySequence(Qt::CTRL | Qt::Key_E)).value<QKeySequence>());
     if (previousPositionAct)

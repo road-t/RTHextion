@@ -187,20 +187,27 @@ TablesDockWidget::TablesDockWidget(QWidget *parent)
     m_addBtn = new QToolButton(this);
     m_addBtn->setPopupMode(QToolButton::MenuButtonPopup);
     m_addBtn->setMenu(m_addMenu);
+    m_addBtn->setIcon(makeAddIcon(palette().color(QPalette::WindowText)));
+    m_addBtn->setIconSize(QSize(16, 16));
+    m_addBtn->setToolButtonStyle(Qt::ToolButtonIconOnly);
     connect(m_addBtn, &QToolButton::clicked, this, [this] {
         if (m_addAct)
             m_addAct->trigger();
     });
     m_toolbar->addWidget(m_addBtn);
 
-    m_removeAct = m_toolbar->addAction(QStringLiteral("Delete"), this, [this]{ removeCurrentTable(); });
+    m_removeAct = m_toolbar->addAction(QString{}, this, [this]{ removeCurrentTable(); });
+    m_removeAct->setIcon(makeRemoveIcon(palette().color(QPalette::WindowText)));
 
     m_toolbar->addSeparator();
     auto *spacer = new QWidget(this);
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     m_toolbar->addWidget(spacer);
 
-    m_exportAct = m_toolbar->addAction(QStringLiteral("Export"), this, [this]{ exportCurrentTable(); });
+    m_copyToAct = m_toolbar->addAction(QString{}, this, [this]{ emit copyToTabRequested(); });
+    m_copyToAct->setIcon(makeCopyToIcon(palette().color(QPalette::WindowText)));
+    m_exportAct = m_toolbar->addAction(QString{}, this, [this]{ exportCurrentTable(); });
+    m_exportAct->setIcon(makeExportIcon(palette().color(QPalette::WindowText)));
     layout->addWidget(m_toolbar);
 
     // Tab widget
@@ -489,7 +496,7 @@ void TablesDockWidget::retranslateUi()
 {
     setWindowTitle(tr("Tables"));
     if (m_addBtn)
-        m_addBtn->setText(tr("Add"));
+        m_addBtn->setToolTip(tr("Add"));
     m_addAct->setText(tr("Blank"));
     m_addAct->setToolTip(tr("Add empty table"));
     m_duplicateAct->setText(tr("Copy"));
@@ -502,9 +509,10 @@ void TablesDockWidget::retranslateUi()
         m_importAct->setText(tr("Import"));
         m_importAct->setToolTip(tr("Import table from file"));
     }
-    m_removeAct->setText(tr("Delete"));
-    m_exportAct->setToolTip(tr("Export table to file"));
     m_removeAct->setToolTip(tr("Remove current table"));
+    if (m_copyToAct)
+        m_copyToAct->setToolTip(tr("Copy table to another tab"));
+    m_exportAct->setToolTip(tr("Export table to file"));
     for (int i = 0; i < m_tabs->count(); ++i) {
         auto *w = m_tabs->widget(i);
         if (!w) continue;
@@ -1038,6 +1046,7 @@ void TablesDockWidget::updateButtonStates()
     const bool hasEntries = hasTab && m_tables[idx].table.size() > 0;
 
     m_removeAct->setEnabled(hasTab);
+    m_copyToAct->setEnabled(hasTab);
     m_exportAct->setEnabled(hasEntries);
     m_duplicateAct->setEnabled(hasTab);
 
@@ -1321,6 +1330,15 @@ void TablesDockWidget::onTabContextMenu(const QPoint &pos)
 
 void TablesDockWidget::onPaletteChanged()
 {
+    const QColor col = palette().color(QPalette::WindowText);
     if (m_useTableBtn)
-        m_useTableBtn->setIcon(makeEyeIcon(palette().color(QPalette::WindowText)));
+        m_useTableBtn->setIcon(makeEyeIcon(col));
+    if (m_addBtn)
+        m_addBtn->setIcon(makeAddIcon(col));
+    if (m_removeAct)
+        m_removeAct->setIcon(makeRemoveIcon(col));
+    if (m_copyToAct)
+        m_copyToAct->setIcon(makeCopyToIcon(col));
+    if (m_exportAct)
+        m_exportAct->setIcon(makeExportIcon(col));
 }

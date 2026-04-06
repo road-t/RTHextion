@@ -19,12 +19,19 @@ void InsertScriptDialog::showEvent(QShowEvent *ev)
 {
     Q_UNUSED(ev);
 
-    auto _tb = hexEdit->getTranslationTable();
+    // Repopulate the table combobox
+    ui->cmbTable->blockSignals(true);
+    ui->cmbTable->clear();
+    for (int i = 0; i < m_tables.size(); ++i)
+        ui->cmbTable->addItem(m_tables[i].name, i);
+    ui->cmbTable->blockSignals(false);
 
-    tb = _tb;
+    const bool hasTables = !m_tables.isEmpty();
+    ui->cmbTable->setEnabled(hasTables);
 
-    ui->cbUseTable->setDisabled(!tb);
-    ui->cbUseTable->setChecked(tb);
+    // Set tb from the currently selected table
+    const int idx = hasTables ? ui->cmbTable->currentData().toInt() : -1;
+    tb = (idx >= 0 && idx < m_tables.size()) ? &m_tables[idx].table : nullptr;
 
     updateText();
 }
@@ -48,6 +55,11 @@ void InsertScriptDialog::setRomProfile(int pointerSize, qint64 pointerOffset)
 {
     _pointerSize = pointerSize;
     _pointerOffset = pointerOffset;
+}
+
+void InsertScriptDialog::setAvailableTables(const QVector<TableTab> &tables)
+{
+    m_tables = tables;
 }
 
 void InsertScriptDialog::on_bbControls_clicked(QAbstractButton *button)
@@ -79,6 +91,12 @@ void InsertScriptDialog::on_bbControls_clicked(QAbstractButton *button)
 
     if (ui->bbControls->buttonRole(button) == QDialogButtonBox::ButtonRole::AcceptRole)
     {
+        // Update tb from the currently selected combobox item
+        const int tableIdx = ui->cmbTable->currentData().toInt();
+        tb = (tableIdx >= 0 && tableIdx < m_tables.size()) ? &m_tables[tableIdx].table : nullptr;
+        if (!tb)
+            return;
+
         /* regex to match dumps like:
 
          {|abc0123|}:<any space character>

@@ -109,6 +109,9 @@ signals:
     /// Emitted when user requests semi-auto table generation from the dock toolbar.
     void generateTableRequested();
 
+    /// Emitted when user clicks "Copy to" button to copy table to another tab.
+    void copyToTabRequested();
+
 protected:
     void onPaletteChanged() override;
 
@@ -152,6 +155,7 @@ private:
     QAction *m_generateAct = nullptr;
     QAction *m_removeAct = nullptr;
     QAction *m_exportAct = nullptr;
+    QAction *m_copyToAct = nullptr;
     QAction *m_importAct = nullptr;
     QAction *m_undoAct = nullptr;
     QAction *m_redoAct = nullptr;

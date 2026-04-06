@@ -119,6 +119,7 @@ private slots:
     void loadOriginal();
     void onDockTableChanged(TranslationTable *table);
     void onDockTableContentChanged();
+    void startCopyTableToTab();
     void newTab();
     void closeTab();
     void nextTab();
@@ -218,6 +219,7 @@ private:
     bool m_closing = false;
     bool m_restoringTableDockState = false;
     bool m_restoringProjectUi = false;
+    QWidget *m_tabPickerOverlay = nullptr;
     QByteArray m_changeTrackingSnapshot;
     QTimer *m_changesUiUpdateTimer = nullptr;
 
