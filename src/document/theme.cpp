@@ -102,7 +102,7 @@ EditorTheme EditorTheme::defaultDark()
     t.cursorFrameColor = QColor(0xAA, 0xAA, 0xAA);
     t.addressAreaColor = QColor(45, 45, 45);
     t.addressFontColor = QColor(0xCC, 0xCC, 0xCC);
-    t.addressZeroByteFontColor = QColor(0xCC, 0xCC, 0xCC);
+    t.addressZeroByteFontColor = QColor(0x55, 0x55, 0x55);
     t.hexAreaBgColor = QColor(35, 35, 35);
     t.hexFontColor = QColor(0xDD, 0xDD, 0xDD);
     t.zeroByteFontColor = QColor(0x55, 0x55, 0x55);

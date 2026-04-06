@@ -3553,7 +3553,6 @@ void MainWindow::createMenus()
 
     fileMenu->addSeparator();
     fileMenu->addAction(revertAct);
-    fileMenu->addAction(closeAct);
     fileMenu->addSeparator();
     fileMenu->addAction(optionsAct);
     fileMenu->addSeparator();
@@ -4749,6 +4748,10 @@ void MainWindow::readSettings()
         QSettings reg(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
                       QSettings::NativeFormat);
         darkTheme = reg.value(QStringLiteral("AppsUseLightTheme"), 1).toInt() == 0;
+#elif defined(Q_OS_MAC)
+        // On macOS Qt inherits the system appearance in the default palette:
+        // dark background means dark mode.
+        darkTheme = qApp->palette().color(QPalette::Window).lightness() < 128;
 #else
         darkTheme = false;
 #endif
