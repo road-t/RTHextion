@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - Dark theme is now auto-detected from OS settings on first launch; the manual "Dark theme" menu toggle has been removed
 - Script editor toolbar icons updated (Dump Script, Insert Script)
+- Removed 'Close' from File menu
 
 ### Fixed
 - Dark theme rendering issues on Windows 11 (hex area color, palette handling, style fixes)
