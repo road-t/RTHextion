@@ -298,6 +298,11 @@ public:
      */
     void ensureVisible();
 
+    /*! Scroll so that the cursor is centered vertically in the viewport.
+     *  Used after restoring a saved cursor position from settings.
+     */
+    void ensureVisibleCentered();
+
     /*! Find first occurrence of ba in HexEditor data
      * \param ba Data to find
      * \param from Point where the search starts

@@ -299,29 +299,29 @@ MainWindow::MainWindow()
 /*****************************************************************************/
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    // Capture the currently active tab BEFORE iterating — the setCurrentIndex
+    // loop below changes the tab widget's current index and would otherwise
+    // cause writeSettings() to save the wrong active tab.
+    m_closingActiveTab = m_tabWidget->currentIndex();
+
     // Check each session for unsaved changes
     for (int i = 0; i < m_sessions.size(); ++i) {
         m_tabWidget->setCurrentIndex(i);
         if (!maybeSave()) {
             event->ignore();
+            m_closingActiveTab = -1;
             return;
         }
         if (!maybeSaveProject()) {
             event->ignore();
+            m_closingActiveTab = -1;
             return;
         }
     }
 
-    // Silently persist cursor position for each project that was not
-    // otherwise saved (e.g. when only the cursor moved but nothing else changed).
-    for (int i = 0; i < m_sessions.size(); ++i) {
-        m_tabWidget->setCurrentIndex(i);
-        if (m_document && !m_document->projectFilePath.isEmpty())
-            saveProjectImpl(m_document->projectFilePath);
-    }
-
     m_closing = true;
     writeSettings();
+    m_closingActiveTab = -1;
     event->accept();
 }
 
@@ -2578,7 +2578,7 @@ void MainWindow::init()
     // Wire up dock title bar collapse callbacks and separator event filters
     setupDockTitleBarCallbacks();
     installSeparatorEventFilters();
-    
+
     createToolBars();
     createMenus();
 
@@ -2706,6 +2706,24 @@ void MainWindow::saveCurrentSession()
     if (m_document)
         m_document->useTable = (useTableAct && useTableAct->isChecked());
 
+    // Save per-tab dock collapse/size state from live dock widgets
+    if (m_tablesDock) {
+        m_currentSession->dockTablesCollapsed      = m_tablesDock->isCollapsed();
+        m_currentSession->dockTablesExpandedWidth  = m_tablesDock->expandedWidth();
+        m_currentSession->dockTablesExpandedHeight = m_tablesDock->expandedHeight();
+    }
+    if (m_pointersDock) {
+        m_currentSession->dockPointersCollapsed      = m_pointersDock->isCollapsed();
+        m_currentSession->dockPointersExpandedWidth  = m_pointersDock->expandedWidth();
+        m_currentSession->dockPointersExpandedHeight = m_pointersDock->expandedHeight();
+    }
+    if (m_changesDock) {
+        m_currentSession->dockChangesCollapsed      = m_changesDock->isCollapsed();
+        m_currentSession->dockChangesExpandedWidth  = m_changesDock->expandedWidth();
+        m_currentSession->dockChangesExpandedHeight = m_changesDock->expandedHeight();
+    }
+    m_currentSession->dockStateInitialized = true;
+
     // Save Find/Replace dialog state for this tab
     if (searchDialog) {
         const SearchDialog::State s = searchDialog->dialogState();
@@ -2768,10 +2786,31 @@ void MainWindow::restoreSession(EditorSession *session)
     session->table = tb;  // keep in sync after pointer recreation
     const bool hasTables = m_tablesDock->count() > 0;
     
-    // Always show the tables dock regardless of previous session state
-    // The tables dock should only be hidden by explicit user action, never automatically
+    // Restore per-tab dock collapse/size state, or fall back to uncollapsed.
     m_tablesDock->show();
-    m_tablesDock->setCollapsed(false);
+    if (session->dockStateInitialized) {
+        auto applyDockState = [](BaseDockWidget *d, bool collapsed, int expW, int expH) {
+            if (!d) return;
+            if (expW > 0 || expH > 0)
+                d->setExpandedSize(expW, expH);
+            if (collapsed != d->isCollapsed())
+                d->setCollapsed(collapsed);
+        };
+        applyDockState(m_tablesDock,
+                       session->dockTablesCollapsed,
+                       session->dockTablesExpandedWidth,
+                       session->dockTablesExpandedHeight);
+        applyDockState(m_pointersDock,
+                       session->dockPointersCollapsed,
+                       session->dockPointersExpandedWidth,
+                       session->dockPointersExpandedHeight);
+        applyDockState(m_changesDock,
+                       session->dockChangesCollapsed,
+                       session->dockChangesExpandedWidth,
+                       session->dockChangesExpandedHeight);
+    } else {
+        m_tablesDock->setCollapsed(false);
+    }
 
     useTableAct->setEnabled(hasTables);
     editTableAct->setEnabled(hasTables);
@@ -2826,6 +2865,30 @@ void MainWindow::restoreSession(EditorSession *session)
         setSelection(hexEdit->getSelectionBegin(), hexEdit->getSelectionEnd());
         setOverwriteMode(hexEdit->overwriteMode());
         updateValuePanels();
+
+        // After a session restore from settings the editor may not have been
+        // visible (no viewport size) when the cursor was first set.  Apply the
+        // scroll now.  If the viewport is already properly sized (user manually
+        // switching tabs), do it right away; otherwise defer via a zero-delay
+        // timer so the event loop can process the show/resize event first.
+        if (session->scrollPending) {
+            session->scrollPending = false;
+            if (session->curOffset > 0) {
+                hexEdit->setCursorPosition(session->curOffset * 2);
+                if (hexEdit->viewport()->height() > 0) {
+                    hexEdit->ensureVisibleCentered();
+                } else {
+                    QPointer<HexEditor> weakEdit = hexEdit;
+                    const qint64 off = session->curOffset;
+                    QTimer::singleShot(0, this, [weakEdit, off]() {
+                        if (weakEdit) {
+                            weakEdit->setCursorPosition(off * 2);
+                            weakEdit->ensureVisibleCentered();
+                        }
+                    });
+                }
+            }
+        }
     }
 
     updateDockAreaActions();
@@ -4673,9 +4736,9 @@ bool MainWindow::saveProjectImpl(const QString &path)
     m_document->showPointers = (showPointersAct && showPointersAct->isChecked());
     m_document->showChanges = (showChangesAct  && showChangesAct->isChecked());
     m_document->changesHexMode = (m_changesDock && m_changesDock->hexMode());
-    m_document->dockLayoutState = saveState();
+    m_document->dockLayoutState = QByteArray(); // now stored in per-project app settings
     m_document->tablesColumnsState = m_tablesDock ? m_tablesDock->saveColumnsState() : QByteArray();
-    m_document->cursorPosition = hexEdit->cursorPosition();
+    m_document->cursorPosition = 0; // now stored in per-project app settings
     m_document->setAlignmentOffsets(hexEdit->lineBreaks());
 
     // Recompute tracked diffs byte-by-byte.
@@ -4963,22 +5026,6 @@ void MainWindow::loadFile(const QString &fileName)
     }
 
     settings.setValue("RecentFile0", fileName);
-
-    // Restore last known cursor position for this file
-    {
-        settings.beginGroup(QStringLiteral("CursorPositions"));
-        const QString key = QString::fromUtf8(QUrl::toPercentEncoding(fileName));
-        const QVariant savedPos = settings.value(key);
-        settings.endGroup();
-        if (savedPos.isValid()) {
-            const qint64 fileSize = hexEdit->dataSize();
-            const qint64 bytePos = qBound(0LL, savedPos.toLongLong(), fileSize > 0 ? fileSize - 1 : 0LL);
-            if (bytePos > 0) {
-                hexEdit->setCursorPosition(bytePos * 2);
-                hexEdit->ensureVisible();
-            }
-        }
-    }
 }
 
 void MainWindow::readSettings()
@@ -5098,53 +5145,159 @@ void MainWindow::readSettings()
     updateRecentProjectMenu();
 
     const bool autoLoadRecentFile = settings.value("AutoLoadRecentFile", true).toBool();
-    const QString sessionTabsKey = QStringLiteral("Session/Tabs");
-    const bool hasSavedSessionTabs = settings.contains(sessionTabsKey);
 
     if (autoLoadRecentFile)
     {
-        // Restore the previous session (all open tabs) if saved.
-        const QStringList sessionTabs = settings.value(sessionTabsKey).toStringList();
+        const int tabCount  = settings.value(QStringLiteral("Session/TabCount"), 0).toInt();
         const int activeTab = settings.value(QStringLiteral("Session/ActiveTab"), 0).toInt();
 
-        if (!sessionTabs.isEmpty()) {
+        if (tabCount > 0)
+        {
+            // ---- New per-tab array format ----
+            struct TabData {
+                bool    isProject          = false;
+                QString path;
+                qint64  cursor             = 0;
+                bool    showPointers       = true;
+                bool    showChanges        = false;
+                bool    changesHexMode     = false;
+                int     tablesActiveIndex  = -1;
+                bool    dockTablesCollapsed      = false;
+                int     dockTablesExpW           = -1;
+                int     dockTablesExpH           = -1;
+                bool    dockPointersCollapsed    = false;
+                int     dockPointersExpW         = -1;
+                int     dockPointersExpH         = -1;
+                bool    dockChangesCollapsed     = false;
+                int     dockChangesExpW          = -1;
+                int     dockChangesExpH          = -1;
+            };
+            QVector<TabData> tabs;
+            for (int i = 0; i < tabCount; ++i) {
+                const QString pfx = QStringLiteral("Session/Tabs/") + QString::number(i);
+                const QString type = settings.value(pfx + QStringLiteral("/type")).toString();
+                const QString path = settings.value(pfx + QStringLiteral("/path")).toString();
+                if (path.isEmpty() || !QFile::exists(path))
+                    continue;
+                TabData t;
+                t.isProject          = (type == QStringLiteral("project"));
+                t.path               = path;
+                t.cursor             = settings.value(pfx + QStringLiteral("/cursor"), 0LL).toLongLong();
+                t.showPointers       = settings.value(pfx + QStringLiteral("/showPointers"),   true).toBool();
+                t.showChanges        = settings.value(pfx + QStringLiteral("/showChanges"),    false).toBool();
+                t.changesHexMode     = settings.value(pfx + QStringLiteral("/changesHexMode"), false).toBool();
+                t.tablesActiveIndex  = settings.value(pfx + QStringLiteral("/tablesActiveIndex"), -1).toInt();
+                t.dockTablesCollapsed   = settings.value(pfx + QStringLiteral("/dockTablesCollapsed"),       false).toBool();
+                t.dockTablesExpW        = settings.value(pfx + QStringLiteral("/dockTablesExpandedWidth"),   -1).toInt();
+                t.dockTablesExpH        = settings.value(pfx + QStringLiteral("/dockTablesExpandedHeight"),  -1).toInt();
+                t.dockPointersCollapsed = settings.value(pfx + QStringLiteral("/dockPointersCollapsed"),     false).toBool();
+                t.dockPointersExpW      = settings.value(pfx + QStringLiteral("/dockPointersExpandedWidth"), -1).toInt();
+                t.dockPointersExpH      = settings.value(pfx + QStringLiteral("/dockPointersExpandedHeight"),-1).toInt();
+                t.dockChangesCollapsed  = settings.value(pfx + QStringLiteral("/dockChangesCollapsed"),      false).toBool();
+                t.dockChangesExpW       = settings.value(pfx + QStringLiteral("/dockChangesExpandedWidth"),  -1).toInt();
+                t.dockChangesExpH       = settings.value(pfx + QStringLiteral("/dockChangesExpandedHeight"), -1).toInt();
+                tabs.append(t);
+            }
+
+            // Open all tabs; skip restoreProjectStateFromSettings during this loop.
+            m_restoringSession = true;
             bool anyOpened = false;
-            for (const QString &entry : sessionTabs) {
-                if (entry.startsWith(QStringLiteral("project:"))) {
-                    const QString path = entry.mid(8);
-                    if (!path.isEmpty() && QFile::exists(path)) {
-                        if (!anyOpened) {
-                            // Reuse the initial empty tab for the first entry
-                            openProjectFile(path);
-                        } else {
-                            createSession();
-                            openProjectFile(path);
+            for (const TabData &t : std::as_const(tabs)) {
+                if (t.isProject) {
+                    if (!anyOpened) openProjectFile(t.path);
+                    else            { createSession(); openProjectFile(t.path); }
+                } else {
+                    if (!anyOpened) loadFile(t.path);
+                    else            loadFileInNewTab(t.path);
+                }
+                anyOpened = true;
+            }
+            m_restoringSession = false;
+
+            // Apply saved per-tab state to each session in open order.
+            int si = 0;
+            for (int ti = 0; ti < tabs.size() && si < m_sessions.size(); ++ti, ++si) {
+                EditorSession *s = m_sessions[si];
+                const TabData &t = tabs[ti];
+
+                // Cursor — defer scrolling until the tab's editor is shown
+                if (t.cursor > 0) {
+                    s->curOffset = t.cursor;
+                    if (s->editor)
+                        s->editor->setCursorPosition(t.cursor * 2);
+                    if (s == m_currentSession)
+                        curOffset = t.cursor;
+                }
+                s->scrollPending = true;
+
+                // Document display flags
+                if (s->document) {
+                    s->document->showPointers  = t.showPointers;
+                    s->document->showChanges   = t.showChanges;
+                    s->document->changesHexMode = t.changesHexMode;
+                }
+
+                // Active table index
+                if (t.tablesActiveIndex >= 0)
+                    s->tableActiveIndex = t.tablesActiveIndex;
+
+                // Dock state
+                s->dockTablesCollapsed      = t.dockTablesCollapsed;
+                s->dockTablesExpandedWidth  = t.dockTablesExpW;
+                s->dockTablesExpandedHeight = t.dockTablesExpH;
+                s->dockPointersCollapsed      = t.dockPointersCollapsed;
+                s->dockPointersExpandedWidth  = t.dockPointersExpW;
+                s->dockPointersExpandedHeight = t.dockPointersExpH;
+                s->dockChangesCollapsed      = t.dockChangesCollapsed;
+                s->dockChangesExpandedWidth  = t.dockChangesExpW;
+                s->dockChangesExpandedHeight = t.dockChangesExpH;
+                s->dockStateInitialized = true;
+            }
+
+            // Switch to previously active tab and apply its dock state.
+            if (anyOpened) {
+                const int target = qBound(0, activeTab, m_tabWidget->count() - 1);
+                if (m_tabWidget->currentIndex() != target)
+                    m_tabWidget->setCurrentIndex(target);  // triggers onTabChanged → restoreSession
+                else if (target < m_sessions.size())
+                    restoreSession(m_sessions[target]);    // already on this tab; force apply
+            }
+        }
+        else
+        {
+            // ---- Legacy fallback (old Session/Tabs QStringList format or last file) ----
+            const QStringList sessionTabs = settings.value(QStringLiteral("Session/Tabs")).toStringList();
+            const int legacyActiveTab = settings.value(QStringLiteral("Session/ActiveTab"), 0).toInt();
+
+            if (!sessionTabs.isEmpty()) {
+                bool anyOpened = false;
+                for (const QString &entry : sessionTabs) {
+                    if (entry.startsWith(QStringLiteral("project:"))) {
+                        const QString path = entry.mid(8);
+                        if (!path.isEmpty() && QFile::exists(path)) {
+                            if (!anyOpened) openProjectFile(path);
+                            else { createSession(); openProjectFile(path); }
+                            anyOpened = true;
                         }
-                        anyOpened = true;
-                    }
-                } else if (entry.startsWith(QStringLiteral("file:"))) {
-                    const QString path = entry.mid(5);
-                    if (!path.isEmpty() && QFile::exists(path)) {
-                        if (!anyOpened) {
-                            loadFile(path);
-                        } else {
-                            loadFileInNewTab(path);
+                    } else if (entry.startsWith(QStringLiteral("file:"))) {
+                        const QString path = entry.mid(5);
+                        if (!path.isEmpty() && QFile::exists(path)) {
+                            if (!anyOpened) loadFile(path);
+                            else            loadFileInNewTab(path);
+                            anyOpened = true;
                         }
-                        anyOpened = true;
                     }
                 }
-            }
-            // Restore active tab
-            if (anyOpened && activeTab >= 0 && activeTab < m_tabWidget->count())
-                m_tabWidget->setCurrentIndex(activeTab);
-        } else if (!hasSavedSessionTabs) {
-            // Legacy fallback: restore the single most-recently-used file/project
-            const QString lastProjectFile = settings.value("LastProjectFile").toString();
-            const QString fileName = settings.value("RecentFile0").toString();
-            if (!lastProjectFile.isEmpty() && QFile::exists(lastProjectFile)) {
-                openProjectFile(lastProjectFile);
-            } else if (!fileName.isEmpty() && QFile::exists(fileName)) {
-                loadFile(fileName);
+                if (anyOpened && legacyActiveTab >= 0 && legacyActiveTab < m_tabWidget->count())
+                    m_tabWidget->setCurrentIndex(legacyActiveTab);
+            } else {
+                // Last resort: single most-recently-used file/project
+                const QString lastProjectFile = settings.value("LastProjectFile").toString();
+                const QString fileName        = settings.value("RecentFile0").toString();
+                if (!lastProjectFile.isEmpty() && QFile::exists(lastProjectFile))
+                    openProjectFile(lastProjectFile);
+                else if (!fileName.isEmpty() && QFile::exists(fileName))
+                    loadFile(fileName);
             }
         }
     }
@@ -5630,34 +5783,55 @@ void MainWindow::writeSettings()
         settings.setValue("BytesPerLine", hexEdit->bytesPerLine());
     }
 
-    // Save all open tabs for session restore on next launch.
-    // Make sure the current session's state is flushed first.
+    // Save all open tabs as a per-tab state array.
+    // Flush the current session's live state (cursor, dock collapse, etc.) first.
     saveCurrentSession();
-    QStringList sessionPaths;
+
+    // Clear stale tab data from the previous run, then write fresh.
+    settings.remove(QStringLiteral("Session"));
+
+    int savedTabCount = 0;
     for (int i = 0; i < m_sessions.size(); ++i) {
         const EditorSession *s = m_sessions[i];
-        // Project file takes priority over standalone file
-        const QString project = s->document ? s->document->projectFilePath : QString();
-        if (!project.isEmpty() && QFile::exists(project)) {
-            sessionPaths << QStringLiteral("project:") + project;
-        } else if (!s->curFile.isEmpty() && !s->isUntitled && QFile::exists(s->curFile)) {
-            sessionPaths << QStringLiteral("file:") + s->curFile;
-        }
-        // Skip untitled / empty tabs
-    }
-    settings.setValue(QStringLiteral("Session/Tabs"), sessionPaths);
-    settings.setValue(QStringLiteral("Session/ActiveTab"),
-                      m_tabWidget->isVisible() ? m_tabWidget->currentIndex() : -1);
+        const QString projPath = s->document ? s->document->projectFilePath : QString();
+        const bool isProject = !projPath.isEmpty() && QFile::exists(projPath);
+        const bool isFile    = !isProject && !s->curFile.isEmpty() && !s->isUntitled
+                               && QFile::exists(s->curFile);
+        if (!isProject && !isFile)
+            continue;
 
-    // Save last cursor position for each open file so it survives app restarts
-    settings.beginGroup(QStringLiteral("CursorPositions"));
-    for (const EditorSession *s : std::as_const(m_sessions)) {
-        if (!s->curFile.isEmpty() && !s->isUntitled) {
-            const QString key = QString::fromUtf8(QUrl::toPercentEncoding(s->curFile));
-            settings.setValue(key, s->curOffset);
-        }
+        const QString pfx = QStringLiteral("Session/Tabs/") + QString::number(savedTabCount);
+        settings.setValue(pfx + QStringLiteral("/type"),   isProject ? QStringLiteral("project")
+                                                                      : QStringLiteral("file"));
+        settings.setValue(pfx + QStringLiteral("/path"),   isProject ? projPath : s->curFile);
+        settings.setValue(pfx + QStringLiteral("/cursor"), s->curOffset);
+
+        const HexDocument *doc = s->document;
+        settings.setValue(pfx + QStringLiteral("/showPointers"),   doc ? doc->showPointers   : false);
+        settings.setValue(pfx + QStringLiteral("/showChanges"),    doc ? doc->showChanges    : false);
+        settings.setValue(pfx + QStringLiteral("/changesHexMode"), doc ? doc->changesHexMode : false);
+        settings.setValue(pfx + QStringLiteral("/tablesActiveIndex"), s->tableActiveIndex);
+
+        settings.setValue(pfx + QStringLiteral("/dockTablesCollapsed"),       s->dockTablesCollapsed);
+        settings.setValue(pfx + QStringLiteral("/dockTablesExpandedWidth"),   s->dockTablesExpandedWidth);
+        settings.setValue(pfx + QStringLiteral("/dockTablesExpandedHeight"),  s->dockTablesExpandedHeight);
+        settings.setValue(pfx + QStringLiteral("/dockPointersCollapsed"),     s->dockPointersCollapsed);
+        settings.setValue(pfx + QStringLiteral("/dockPointersExpandedWidth"), s->dockPointersExpandedWidth);
+        settings.setValue(pfx + QStringLiteral("/dockPointersExpandedHeight"),s->dockPointersExpandedHeight);
+        settings.setValue(pfx + QStringLiteral("/dockChangesCollapsed"),      s->dockChangesCollapsed);
+        settings.setValue(pfx + QStringLiteral("/dockChangesExpandedWidth"),  s->dockChangesExpandedWidth);
+        settings.setValue(pfx + QStringLiteral("/dockChangesExpandedHeight"), s->dockChangesExpandedHeight);
+
+        ++savedTabCount;
     }
-    settings.endGroup();
+    settings.setValue(QStringLiteral("Session/TabCount"),
+                      savedTabCount);
+    // Use m_closingActiveTab when called from closeEvent (where the tab-switch
+    // loop changes currentIndex), otherwise fall back to the live current index.
+    const int activeTabToSave = (m_closingActiveTab >= 0)
+                                ? m_closingActiveTab
+                                : (m_tabWidget->isVisible() ? m_tabWidget->currentIndex() : 0);
+    settings.setValue(QStringLiteral("Session/ActiveTab"), activeTabToSave);
 
     settings.sync();
 }

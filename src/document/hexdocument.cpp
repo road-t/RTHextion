@@ -304,18 +304,15 @@ bool HexDocument::saveProject(const QString &path,
         }
     }
 
-    // Cursor position
-    out << "\ncursor_position: 0x" << QString::number(cursorPosition, 16).toUpper() << "\n";
-
     // Display settings
-    out << "show_pointers: " << (showPointers ? "true" : "false") << "\n";
+    out << "\nshow_pointers: " << (showPointers ? "true" : "false") << "\n";
     out << "show_changes: "  << (showChanges  ? "true" : "false") << "\n";
     out << "changes_hex_mode: " << (changesHexMode ? "true" : "false") << "\n";
-    
-    if (!dockLayoutState.isEmpty())
-        out << "dock_layout_state: " << QString::fromLatin1(dockLayoutState.toBase64()) << "\n";
-    
-        if (!tablesColumnsState.isEmpty())
+
+    // cursor_position and dock_layout_state are stored in per-project app settings,
+    // not in the project file.
+
+    if (!tablesColumnsState.isEmpty())
         out << "tables_columns_state: " << QString::fromLatin1(tablesColumnsState.toBase64()) << "\n";
 
     // Original bytes

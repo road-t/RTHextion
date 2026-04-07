@@ -48,6 +48,22 @@ public:
     bool tablesDockVisible = false;
     bool tablesDockVisibilityInitialized = false;
 
+    // Per-tab dock collapse/size state (captured on tab switch, applied on tab switch)
+    bool dockTablesCollapsed      = false;
+    int  dockTablesExpandedWidth  = -1;
+    int  dockTablesExpandedHeight = -1;
+    bool dockPointersCollapsed      = false;
+    int  dockPointersExpandedWidth  = -1;
+    int  dockPointersExpandedHeight = -1;
+    bool dockChangesCollapsed      = false;
+    int  dockChangesExpandedWidth  = -1;
+    int  dockChangesExpandedHeight = -1;
+    bool dockStateInitialized = false;
+
+    /// Set during session restore from settings to defer cursor centering
+    /// until the tab's editor becomes visible.
+    bool scrollPending = false;
+
     // Per-tab Find/Replace dialog state
     QString searchFindText;
     int     searchFindFormat    = -1;  // table combo data: -1 = Raw, -2 = Hex, >=0 = table index

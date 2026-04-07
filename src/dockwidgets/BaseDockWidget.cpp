@@ -5,6 +5,7 @@
 #include <QMainWindow>
 #include <QPainter>
 #include <QPainterPath>
+#include <QResizeEvent>
 
 BaseDockWidget::BaseDockWidget(const QString &title, QWidget *parent)
     : QDockWidget(title, parent)
@@ -91,6 +92,7 @@ void BaseDockWidget::setCollapsed(bool collapsed)
             }
         }
     }
+    emit collapsedChanged(collapsed);
 }
 
 void BaseDockWidget::resetCollapse()
@@ -108,6 +110,23 @@ void BaseDockWidget::resetCollapse()
         m_contentWidget->setVisible(true);
     if (auto *tb = static_cast<DockTitleBar *>(titleBarWidget()))
         tb->setCollapsed(false);
+    emit collapsedChanged(false);
+}
+
+void BaseDockWidget::setExpandedSize(int w, int h)
+{
+    if (w > 0) {
+        m_savedExpandedWidth  = w;
+        m_defaultExpandedWidth = w;
+    }
+    if (h > 0)
+        m_savedExpandedHeight = h;
+}
+
+void BaseDockWidget::resizeEvent(QResizeEvent *event)
+{
+    QDockWidget::resizeEvent(event);
+    emit dockResized();
 }
 
 // -----------------------------------------------------------------------

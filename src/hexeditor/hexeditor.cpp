@@ -2000,6 +2000,18 @@ void HexEditor::ensureVisible()
     viewport()->update();
 }
 
+void HexEditor::ensureVisibleCentered()
+{
+    const qint64 cursorByte = _cursorPosition / 2;
+    const qint64 cursorVisRow = visualRowForByte(cursorByte);
+    const int half = qMax(1, _rowsShown) / 2;
+    const int target = qBound(0,
+                               static_cast<int>(cursorVisRow) - half,
+                               verticalScrollBar()->maximum());
+    verticalScrollBar()->setValue(target);
+    viewport()->update();
+}
+
 qint64 HexEditor::indexOf(const QByteArray &ba, qint64 from)
 {
     qint64 pos = _chunks->indexOf(ba, from);

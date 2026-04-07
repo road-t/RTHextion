@@ -217,6 +217,8 @@ private:
 
     HexDocument *m_document = nullptr;
     bool m_closing = false;
+    int  m_closingActiveTab = -1;
+    bool m_restoringSession = false;
     bool m_restoringTableDockState = false;
     bool m_restoringProjectUi = false;
     QWidget *m_tabPickerOverlay = nullptr;

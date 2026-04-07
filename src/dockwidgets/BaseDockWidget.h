@@ -21,6 +21,14 @@ public:
     bool isCollapsed() const { return m_collapsed; }
     void resetCollapse();
 
+    /// Returns the expanded (uncollapsed) width of this dock.
+    /// When collapsed, returns the dimension that was saved before collapsing.
+    int expandedWidth() const { return m_collapsed && m_savedExpandedWidth > 0 ? m_savedExpandedWidth : width(); }
+    /// Returns the expanded (uncollapsed) height of this dock.
+    int expandedHeight() const { return m_collapsed && m_savedExpandedHeight > 0 ? m_savedExpandedHeight : height(); }
+    /// Pre-set the expanded size that will be used when expanding from a collapsed state.
+    void setExpandedSize(int w, int h);
+
     /// Override in subclasses to retranslate UI strings.
     virtual void retranslateUi() {}
 
@@ -35,6 +43,10 @@ public:
     /// Paint a 16×16 export (↓ arrow + baseline) icon.
     static QIcon makeExportIcon(const QColor &col);
 
+Q_SIGNALS:
+    void collapsedChanged(bool collapsed);
+    void dockResized();
+
 protected:
     /// Call from subclass constructor after creating the content widget.
     void initTitleBar();
@@ -44,6 +56,7 @@ protected:
     virtual void onPaletteChanged() {}
 
     void changeEvent(QEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
 
     QWidget *m_contentWidget = nullptr;
     int      m_defaultExpandedWidth = 320;
