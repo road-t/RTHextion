@@ -52,16 +52,22 @@ void BaseDockWidget::setCollapsed(bool collapsed)
             titleBar->setCollapsed(true);
 
         if (sideArea) {
-            m_savedExpandedWidth = width();
-            m_savedExpandedHeight = height();
+            // Only capture the current size as fallback; don't overwrite an
+            // already-set value (e.g. from setExpandedSize called just before).
+            const int liveW = width();
+            const int liveH = height();
+            if (m_savedExpandedWidth  <= 0 && liveW > collapsedExtent) m_savedExpandedWidth  = liveW;
+            if (m_savedExpandedHeight <= 0 && liveH > 0)               m_savedExpandedHeight = liveH;
             setMinimumHeight(0);
             setMaximumHeight(QWIDGETSIZE_MAX);
             setMinimumWidth(collapsedExtent);
             setMaximumWidth(collapsedExtent);
             if (mw) mw->resizeDocks({this}, {collapsedExtent}, Qt::Horizontal);
         } else {
-            m_savedExpandedHeight = height();
-            m_savedExpandedWidth = width();
+            const int liveH = height();
+            const int liveW = width();
+            if (m_savedExpandedHeight <= 0 && liveH > collapsedExtent) m_savedExpandedHeight = liveH;
+            if (m_savedExpandedWidth  <= 0 && liveW > 0)               m_savedExpandedWidth  = liveW;
             setMinimumWidth(m_savedExpandedWidth);
             setMinimumHeight(collapsedExtent);
             setMaximumHeight(collapsedExtent);

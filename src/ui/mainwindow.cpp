@@ -325,6 +325,32 @@ void MainWindow::closeEvent(QCloseEvent *event)
     event->accept();
 }
 
+void MainWindow::showEvent(QShowEvent *event)
+{
+    QMainWindow::showEvent(event);
+
+    // Apply any cursor scrolls that were deferred because the window wasn't
+    // visible (and viewport heights were 0) during readSettings().
+    // Schedule via singleShot(0) so this runs after the event loop has
+    // processed the show/resize events and the scroll bar has its real range.
+    const bool hasPending = std::any_of(m_sessions.begin(), m_sessions.end(),
+                                        [](EditorSession *s){ return s->scrollPending; });
+    if (hasPending) {
+        QTimer::singleShot(0, this, [this]() {
+            for (EditorSession *s : m_sessions) {
+                if (!s->scrollPending || !s->editor || s->curOffset <= 0) {
+                    s->scrollPending = false;
+                    continue;
+                }
+                s->scrollPending = false;
+                s->editor->setCursorPosition(s->curOffset * 2);
+                if (s == m_currentSession)
+                    s->editor->ensureVisibleCentered();
+                // Non-active sessions: cursor is set; scroll applied on next tab switch
+            }
+        });
+    }
+}
 
 void MainWindow::dragEnterEvent(QDragEnterEvent *event)
 {
@@ -2866,27 +2892,21 @@ void MainWindow::restoreSession(EditorSession *session)
         setOverwriteMode(hexEdit->overwriteMode());
         updateValuePanels();
 
-        // After a session restore from settings the editor may not have been
-        // visible (no viewport size) when the cursor was first set.  Apply the
-        // scroll now.  If the viewport is already properly sized (user manually
-        // switching tabs), do it right away; otherwise defer via a zero-delay
-        // timer so the event loop can process the show/resize event first.
+        // After a session restore from settings the editor viewport has no size
+        // yet (window not shown). Applying the scroll right now would be a no-op.
+        // Leave scrollPending = true; showEvent will apply it after first show.
+        // For user-triggered tab switches the viewport already has a real size,
+        // so apply immediately.
         if (session->scrollPending) {
-            session->scrollPending = false;
             if (session->curOffset > 0) {
                 hexEdit->setCursorPosition(session->curOffset * 2);
                 if (hexEdit->viewport()->height() > 0) {
+                    session->scrollPending = false;
                     hexEdit->ensureVisibleCentered();
-                } else {
-                    QPointer<HexEditor> weakEdit = hexEdit;
-                    const qint64 off = session->curOffset;
-                    QTimer::singleShot(0, this, [weakEdit, off]() {
-                        if (weakEdit) {
-                            weakEdit->setCursorPosition(off * 2);
-                            weakEdit->ensureVisibleCentered();
-                        }
-                    });
                 }
+                // else: leave scrollPending = true for showEvent
+            } else {
+                session->scrollPending = false;
             }
         }
     }
@@ -5252,6 +5272,33 @@ void MainWindow::readSettings()
                 s->dockChangesExpandedWidth  = t.dockChangesExpW;
                 s->dockChangesExpandedHeight = t.dockChangesExpH;
                 s->dockStateInitialized = true;
+            }
+
+            // After the apply loop the EditorSession fields for the CURRENT session
+            // hold the restored values, but the live dock widgets still reflect the
+            // default state set during the last loadFile/loadFileInNewTab call.
+            // Sync the live dock widgets to the current session's restored state NOW
+            // so that the saveCurrentSession() call inside onTabChanged() (triggered
+            // by setCurrentIndex below) captures the correct restored values instead
+            // of overwriting them with the stale live state.
+            if (m_currentSession && m_currentSession->dockStateInitialized) {
+                auto fixLiveDock = [](BaseDockWidget *d, bool collapsed, int expW, int expH) {
+                    if (!d) return;
+                    if (expW > 0 || expH > 0) d->setExpandedSize(expW, expH);
+                    if (collapsed != d->isCollapsed()) d->setCollapsed(collapsed);
+                };
+                fixLiveDock(m_tablesDock,
+                            m_currentSession->dockTablesCollapsed,
+                            m_currentSession->dockTablesExpandedWidth,
+                            m_currentSession->dockTablesExpandedHeight);
+                fixLiveDock(m_pointersDock,
+                            m_currentSession->dockPointersCollapsed,
+                            m_currentSession->dockPointersExpandedWidth,
+                            m_currentSession->dockPointersExpandedHeight);
+                fixLiveDock(m_changesDock,
+                            m_currentSession->dockChangesCollapsed,
+                            m_currentSession->dockChangesExpandedWidth,
+                            m_currentSession->dockChangesExpandedHeight);
             }
 
             // Switch to previously active tab and apply its dock state.
