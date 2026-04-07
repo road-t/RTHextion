@@ -5,4 +5,5 @@ SUBDIRS = \
     tst_translationtable \
     tst_datas \
     tst_hexdocument \
-    tst_hexedit
+    tst_hexedit \
+    tst_settings
