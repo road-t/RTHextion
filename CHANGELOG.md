@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v2.0.1] - 2026-04-08
+
+### Fixed
+- **Automatic project saving**: Fixed issue where project was auto-saved even when user selected "Do not save"
+- **Pointer list sorting**: Fixed incorrect sorting behavior in the Pointers dock widget
+- **Dock windows state**: Fixed size and state persistence for dock windows - layout now properly restored between sessions
+
 ## [v2.0] - 2026-04-06
 
 ### Added
