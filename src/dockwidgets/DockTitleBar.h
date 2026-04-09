@@ -240,7 +240,7 @@ private:
         const int buttonsLen = (3 * kBtnSz) + (4 * kPad);
         setMinimumSize(buttonsLen, kThick);
         setMaximumSize(QWIDGETSIZE_MAX, kThick);
-        setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         positionButton();
         update();
     }

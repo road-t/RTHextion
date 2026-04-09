@@ -2476,6 +2476,10 @@ void MainWindow::init()
     connect(m_tabWidget, &QTabWidget::tabCloseRequested, this, &MainWindow::onTabCloseRequested);
     setCentralWidget(m_tabWidget);
 
+    // Allow nested dock areas so docks can be stacked:
+    // multiple columns in side areas, multiple rows in bottom area.
+    setDockNestingEnabled(true);
+
     // Create the first session
     EditorSession *firstSession = createSession();
     m_currentSession = firstSession;
@@ -4417,9 +4421,9 @@ void MainWindow::setupDockTitleBarCallbacks()
         if (!titleBar)
             return;
         titleBar->setCollapseAreaCallback([this, dock] {
-            Qt::DockWidgetArea area = dockWidgetArea(dock);
-            if (area != Qt::NoDockWidgetArea)
-                setDockAreaCollapsed(area, !isDockAreaCollapsed(area));
+            auto *baseDock = qobject_cast<BaseDockWidget *>(dock);
+            if (baseDock)
+                baseDock->setCollapsed(!baseDock->isCollapsed());
         });
         titleBar->installDoubleClickFilter();
     };
