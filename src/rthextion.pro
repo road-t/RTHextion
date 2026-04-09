@@ -13,6 +13,10 @@ macx {
     HEADERS += utils/macostheme.h
 }
 
+# Capstone disassembly engine (static, embedded in project)
+INCLUDEPATH += $$PWD/libs/capstone/include
+LIBS += -L$$PWD/libs/capstone -lcapstone
+
 # Windows: iconv path is passed via CI qmake arguments (INCLUDEPATH/LIBS)
 # Linux:   iconv is part of glibc — no link flag needed
 
@@ -54,8 +58,10 @@ HEADERS = \
     dockwidgets/PointersDockWidget.h \
     dockwidgets/ChangesDockWidget.h \
     dockwidgets/BaseDockWidget.h \
+    dockwidgets/DisassemblyDockWidget.h \
     # utils
     utils/Datas.h \
+    utils/disassembler.h \
     utils/encodingdetect.h \
     utils/romdetect.h
 
@@ -89,8 +95,10 @@ SOURCES = \
     dockwidgets/PointersDockWidget.cpp \
     dockwidgets/ChangesDockWidget.cpp \
     dockwidgets/BaseDockWidget.cpp \
+    dockwidgets/DisassemblyDockWidget.cpp \
     # utils
-    utils/byteglue.cpp
+    utils/byteglue.cpp \
+    utils/disassembler.cpp
 
 RESOURCES = \
     rthextion.qrc

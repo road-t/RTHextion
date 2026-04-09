@@ -17,6 +17,7 @@
 #include "TablesDockWidget.h"
 #include "PointersDockWidget.h"
 #include "ChangesDockWidget.h"
+#include "DisassemblyDockWidget.h"
 #include "SemiAutoTableDialog.h"
 #include "DumpScriptdialog.h"
 #include "InsertScriptDialog.h"
@@ -362,6 +363,7 @@ private:
     QAction *tablesDockToggleAct = nullptr;
     QAction *pointersDockToggleAct = nullptr;
     QAction *changesDockToggleAct = nullptr;
+    QAction *disassemblyDockToggleAct = nullptr;
 
     HexEditor *hexEdit;
     OptionsDialog *optionsDialog;
@@ -374,6 +376,7 @@ private:
     TablesDockWidget   *m_tablesDock   = nullptr;
     PointersDockWidget *m_pointersDock  = nullptr;
     ChangesDockWidget  *m_changesDock   = nullptr;
+    DisassemblyDockWidget *m_disasmDock  = nullptr;
 
     QComboBox *cbRomType;
     QPushButton *lbEndiannes;

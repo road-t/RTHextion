@@ -2196,6 +2196,8 @@ void MainWindow::retranslateUi()
         m_pointersDock->retranslateUi();
     if (m_changesDock)
         m_changesDock->retranslateUi();
+    if (m_disasmDock)
+        m_disasmDock->retranslateUi();
 
     showStatusEndianAct->setText(tr("Endianness"));
     showStatusByteAct->setText(tr("Byte"));
@@ -2532,6 +2534,23 @@ void MainWindow::init()
     }
     m_changesDock->show();
 
+    // Disassembly dock widget (bottom, to the right of changes)
+    m_disasmDock = new DisassemblyDockWidget(this);
+    m_disasmDock->setHexEdit(hexEdit);
+    m_disasmDock->setRomType(m_detectedRomType);
+    addDockWidget(Qt::BottomDockWidgetArea, m_disasmDock);
+    splitDockWidget(m_changesDock, m_disasmDock, Qt::Horizontal);
+    m_disasmDock->hide();  // hidden by default, user enables via View → Dock
+    connect(m_disasmDock, &DisassemblyDockWidget::jumpToOffset, this, [this](qint64 offset) {
+        hexEdit->setCursorPosition(offset * 2);
+        hexEdit->ensureVisible();
+        hexEdit->setFocus();
+    });
+    connect(m_disasmDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
+        if (visible)
+            m_disasmDock->refresh();
+    });
+
     // Ctrl+1..9 shortcuts for switching table tabs
     for (int i = 1; i <= 9; ++i) {
         auto *shortcut = new QShortcut(QKeySequence(static_cast<int>(Qt::CTRL) | (Qt::Key_0 + i)), this);
@@ -2790,6 +2809,11 @@ void MainWindow::restoreSession(EditorSession *session)
 
     m_pointersDock->setHexEdit(hexEdit);
 
+    if (m_disasmDock) {
+        m_disasmDock->setHexEdit(hexEdit);
+        m_disasmDock->setRomType(m_detectedRomType);
+    }
+
     // Restore the per-session table dock content. applySnapshot rebuilds the
     // dock's tab list and emits activeTableChanged/tableContentChanged.
     // Suppress "project modified" side effects while this is a pure restore.
@@ -2989,6 +3013,9 @@ void MainWindow::onTabCloseRequested(int index)
         m_changesDock->hide();
         m_pointersDock->setHexEdit(nullptr);
         m_pointersDock->hide();
+        m_disasmDock->setHexEdit(nullptr);
+        m_disasmDock->clear();
+        m_disasmDock->hide();
 
         // Keep m_tabWidget visible so dock widgets don't expand to fill its area.
         // An empty QTabWidget shows just a blank area — acceptable as a placeholder.
@@ -4048,6 +4075,13 @@ void MainWindow::createMenus()
     connect(m_changesDock, &QDockWidget::windowTitleChanged, this, [this]() {
         if (changesDockToggleAct) changesDockToggleAct->setText(tr("Changes"));
     });
+    
+    disassemblyDockToggleAct = m_disasmDock->toggleViewAction();
+    disassemblyDockToggleAct->setText(tr("Disassembly"));
+    dockMenu->addAction(disassemblyDockToggleAct);
+    connect(m_disasmDock, &QDockWidget::windowTitleChanged, this, [this]() {
+        if (disassemblyDockToggleAct) disassemblyDockToggleAct->setText(tr("Disassembly"));
+    });
 
     dockMenu->addSeparator();
 
@@ -4222,6 +4256,7 @@ void MainWindow::setDockAreaCollapsed(Qt::DockWidgetArea area, bool collapsed)
         };
         capture(m_pointersDock);
         capture(m_changesDock);
+        capture(m_disasmDock);
     }
 
     // Collapse all known dock widgets in the given area.
@@ -4237,6 +4272,8 @@ void MainWindow::setDockAreaCollapsed(Qt::DockWidgetArea area, bool collapsed)
             m_pointersDock->setCollapsed(collapsed);
         else if (dock == m_changesDock)
             m_changesDock->setCollapsed(collapsed);
+        else if (dock == m_disasmDock)
+            m_disasmDock->setCollapsed(collapsed);
         else {
             if (collapsed)
                 dock->hide();
@@ -4248,6 +4285,7 @@ void MainWindow::setDockAreaCollapsed(Qt::DockWidgetArea area, bool collapsed)
     collapseIfInArea(m_tablesDock);
     collapseIfInArea(m_pointersDock);
     collapseIfInArea(m_changesDock);
+    collapseIfInArea(m_disasmDock);
 
     // Restore horizontal widths for bottom docks (preserves the splitter ratio
     // the user had before collapse, instead of forcing 50/50).
@@ -5009,6 +5047,9 @@ void MainWindow::loadFile(const QString &fileName)
         hexEdit->byteOrder = defaultByteOrder(rom);
         updateEndiannesLabel();
     }
+
+    if (m_disasmDock)
+        m_disasmDock->setRomType(rom);
 
     auto applyEncoding = [this](const QString &enc) {
         m_currentEncoding = enc;
@@ -6719,6 +6760,9 @@ void MainWindow::onRomTypeChanged(int index)
     updateEndiannesLabel();
     setAddress(hexEdit->getCurrentOffset());
     syncRomTypeMenu(index);
+
+    if (m_disasmDock)
+        m_disasmDock->setRomType(m_detectedRomType);
 }
 
 void MainWindow::repopulateRomTypeCombo()
@@ -6751,6 +6795,9 @@ void MainWindow::onMenuRomTypeTriggered(QAction *action)
     hexEdit->byteOrder = defaultByteOrder(m_detectedRomType);
     updateEndiannesLabel();
     setAddress(hexEdit->getCurrentOffset());
+
+    if (m_disasmDock)
+        m_disasmDock->setRomType(m_detectedRomType);
 }
 
 void MainWindow::setCurrentPointerOffset(qint64 offset)
