@@ -68,7 +68,9 @@ void BaseDockWidget::setCollapsed(bool collapsed)
             const int liveW = width();
             if (m_savedExpandedHeight <= 0 && liveH > collapsedExtent) m_savedExpandedHeight = liveH;
             if (m_savedExpandedWidth  <= 0 && liveW > 0)               m_savedExpandedWidth  = liveW;
-            setMinimumWidth(m_savedExpandedWidth);
+            // Lock width so the splitter doesn't steal space when content is hidden
+            setMinimumWidth(liveW);
+            setMaximumWidth(liveW);
             setMinimumHeight(collapsedExtent);
             setMaximumHeight(collapsedExtent);
             if (mw) mw->resizeDocks({this}, {collapsedExtent}, Qt::Vertical);
