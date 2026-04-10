@@ -4,6 +4,10 @@ CONFIG += c++17
 TEMPLATE = app
 TARGET = RTHextion
 
+# Capstone disassembly engine (static, embedded in project)
+INCLUDEPATH += $$PWD/libs/capstone/include
+LIBS += -L$$PWD/libs/capstone -lcapstone
+
 macx {
     ICON = images/tj.icns
     QMAKE_BUNDLE = RTHextion
@@ -12,10 +16,6 @@ macx {
     OBJECTIVE_SOURCES += utils/macostheme.mm
     HEADERS += utils/macostheme.h
 }
-
-# Capstone disassembly engine (static, embedded in project)
-INCLUDEPATH += $$PWD/libs/capstone/include
-LIBS += -L$$PWD/libs/capstone -lcapstone
 
 # Windows: iconv path is passed via CI qmake arguments (INCLUDEPATH/LIBS)
 # Linux:   iconv is part of glibc — no link flag needed
