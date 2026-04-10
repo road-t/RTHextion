@@ -107,6 +107,7 @@ Detect endianness=Автоматически определять порядок
 Disable table on file close=Отключать таблицу при закрытии файла
 Disassembly=Дизассемблер
 Disassembly not supported for this ROM type=Дизассемблирование не поддерживается для этого типа ROM
+Disassembly view=Режим дизассемблера
 Dock=Док-панели
 Drop all=Удалить все
 Drop all pointers=Удалить все указатели

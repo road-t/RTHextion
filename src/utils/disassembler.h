@@ -20,6 +20,9 @@ struct DisasmInstruction {
     qint64  branchTarget; ///< File offset of branch target (-1 if not a branch or unresolvable)
 };
 
+/// Lightweight instruction boundary for fast full-file scanning.
+struct InsnBoundary { qint64 offset; int size; };
+
 /// Disassembler wrapper around Capstone.
 /// Supports architectures via RomType mapping.
 class Disassembler
@@ -43,6 +46,12 @@ public:
     /// @return Vector of disassembled instructions
     QVector<DisasmInstruction> disassemble(const QByteArray &data, qint64 offset,
                                            int maxBytes, int maxInstr = 0);
+
+    /// Lightweight scan: returns only (fileOffset, size) pairs for instruction
+    /// boundaries without expensive QString formatting.
+    /// Used by the hex editor to build line breaks for the entire file.
+    QVector<InsnBoundary> scanBoundaries(const QByteArray &data, qint64 offset,
+                                         int maxBytes);
 
     /// Returns the current ROM type.
     RomType romType() const { return m_romType; }

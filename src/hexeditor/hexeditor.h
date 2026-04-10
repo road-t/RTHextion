@@ -9,6 +9,10 @@
 
 class QContextMenuEvent;
 class SectionListModel;
+class Disassembler;
+struct DisasmInstruction;
+struct InsnBoundary;
+enum class RomType : int;
 
 #include "chunks.h"
 #include "commands.h"
@@ -411,6 +415,9 @@ signals:
     /*! The signal is emitted when virtual line breaks are added, removed, or cleared. */
     void lineBreaksChanged();
 
+    /*! Emitted when the disassembly view mode is toggled. */
+    void disasmModeChanged(bool enabled);
+
     /*! The signal is emitted when the right mouse button is pressed and the
         context menu should be shown. The point is in global screen coordinates.
         bytePos is the byte offset under the cursor at the time of the click. */
@@ -528,6 +535,10 @@ public:
 
     bool showPointers();
     void setShowPointers(bool mode);
+
+    bool showDisasm() const;
+    void setShowDisasm(bool mode);
+    void setDisasmRomType(RomType type);
 
     bool showSections();
     void setShowSections(bool mode);
@@ -780,6 +791,22 @@ private:
     QVector<qint64> _lineBreaks;                    // sorted byte offsets: row ends after this byte
     QVector<qint64> _visualRowStartBytes;           // precomputed absolute byte offsets for visible rows
     int _lineBreakCmdCount = 0;                     // # of line-break undo commands at or below current undo index
+
+    // Disassembly view mode
+    bool _showDisasm = false;
+    Disassembler *_disasm = nullptr;
+    RomType _disasmRomType {};                      // ROM type for disassembly
+    QVector<InsnBoundary> _disasmBoundaries; // lightweight instruction boundaries
+    QVector<qint64> _savedLineBreaks;               // user line breaks saved while disasm mode is active
+
+    // On-demand disasm cache for visible rows
+    mutable QVector<DisasmInstruction> _disasmCache;
+    mutable qint64 _disasmCacheStart = -1;          // file offset of first cached instruction
+    mutable qint64 _disasmCacheEnd = -1;            // file offset past last cached instruction
+
+    void rebuildDisasmLayout();
+    const DisasmInstruction *disasmInstructionAtOffset(qint64 fileOffset) const;
+    int disasmBoundaryIndex(qint64 fileOffset) const;
     /*! \endcond docNever */
 };
 

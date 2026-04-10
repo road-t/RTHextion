@@ -56,6 +56,7 @@
 #include "SectionListModel.h"
 #include "romdetect.h"
 #include "romchecksum.h"
+#include "disassembler.h"
 #include "encodingdetect.h"
 
 namespace
@@ -2413,6 +2414,8 @@ void MainWindow::retranslateUi()
     showSignedValuesAct->setText(tr("Show signed values"));
     showAddressAreaAct->setText(tr("Address area"));
     showAsciiAreaAct->setText(tr("ASCII area"));
+    if (showDisasmAct)
+        showDisasmAct->setText(tr("Disassembly view"));
     showAddressGridAct->setText(tr("Show grid"));
     if (showDarkThemeAct)
         showDarkThemeAct->setText(tr("Dark theme"));
@@ -3060,6 +3063,10 @@ void MainWindow::restoreSession(EditorSession *session)
         m_disasmDock->setRomType(m_detectedRomType);
     }
 
+    hexEdit->setDisasmRomType(m_detectedRomType);
+    if (showDisasmAct)
+        showDisasmAct->setEnabled(Disassembler::isSupported(m_detectedRomType));
+
     // Restore sections for this tab
     if (m_document && m_sectionModel)
     {
@@ -3139,6 +3146,8 @@ void MainWindow::restoreSession(EditorSession *session)
 
     // Sync show-pointers action and dock button with the restored editor's state
     if (showPointersAct) {
+        const bool hasPointers = hexEdit && !hexEdit->pointers()->empty();
+        showPointersAct->setEnabled(hasPointers);
         const bool sp = hexEdit ? hexEdit->showPointers()
                                 : (m_document && m_document->showPointers);
         showPointersAct->setChecked(sp);
@@ -4003,6 +4012,14 @@ void MainWindow::createActions()
     showAsciiAreaAct->setCheckable(true);
     showAsciiAreaAct->setChecked(true);
 
+    showDisasmAct = new QAction(tr("Disassembly view"), this);
+    showDisasmAct->setCheckable(true);
+    showDisasmAct->setChecked(false);
+    showDisasmAct->setEnabled(false);
+    connect(showDisasmAct, &QAction::toggled, this, [this](bool checked) {
+        hexEdit->setShowDisasm(checked);
+    });
+
     showAddressGridAct = new QAction(tr("Show grid"), this);
     showAddressGridAct->setCheckable(true);
     showAddressGridAct->setChecked(true);
@@ -4255,6 +4272,8 @@ void MainWindow::createMenus()
     panelsMenu = viewMenu->addMenu(tr("Panels"));
     panelsMenu->addAction(showAddressAreaAct);
     panelsMenu->addAction(showAsciiAreaAct);
+    panelsMenu->addSeparator();
+    panelsMenu->addAction(showDisasmAct);
     panelsMenu->addSeparator();
     showStatusBarAct = panelsMenu->addAction(tr("Status bar"));
     showStatusBarAct->setCheckable(true);
@@ -5332,6 +5351,10 @@ void MainWindow::loadFile(const QString &fileName)
 
     if (m_disasmDock)
         m_disasmDock->setRomType(rom);
+
+    hexEdit->setDisasmRomType(rom);
+    if (showDisasmAct)
+        showDisasmAct->setEnabled(Disassembler::isSupported(rom));
 
     auto applyEncoding = [this](const QString &enc) {
         m_currentEncoding = enc;
@@ -7060,6 +7083,10 @@ void MainWindow::onRomTypeChanged(int index)
 
     if (m_disasmDock)
         m_disasmDock->setRomType(m_detectedRomType);
+
+    hexEdit->setDisasmRomType(m_detectedRomType);
+    if (showDisasmAct)
+        showDisasmAct->setEnabled(Disassembler::isSupported(m_detectedRomType));
 }
 
 void MainWindow::repopulateRomTypeCombo()
@@ -7095,6 +7122,10 @@ void MainWindow::onMenuRomTypeTriggered(QAction *action)
 
     if (m_disasmDock)
         m_disasmDock->setRomType(m_detectedRomType);
+
+    hexEdit->setDisasmRomType(m_detectedRomType);
+    if (showDisasmAct)
+        showDisasmAct->setEnabled(Disassembler::isSupported(m_detectedRomType));
 }
 
 void MainWindow::setCurrentPointerOffset(qint64 offset)

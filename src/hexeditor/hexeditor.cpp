@@ -19,6 +19,8 @@
 #include "hexeditor.h"
 #include "hexscrollmap.h"
 #include "SectionListModel.h"
+#include "disassembler.h"
+#include "romdetect.h"
 #include <algorithm>
 #include <cmath>
 #include <cerrno>
@@ -1734,6 +1736,156 @@ void HexEditor::setShowPointers(bool show)
 bool HexEditor::showPointers()
 {
     return _showPointers;
+}
+
+// ── Disassembly view mode ──────────────────────────────────────
+
+bool HexEditor::showDisasm() const
+{
+    return _showDisasm;
+}
+
+void HexEditor::setShowDisasm(bool mode)
+{
+    if (_showDisasm == mode)
+        return;
+
+    _showDisasm = mode;
+
+    if (_showDisasm) {
+        // Save current user line breaks
+        _savedLineBreaks = _lineBreaks;
+        rebuildDisasmLayout();
+    } else {
+        // Restore user line breaks
+        _disasmBoundaries.clear();
+        _disasmCache.clear();
+        _disasmCacheStart = _disasmCacheEnd = -1;
+        _lineBreaks = _savedLineBreaks;
+        _savedLineBreaks.clear();
+        adjust();
+        viewport()->update();
+        emit lineBreaksChanged();
+    }
+
+    emit disasmModeChanged(_showDisasm);
+}
+
+void HexEditor::setDisasmRomType(RomType type)
+{
+    if (_disasmRomType == type)
+        return;
+    _disasmRomType = type;
+
+    if (!_disasm) {
+        _disasm = new Disassembler();
+    }
+    bool ok = _disasm->setRomType(type);
+    (void)ok;
+
+    if (_showDisasm)
+        rebuildDisasmLayout();
+}
+
+void HexEditor::rebuildDisasmLayout()
+{
+    _disasmBoundaries.clear();
+    _disasmCache.clear();
+    _disasmCacheStart = _disasmCacheEnd = -1;
+
+    if (!_disasm || !Disassembler::isSupported(_disasmRomType)) {
+        _lineBreaks.clear();
+        adjust();
+        viewport()->update();
+        emit lineBreaksChanged();
+        return;
+    }
+
+    const QByteArray fileData = data();
+    if (fileData.isEmpty()) {
+        _lineBreaks.clear();
+        adjust();
+        viewport()->update();
+        emit lineBreaksChanged();
+        return;
+    }
+
+    // Lightweight boundary scan — only collects (offset, size), no strings
+    _disasmBoundaries = _disasm->scanBoundaries(fileData, 0, fileData.size());
+
+    // Build line breaks: each instruction ends at (fileOffset + size - 1)
+    QVector<qint64> breaks;
+    breaks.reserve(_disasmBoundaries.size());
+    for (const auto &b : _disasmBoundaries) {
+        const qint64 lastByte = b.offset + b.size - 1;
+        if (lastByte < fileData.size() - 1)
+            breaks.append(lastByte);
+    }
+
+    _lineBreaks = breaks;
+    adjust();
+    viewport()->update();
+    emit lineBreaksChanged();
+}
+
+int HexEditor::disasmBoundaryIndex(qint64 fileOffset) const
+{
+    if (_disasmBoundaries.isEmpty())
+        return -1;
+    int lo = 0, hi = _disasmBoundaries.size() - 1;
+    while (lo <= hi) {
+        int mid = lo + (hi - lo) / 2;
+        const auto &b = _disasmBoundaries[mid];
+        if (fileOffset < b.offset)
+            hi = mid - 1;
+        else if (fileOffset >= b.offset + b.size)
+            lo = mid + 1;
+        else
+            return mid;
+    }
+    return -1;
+}
+
+const DisasmInstruction *HexEditor::disasmInstructionAtOffset(qint64 fileOffset) const
+{
+    // Return from cache if available
+    if (fileOffset >= _disasmCacheStart && fileOffset < _disasmCacheEnd) {
+        for (const auto &instr : _disasmCache) {
+            if (fileOffset >= instr.fileOffset && fileOffset < instr.fileOffset + instr.size)
+                return &instr;
+        }
+    }
+
+    // Find the boundary index for this offset
+    const int idx = const_cast<HexEditor*>(this)->disasmBoundaryIndex(fileOffset);
+    if (idx < 0 || !_disasm)
+        return nullptr;
+
+    // Disassemble a window of ~256 instructions around the target
+    const int margin = 128;
+    const int startIdx = qMax(0, idx - margin);
+    const int endIdx = qMin(_disasmBoundaries.size() - 1, idx + margin);
+    const qint64 startOfs = _disasmBoundaries[startIdx].offset;
+    const auto &lastB = _disasmBoundaries[endIdx];
+    const qint64 endOfs = lastB.offset + lastB.size;
+    const int bytes = static_cast<int>(endOfs - startOfs);
+
+    const QByteArray region = _chunks->data(startOfs, bytes);
+    _disasmCache = _disasm->disassemble(region, 0, region.size());
+    // Adjust: disassemble() saw offset 0, but real file offset is startOfs
+    for (auto &instr : _disasmCache) {
+        instr.fileOffset += startOfs;
+        instr.address += static_cast<quint64>(startOfs);
+    }
+    _disasmCacheStart = startOfs;
+    _disasmCacheEnd = endOfs;
+
+    // Search the freshly populated cache
+    for (const auto &instr : _disasmCache) {
+        if (fileOffset >= instr.fileOffset && fileOffset < instr.fileOffset + instr.size)
+            return &instr;
+    }
+    return nullptr;
 }
 
 void HexEditor::setShowSections(bool show)
@@ -3637,6 +3789,48 @@ void HexEditor::paintEvent(QPaintEvent *event)
                     if (c == viewport()->palette().color(QPalette::Base))
                         c = _asciiAreaColor;
 
+                    // ── Disassembly view mode: show mnemonic + operands per row ──
+                    if (_showDisasm)
+                    {
+                        const int symWidthPx = _pxCharWidth;
+                        r.setRect(pxPosAsciiX2 - 1, pxPosY - _pxCharHeight + _pxSelectionSub + 2,
+                                  qMax(1, symWidthPx), _pxCharHeight);
+
+                        if (colIdx == 0) {
+                            // Draw instruction mnemonic + operands once for the whole row
+                            const qint64 rowFileOffset = _bPosFirst + bPosLine;
+                            const DisasmInstruction *instr = disasmInstructionAtOffset(rowFileOffset);
+                            if (instr) {
+                                QString disasmText = instr->mnemonic;
+                                if (!instr->operands.isEmpty())
+                                    disasmText += QLatin1Char(' ') + instr->operands;
+
+                                // Use monospace font; draw across the full remaining width
+                                const int textWidth = paintFm.horizontalAdvance(disasmText) + _pxCharWidth;
+                                QRect textRect(pxPosAsciiX2 - 1,
+                                               pxPosY - _pxCharHeight + _pxSelectionSub + 2,
+                                               textWidth, _pxCharHeight);
+
+                                if (c != _asciiAreaColor)
+                                    painter.fillRect(textRect, c);
+
+                                if (instr->isBranch)
+                                    painter.setPen(QPen(palette().color(QPalette::Link)));
+                                else
+                                    painter.setPen(QPen(_asciiFontColor));
+                                painter.drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, disasmText);
+                            }
+                        }
+
+                        if ((bPosLine + colIdx) == cursorLeadBufIdx)
+                            _asciiCursorRect = QRect(r.x() - 1, r.y() - 2, _pxCharWidth + 2, r.height() + 2);
+
+                        pxPosAsciiX2 += symWidthPx;
+                    }
+                    else
+                    {
+                    // ── Normal ASCII rendering ──
+
                     QChar ch = QChar::fromLatin1(rawByte);
 
                     QString sym;
@@ -3724,6 +3918,7 @@ void HexEditor::paintEvent(QPaintEvent *event)
                         _asciiCursorRect = QRect(r.x() - 1, r.y() - 2, baseSymWidthPx + 2, r.height() + 2);
 
                     pxPosAsciiX2 += symWidthPx;
+                    } // end else (normal ASCII rendering)
                 }
             }
         }

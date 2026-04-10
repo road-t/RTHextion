@@ -107,6 +107,7 @@ Detect endianness=ROMタイプを検出
 Disable table on file close=ファイルを閉じたときにテーブルを無効にする
 Disassembly=逆アセンブン
 Disassembly not supported for this ROM type=このROMタイプは逆アセンブルをサポートしていません
+Disassembly view=逆アセンブルビュー
 Dock=ドック
 Drop all=すべて削除
 Drop all pointers=すべてのポインタを削除

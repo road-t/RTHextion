@@ -130,6 +130,10 @@ bool Disassembler::setRomType(RomType type)
     // Enable detail mode for branch detection
     cs_option(h, CS_OPT_DETAIL, CS_OPT_ON);
 
+    // Enable SKIPDATA so Capstone emits .byte pseudo-instructions for
+    // undecipherable bytes instead of stopping at the first invalid opcode.
+    cs_option(h, CS_OPT_SKIPDATA, CS_OPT_ON);
+
     m_handle = static_cast<size_t>(h);
     m_open = true;
 
@@ -254,44 +258,47 @@ QVector<DisasmInstruction> Disassembler::disassemble(const QByteArray &data, qin
         return result;
 
     const uint8_t *code = reinterpret_cast<const uint8_t *>(data.constData() + offset);
-    const quint64 startAddr = static_cast<quint64>(offset + m_baseAddress);
+    size_t codeSize = static_cast<size_t>(available);
+    quint64 addr = static_cast<quint64>(offset + m_baseAddress);
 
     csh h = static_cast<csh>(m_handle);
-    cs_insn *insn = nullptr;
 
-    size_t count = cs_disasm(h, code, static_cast<size_t>(available), startAddr,
-                             maxInstr > 0 ? static_cast<size_t>(maxInstr) : 0, &insn);
-
-    if (count == 0)
+    // Use cs_disasm_iter for memory-efficient one-at-a-time disassembly.
+    // With CS_OPT_SKIPDATA enabled, undecipherable bytes become .byte pseudo-ops.
+    cs_insn *insn = cs_malloc(h);
+    if (!insn)
         return result;
 
-    result.reserve(static_cast<int>(count));
+    const int limit = (maxInstr > 0) ? maxInstr : INT_MAX;
 
-    for (size_t i = 0; i < count; ++i) {
+    while (codeSize > 0 && result.size() < limit) {
+        if (!cs_disasm_iter(h, &code, &codeSize, &addr, insn))
+            break;
+
         DisasmInstruction di;
-        di.fileOffset = static_cast<qint64>(insn[i].address) - m_baseAddress;
-        di.address = insn[i].address;
-        di.size = static_cast<int>(insn[i].size);
-        di.mnemonic = QString::fromLatin1(insn[i].mnemonic).toUpper();
-        di.operands = QString::fromLatin1(insn[i].op_str);
+        di.fileOffset = static_cast<qint64>(insn->address) - m_baseAddress;
+        di.address = insn->address;
+        di.size = static_cast<int>(insn->size);
+        di.mnemonic = QString::fromLatin1(insn->mnemonic).toUpper();
+        di.operands = QString::fromLatin1(insn->op_str);
 
         // Format raw bytes
         QString bytesHex;
         for (int b = 0; b < di.size; ++b) {
             if (b > 0) bytesHex += QLatin1Char(' ');
-            bytesHex += QString::number(insn[i].bytes[b], 16)
+            bytesHex += QString::number(insn->bytes[b], 16)
                             .toUpper().rightJustified(2, QLatin1Char('0'));
         }
         di.bytes = bytesHex;
 
-        di.isBranch = isBranchInstruction(h, &insn[i]);
+        di.isBranch = isBranchInstruction(h, insn);
 
         if (di.isBranch) {
-            qint64 target = extractBranchTarget(&insn[i]);
+            qint64 target = extractBranchTarget(insn);
             if (target >= 0) {
                 di.branchTarget = resolveTarget(static_cast<quint64>(target));
             } else {
-                di.branchTarget = -1;  // Indirect or unparseable
+                di.branchTarget = -1;
             }
         } else {
             di.branchTarget = -1;
@@ -300,6 +307,40 @@ QVector<DisasmInstruction> Disassembler::disassemble(const QByteArray &data, qin
         result.append(di);
     }
 
-    cs_free(insn, count);
+    cs_free(insn, 1);
+    return result;
+}
+
+QVector<InsnBoundary> Disassembler::scanBoundaries(
+    const QByteArray &data, qint64 offset, int maxBytes)
+{
+    QVector<InsnBoundary> result;
+    if (!m_open || offset < 0 || offset >= data.size())
+        return result;
+
+    const int available = qMin(maxBytes, static_cast<int>(data.size() - offset));
+    if (available <= 0)
+        return result;
+
+    const uint8_t *code = reinterpret_cast<const uint8_t *>(data.constData() + offset);
+    size_t codeSize = static_cast<size_t>(available);
+    quint64 addr = static_cast<quint64>(offset + m_baseAddress);
+
+    csh h = static_cast<csh>(m_handle);
+    cs_insn *insn = cs_malloc(h);
+    if (!insn)
+        return result;
+
+    // Estimate: M68K averages ~3 bytes/insn, 6502 ~2, ARM ~4
+    result.reserve(available / 2);
+
+    while (codeSize > 0) {
+        if (!cs_disasm_iter(h, &code, &codeSize, &addr, insn))
+            break;
+        const qint64 fOfs = static_cast<qint64>(insn->address) - m_baseAddress;
+        result.append({fOfs, static_cast<int>(insn->size)});
+    }
+
+    cs_free(insn, 1);
     return result;
 }

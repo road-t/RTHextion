@@ -107,6 +107,7 @@ Detect endianness=检测ROM类型
 Disable table on file close=关闭文件时禁用表
 Disassembly=反汇编
 Disassembly not supported for this ROM type=此ROM类型不支持反汇编
+Disassembly view=反汇编视图
 Dock=停靠
 Drop all=全部删除
 Drop all pointers=删除所有指针

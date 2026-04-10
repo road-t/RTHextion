@@ -281,6 +281,7 @@ private:
     QAction *saveProjectAsAct = nullptr;
 
     QAction *showChangesAct = nullptr;
+    QAction *showDisasmAct = nullptr;
     QAction *createIpsPatchAct = nullptr;
     QAction *loadIpsPatchAct = nullptr;
     QAction *loadOriginalAct = nullptr;

@@ -107,6 +107,7 @@ Detect endianness=Détecter l'endianness
 Disable table on file close=Désactiver la table à la fermeture du fichier
 Disassembly=Désassemblage
 Disassembly not supported for this ROM type=Désassemblage non supporté pour ce type de ROM
+Disassembly view=Vue désassemblage
 Dock=Dock
 Drop all=Tout supprimer
 Drop all pointers=Supprimer tous les pointeurs
