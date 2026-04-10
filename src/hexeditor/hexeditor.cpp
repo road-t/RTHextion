@@ -3069,17 +3069,10 @@ void HexEditor::mouseDoubleClickEvent(QMouseEvent *event)
 
     if (_showPointers)
     {
-        const qint64 ptrStart = pointerStartAt(_bPosCurrent, kPointerByteSize);
-
-        // jump to pointed offset
-        if (ptrStart >= 0)
-        {
-            _editAreaIsAscii = true;
-            setCursorPosition(_pointers.getOffset(ptrStart) * 2);
-            ensureVisible();
-        }
-        // jump to pointer
-        else if (_pointers.hasOffset(_bPosCurrent))
+        // jump to pointer source — higher priority even if this byte is also the
+        // start of a pointer itself; the remaining pointer bytes can be used to
+        // follow the pointer to its data target
+        if (_pointers.hasOffset(_bPosCurrent))
         {
             _editAreaIsAscii = false;
 
@@ -3093,6 +3086,17 @@ void HexEditor::mouseDoubleClickEvent(QMouseEvent *event)
             else
             {
                 // TODO: display context menu/listbox with pointers list
+            }
+        }
+        // jump to pointed offset
+        else
+        {
+            const qint64 ptrStart = pointerStartAt(_bPosCurrent, kPointerByteSize);
+            if (ptrStart >= 0)
+            {
+                _editAreaIsAscii = true;
+                setCursorPosition(_pointers.getOffset(ptrStart) * 2);
+                ensureVisible();
             }
         }
     }
