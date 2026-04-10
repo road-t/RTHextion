@@ -58,6 +58,9 @@ public:
     bool dockChangesCollapsed      = false;
     int  dockChangesExpandedWidth  = -1;
     int  dockChangesExpandedHeight = -1;
+    bool dockSectionsCollapsed      = false;
+    int  dockSectionsExpandedWidth  = -1;
+    int  dockSectionsExpandedHeight = -1;
     bool dockStateInitialized = false;
 
     /// Set during session restore from settings to defer cursor centering

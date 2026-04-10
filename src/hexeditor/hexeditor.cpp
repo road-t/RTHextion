@@ -18,6 +18,7 @@
 
 #include "hexeditor.h"
 #include "hexscrollmap.h"
+#include "SectionListModel.h"
 #include <algorithm>
 #include <cmath>
 #include <cerrno>
@@ -1735,6 +1736,23 @@ bool HexEditor::showPointers()
     return _showPointers;
 }
 
+void HexEditor::setShowSections(bool show)
+{
+    _showSections = show;
+    viewport()->update();
+}
+
+bool HexEditor::showSections()
+{
+    return _showSections;
+}
+
+void HexEditor::setSectionModel(SectionListModel *model)
+{
+    _sectionModel = model;
+    viewport()->update();
+}
+
 void HexEditor::setPointersColor(const QColor &color)
 {
     _brushPointers = QBrush(color);
@@ -3265,6 +3283,14 @@ void HexEditor::paintEvent(QPaintEvent *event)
             for (int colIdx = 0; ((bPosLine + colIdx) < _dataShown.size() && (colIdx < bytesThisRow)); colIdx++)
             {
                 QColor c = viewport()->palette().color(QPalette::Base);
+
+                // Section background (lowest priority — drawn first, overridden by everything)
+                if (_showSections && _sectionModel) {
+                    const qint64 posBaSection = _bPosFirst + bPosLine + colIdx;
+                    const QColor sc = _sectionModel->colorAtOffset(posBaSection);
+                    if (sc.isValid())
+                        c = sc;
+                }
 
                 const char rawByte = _dataShown.at(bPosLine + colIdx);
                 const bool isZeroByte = (rawByte == 0);

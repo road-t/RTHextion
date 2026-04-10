@@ -38,6 +38,7 @@ HEADERS = \
     document/hexdocument.h \
     document/translationtable.h \
     document/PointerListModel.h \
+    document/SectionListModel.h \
     document/theme.h \
     # dialogs
     dialogs/DumpScriptdialog.h \
@@ -53,6 +54,7 @@ HEADERS = \
     dockwidgets/TablesDockWidget.h \
     dockwidgets/PointersDockWidget.h \
     dockwidgets/ChangesDockWidget.h \
+    dockwidgets/SectionsDockWidget.h \
     dockwidgets/BaseDockWidget.h \
     # utils
     utils/Datas.h \
@@ -73,6 +75,7 @@ SOURCES = \
     document/hexdocument.cpp \
     document/translationtable.cpp \
     document/PointerListModel.cpp \
+    document/SectionListModel.cpp \
     document/theme.cpp \
     # dialogs
     dialogs/DumpScriptdialog.cpp \
@@ -88,6 +91,7 @@ SOURCES = \
     dockwidgets/TablesDockWidget.cpp \
     dockwidgets/PointersDockWidget.cpp \
     dockwidgets/ChangesDockWidget.cpp \
+    dockwidgets/SectionsDockWidget.cpp \
     dockwidgets/BaseDockWidget.cpp \
     # utils
     utils/byteglue.cpp

@@ -8,6 +8,7 @@
 #include <QSet>
 
 class QContextMenuEvent;
+class SectionListModel;
 
 #include "chunks.h"
 #include "commands.h"
@@ -523,6 +524,10 @@ public:
     bool showPointers();
     void setShowPointers(bool mode);
 
+    bool showSections();
+    void setShowSections(bool mode);
+    void setSectionModel(SectionListModel *model);
+
     QColor pointersColor();
     void setPointersColor(const QColor &color);
 
@@ -705,6 +710,8 @@ private:
     QColor _pointerFrameBackgroundColor;
     bool _readOnly;
     bool _showPointers;
+    bool _showSections = true;
+    SectionListModel *_sectionModel = nullptr;
     bool _hexCaps;
     bool _dynamicBytesPerLine;
     bool _separatorDragging = false;            // true while dragging hex/ascii separator

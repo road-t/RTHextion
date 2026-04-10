@@ -10,6 +10,7 @@
 
 #include "Datas.h"
 #include "romdetect.h"
+#include "SectionListModel.h"
 
 class TranslationTable;
 class PointerListModel;
@@ -108,6 +109,11 @@ public:
     bool showPointers = true;
     bool showChanges  = false;
     bool changesHexMode = false;
+    bool showSections = true;
+
+    // ---- Sections ----
+
+    QVector<Section> sectionSnapshot;
 
     // Dock layout / columns state — saved to project but NOT dirty-tracked
     // (pure UI geometry; losing it is harmless).
@@ -134,6 +140,9 @@ public:
 
     void snapshotPointers(PointerListModel *model);
     void restorePointers(PointerListModel *model) const;
+
+    void snapshotSections(SectionListModel *model);
+    void restoreSections(SectionListModel *model) const;
 
 private:
     // Dirty tracking

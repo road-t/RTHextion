@@ -17,6 +17,7 @@
 #include "TablesDockWidget.h"
 #include "PointersDockWidget.h"
 #include "ChangesDockWidget.h"
+#include "SectionsDockWidget.h"
 #include "SemiAutoTableDialog.h"
 #include "DumpScriptdialog.h"
 #include "InsertScriptDialog.h"
@@ -36,6 +37,8 @@ class QDragEnterEvent;
 class QDropEvent;
 class QTabWidget;
 QT_END_NAMESPACE
+
+class SectionListModel;
 
 class MainWindow : public QMainWindow
 {
@@ -362,6 +365,7 @@ private:
     QAction *tablesDockToggleAct = nullptr;
     QAction *pointersDockToggleAct = nullptr;
     QAction *changesDockToggleAct = nullptr;
+    QAction *sectionsDockToggleAct = nullptr;
 
     HexEditor *hexEdit;
     OptionsDialog *optionsDialog;
@@ -374,6 +378,8 @@ private:
     TablesDockWidget   *m_tablesDock   = nullptr;
     PointersDockWidget *m_pointersDock  = nullptr;
     ChangesDockWidget  *m_changesDock   = nullptr;
+    SectionsDockWidget *m_sectionsDock  = nullptr;
+    SectionListModel   *m_sectionModel  = nullptr;
 
     QComboBox *cbRomType;
     QPushButton *lbEndiannes;
