@@ -1,5 +1,6 @@
 #include "hexdocument.h"
 #include "PointerListModel.h"
+#include "SectionListModel.h"
 #include "translationtable.h"
 #include "romdetect.h"
 
@@ -117,6 +118,21 @@ void HexDocument::restorePointers(PointerListModel *model) const
 
     if (!m_pointerSnapshot.isEmpty())
         model->addPointersBatch(m_pointerSnapshot);
+}
+
+void HexDocument::snapshotSections(SectionListModel *model)
+{
+    sectionSnapshot.clear();
+    if (!model)
+        return;
+    sectionSnapshot = model->sections();
+}
+
+void HexDocument::restoreSections(SectionListModel *model) const
+{
+    if (!model)
+        return;
+    model->setSections(sectionSnapshot);
 }
 
 // ---------------------------------------------------------------------------
@@ -338,6 +354,22 @@ bool HexDocument::saveProject(const QString &path,
             out << "  - 0x" << QString::number(off, 16).toUpper() << "\n";
     }
 
+    // Sections
+    out << "\nshow_sections: " << (showSections ? "true" : "false") << "\n";
+    if (!sectionSnapshot.isEmpty())
+    {
+        out << "\nsections:\n";
+        for (const auto &s : sectionSnapshot)
+        {
+            out << "  - name: " << yamlEscape(s.name) << "\n";
+            out << "    start: 0x" << QString::number(s.startOffset, 16).toUpper() << "\n";
+            out << "    end: 0x" << QString::number(s.endOffset, 16).toUpper() << "\n";
+            out << "    color: " << s.color.name() << "\n";
+            if (s.parentIndex >= 0)
+                out << "    parent: " << s.parentIndex << "\n";
+        }
+    }
+
     f.close();
     projectFilePath = path;
 
@@ -381,11 +413,13 @@ bool HexDocument::loadProject(const QString &path)
     showPointers = true;
     showChanges = false;
     changesHexMode = false;
+    showSections = true;
+    sectionSnapshot.clear();
     originalBytes.clear();
     m_alignmentOffsets.clear();
     originalFileSize = -1;
 
-    enum class Section { Root, Pointers, TableEntries, Original, Tables, TablesEntries, Alignment };
+    enum class Section { Root, Pointers, TableEntries, Original, Tables, TablesEntries, Alignment, Sections };
     Section section = Section::Root;
 
     // Temp for building a pointer entry
@@ -457,6 +491,12 @@ bool HexDocument::loadProject(const QString &path)
         if (stripped == QLatin1String("alignment:"))
         {
             switchSection(Section::Alignment);
+            continue;
+        }
+
+        if (stripped == QLatin1String("sections:"))
+        {
+            switchSection(Section::Sections);
             continue;
         }
 
@@ -679,6 +719,64 @@ bool HexDocument::loadProject(const QString &path)
             }
         }
 
+        // --- Sections section: each entry is "  - name: ...\n    start: ...\n    end: ...\n    color: ..." ---
+        if (section == Section::Sections)
+        {
+            if (stripped.startsWith(QLatin1String("- name:")))
+            {
+                ::Section sec;
+                sec.name = yamlUnescape(stripped.mid(7).trimmed());
+                sectionSnapshot.append(sec);
+                continue;
+            }
+
+            if (!sectionSnapshot.isEmpty())
+            {
+                auto &cur = sectionSnapshot.last();
+                if (stripped.startsWith(QLatin1String("start:")))
+                {
+                    QString v = stripped.mid(6).trimmed();
+                    bool ok = false;
+                    cur.startOffset = v.startsWith(QLatin1String("0x"), Qt::CaseInsensitive)
+                        ? v.mid(2).toLongLong(&ok, 16) : v.toLongLong(&ok);
+                    continue;
+                }
+                if (stripped.startsWith(QLatin1String("end:")))
+                {
+                    QString v = stripped.mid(4).trimmed();
+                    bool ok = false;
+                    cur.endOffset = v.startsWith(QLatin1String("0x"), Qt::CaseInsensitive)
+                        ? v.mid(2).toLongLong(&ok, 16) : v.toLongLong(&ok);
+                    continue;
+                }
+                if (stripped.startsWith(QLatin1String("color:")))
+                {
+                    cur.color = QColor(stripped.mid(6).trimmed());
+                    continue;
+                }
+                if (stripped.startsWith(QLatin1String("parent:")))
+                {
+                    bool ok = false;
+                    const int pi = stripped.mid(7).trimmed().toInt(&ok);
+                    if (ok) cur.parentIndex = pi;
+                    continue;
+                }
+            }
+
+            // Unrecognised line — leave sections section
+            if (!stripped.startsWith(QLatin1Char('-')) && !stripped.startsWith(QLatin1String("start"))
+                && !stripped.startsWith(QLatin1String("end")) && !stripped.startsWith(QLatin1String("color"))
+                && !stripped.startsWith(QLatin1String("parent")))
+            {
+                section = Section::Root;
+                // Fall through to root parsing
+            }
+            else
+            {
+                continue;
+            }
+        }
+
 
         // Parse key: value
         int colonPos = stripped.indexOf(QLatin1Char(':'));
@@ -843,6 +941,10 @@ bool HexDocument::loadProject(const QString &path)
         else if (key == QLatin1String("changes_hex_mode"))
         {
             changesHexMode = (val == QLatin1String("true"));
+        }
+        else if (key == QLatin1String("show_sections"))
+        {
+            showSections = (val == QLatin1String("true"));
         }
         else if (key == QLatin1String("dock_layout_state"))
         {

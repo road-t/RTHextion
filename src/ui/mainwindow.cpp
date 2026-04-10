@@ -52,6 +52,8 @@
 #include "DockTitleBar.h"
 #include "TablesDockWidget.h"
 #include "ChangesDockWidget.h"
+#include "SectionsDockWidget.h"
+#include "SectionListModel.h"
 #include "romdetect.h"
 #include "romchecksum.h"
 #include "encodingdetect.h"
@@ -1045,6 +1047,73 @@ void MainWindow::removeVirtualFormatting(qint64 rangeFrom, qint64 rangeTo)
         hexEdit->clearLineBreaks();
 }
 
+void MainWindow::addSectionFromSelection(int parentIdx)
+{
+    if (!hexEdit || !m_sectionModel)
+        return;
+
+    const qint64 selBegin = hexEdit->getSelectionBegin();
+    const qint64 selEnd   = hexEdit->getSelectionEnd();
+    if (selEnd - selBegin < 1)
+        return;
+
+    // parentIdx >= 0: explicit parent set by context menu "Add subsection"
+    // parentIdx == -1: auto-detect by finding the deepest section that
+    //                  contains the selection start
+    if (parentIdx < 0) {
+        int maxDepth = -1;
+        for (int i = 0; i < m_sectionModel->count(); ++i) {
+            const Section &sec = m_sectionModel->at(i);
+            if (selBegin >= sec.startOffset && selBegin < sec.endOffset) {
+                int d = 0;
+                for (int pi = sec.parentIndex; pi >= 0; pi = m_sectionModel->at(pi).parentIndex)
+                    ++d;
+                if (d > maxDepth) { maxDepth = d; parentIdx = i; }
+            }
+        }
+    }
+
+    const int n = m_sectionModel->count() + 1;
+    const QString title = (parentIdx < 0) ? tr("Add section") : tr("Add subsection");
+    bool ok = false;
+    const QString name = QInputDialog::getText(
+        this, title,
+        tr("Section name:"), QLineEdit::Normal,
+        tr("Section %1").arg(n), &ok);
+    if (!ok || name.isEmpty())
+        return;
+
+    Section s;
+    s.name = name;
+    s.startOffset = selBegin;
+    s.endOffset = selEnd;
+    s.color = SectionListModel::randomPastelColor();
+    s.parentIndex = parentIdx;
+    m_sectionModel->addSection(s);
+
+    // Add 2 blank visual rows before and after the section,
+    // but skip each boundary if it touches the start or end of the file.
+    const qint64 fileSize = hexEdit->dataSize();
+    if (selBegin > 0) {
+        const qint64 pos = selBegin - 1;
+        auto lb = hexEdit->lineBreaks();
+        int cnt = static_cast<int>(std::count(lb.begin(), lb.end(), pos));
+        for (int i = cnt; i < 3; ++i)
+            hexEdit->addLineBreakDirect(pos);
+    }
+    if (selEnd < fileSize) {
+        const qint64 pos = selEnd - 1;
+        auto lb = hexEdit->lineBreaks();
+        int cnt = static_cast<int>(std::count(lb.begin(), lb.end(), pos));
+        for (int i = cnt; i < 3; ++i)
+            hexEdit->addLineBreakDirect(pos);
+    }
+
+    if (m_document)
+        m_document->markDirty();
+    hexEdit->viewport()->update();
+}
+
 void MainWindow::showPointersDialog()
 {
     if (!pointersDialog)
@@ -1554,18 +1623,18 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
 
         for (const qint64 ptr : ptrs)
         {
-            QAction *ptrAct = menu.addAction(QStringLiteral("0x%1").arg(ptr, 8, 16, QChar('0')).toUpper());
+            QAction *ptrAct = menu.addAction(QStringLiteral("0x%1").arg(ptr, 8, 16, QChar('0')));
             ptrActs.append(ptrAct);
         }
 
         menu.addSeparator();
-        QAction *dropAllAct = menu.addAction(tr("Drop all"));
+        QAction *dropAllAct = menu.addAction(tr("Drop pointers"));
         QAction *dropSelectionPtrsAct = nullptr;
         QVector<qint64> dropSelectionPtrs;
         if (hasSelection)
         {
             dropSelectionPtrs = selectedPointerOffsetsForDrop();
-            dropSelectionPtrsAct = menu.addAction(tr("Drop pointers"));
+            dropSelectionPtrsAct = menu.addAction(tr("Drop all pointers"));
             dropSelectionPtrsAct->setEnabled(!dropSelectionPtrs.isEmpty());
         }
         QAction *editScriptAct2 = nullptr;
@@ -1730,6 +1799,12 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         vfRemoveAct3 = menu.addAction(tr("Remove virtual formatting"));
     }
 
+    QAction *addSectionAct = nullptr;
+    if (hasSelection) {
+        menu.addSeparator();
+        addSectionAct = menu.addAction(tr("Add section"));
+    }
+
     QAction *chosen = menu.exec(globalPos);
     if (handleClipboardAction(chosen, clipActs))
         return;
@@ -1817,6 +1892,10 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
     else if (vfRemoveAct3 && chosen == vfRemoveAct3)
     {
         removeVirtualFormatting(hexEdit->getSelectionBegin(), hexEdit->getSelectionEnd());
+    }
+    else if (addSectionAct && chosen == addSectionAct)
+    {
+        addSectionFromSelection(-1);
     }
     else if (chosen == quickSearchAct)
     {
@@ -2196,8 +2275,12 @@ void MainWindow::retranslateUi()
         m_pointersDock->retranslateUi();
     if (m_changesDock)
         m_changesDock->retranslateUi();
+
     if (m_disasmDock)
         m_disasmDock->retranslateUi();
+
+    if (m_sectionsDock)
+        m_sectionsDock->retranslateUi();
 
     showStatusEndianAct->setText(tr("Endianness"));
     showStatusByteAct->setText(tr("Byte"));
@@ -2550,10 +2633,39 @@ void MainWindow::init()
         hexEdit->ensureVisible();
         hexEdit->setFocus();
     });
+
     connect(m_disasmDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
         if (visible)
             m_disasmDock->refresh();
     });
+
+    // Sections dock widget (left side)
+    m_sectionModel = new SectionListModel(this);
+    m_sectionsDock = new SectionsDockWidget(this);
+    m_sectionsDock->setModel(m_sectionModel);
+    addDockWidget(Qt::LeftDockWidgetArea, m_sectionsDock);
+    m_sectionsDock->show();
+    hexEdit->setSectionModel(m_sectionModel);
+
+    connect(m_sectionsDock, &SectionsDockWidget::jumpToOffset, this, [this](qint64 offset) {
+        hexEdit->setCursorPosition(offset * 2);
+        hexEdit->ensureVisibleTop();
+        hexEdit->setFocus();
+    });
+    connect(m_sectionsDock, &SectionsDockWidget::showSectionsToggled, this, [this](bool checked) {
+        hexEdit->setShowSections(checked);
+    });
+    connect(m_sectionsDock, &SectionsDockWidget::addSectionRequested, this, [this](int parentIdx) {
+        addSectionFromSelection(parentIdx);
+    });
+    connect(m_sectionModel, &SectionListModel::sectionsChanged, this, [this]() {
+        if (m_document)
+            m_document->markDirty();
+        hexEdit->viewport()->update();
+    });
+    // Auto-select the matching section in the tree as the cursor moves
+    connect(hexEdit, &HexEditor::currentAddressChanged,
+            m_sectionsDock, &SectionsDockWidget::highlightOffset);
 
     // Ctrl+1..9 shortcuts for switching table tabs
     for (int i = 1; i <= 9; ++i) {
@@ -2755,6 +2867,12 @@ void MainWindow::saveCurrentSession()
     if (m_document)
         m_document->useTable = (useTableAct && useTableAct->isChecked());
 
+    // Snapshot sections for this tab
+    if (m_document && m_sectionModel) {
+        m_document->snapshotSections(m_sectionModel);
+        m_document->showSections = hexEdit->showSections();
+    }
+
     // Save per-tab dock collapse/size state from live dock widgets
     if (m_tablesDock) {
         m_currentSession->dockTablesCollapsed      = m_tablesDock->isCollapsed();
@@ -2770,6 +2888,11 @@ void MainWindow::saveCurrentSession()
         m_currentSession->dockChangesCollapsed      = m_changesDock->isCollapsed();
         m_currentSession->dockChangesExpandedWidth  = m_changesDock->expandedWidth();
         m_currentSession->dockChangesExpandedHeight = m_changesDock->expandedHeight();
+    }
+    if (m_sectionsDock) {
+        m_currentSession->dockSectionsCollapsed      = m_sectionsDock->isCollapsed();
+        m_currentSession->dockSectionsExpandedWidth  = m_sectionsDock->expandedWidth();
+        m_currentSession->dockSectionsExpandedHeight = m_sectionsDock->expandedHeight();
     }
     m_currentSession->dockStateInitialized = true;
 
@@ -2813,9 +2936,24 @@ void MainWindow::restoreSession(EditorSession *session)
 
     m_pointersDock->setHexEdit(hexEdit);
 
-    if (m_disasmDock) {
+    if (m_disasmDock)
+    {
         m_disasmDock->setHexEdit(hexEdit);
         m_disasmDock->setRomType(m_detectedRomType);
+    }
+
+    // Restore sections for this tab
+    if (m_document && m_sectionModel)
+    {
+        m_document->restoreSections(m_sectionModel);
+        hexEdit->setSectionModel(m_sectionModel);
+        hexEdit->setShowSections(m_document->showSections);
+
+        if (m_sectionsDock)
+        {
+            m_sectionsDock->setShowSectionsChecked(m_document->showSections);
+            m_sectionsDock->setRomTypeName(QString::fromLatin1(romTypeName(m_detectedRomType)));
+        }
     }
 
     // Restore the per-session table dock content. applySnapshot rebuilds the
@@ -2862,6 +3000,10 @@ void MainWindow::restoreSession(EditorSession *session)
                        session->dockChangesCollapsed,
                        session->dockChangesExpandedWidth,
                        session->dockChangesExpandedHeight);
+        applyDockState(m_sectionsDock,
+                       session->dockSectionsCollapsed,
+                       session->dockSectionsExpandedWidth,
+                       session->dockSectionsExpandedHeight);
     } else {
         m_tablesDock->setCollapsed(false);
     }
@@ -4668,6 +4810,14 @@ void MainWindow::openProjectFile(const QString &path)
     // document copy (*m_document = doc) resets m_dirty to false.
     showPointersAct->setEnabled(!hexEdit->pointers()->empty());
 
+    // 5b. Sections
+    doc.restoreSections(m_sectionModel);
+    hexEdit->setShowSections(doc.showSections);
+    if (m_sectionsDock) {
+        m_sectionsDock->setShowSectionsChecked(doc.showSections);
+        m_sectionsDock->setRomTypeName(QString::fromLatin1(romTypeName(doc.romType())));
+    }
+
     // 6. Alignment (virtual line breaks) — block signal to avoid marking project modified on load
     {
         const QSignalBlocker blocker(hexEdit);
@@ -4795,9 +4945,11 @@ bool MainWindow::saveProjectImpl(const QString &path)
     m_document->setPointerSize(m_pointerSize);
     m_document->setByteOrder(hexEdit->byteOrder);
     m_document->snapshotPointers(hexEdit->pointers());
+    m_document->snapshotSections(m_sectionModel);
     m_document->showPointers = (showPointersAct && showPointersAct->isChecked());
     m_document->showChanges = (showChangesAct  && showChangesAct->isChecked());
     m_document->changesHexMode = (m_changesDock && m_changesDock->hexMode());
+    m_document->showSections = hexEdit->showSections();
     m_document->dockLayoutState = QByteArray(); // now stored in per-project app settings
     m_document->tablesColumnsState = m_tablesDock ? m_tablesDock->saveColumnsState() : QByteArray();
     m_document->cursorPosition = 0; // now stored in per-project app settings
@@ -5091,6 +5243,21 @@ void MainWindow::loadFile(const QString &fileName)
     }
 
     settings.setValue("RecentFile0", fileName);
+
+    // Create default Header section for known ROM types (when no project loaded)
+    if (m_sectionModel && m_sectionModel->count() == 0 && rom != RomType::Unknown) {
+        const qint64 hdrSize = SectionListModel::romHeaderSize(rom);
+        if (hdrSize > 0) {
+            Section hdr;
+            hdr.name = tr("Header");
+            hdr.startOffset = 0;
+            hdr.endOffset = hdrSize;
+            hdr.color = SectionListModel::randomPastelColor();
+            m_sectionModel->addSection(hdr);
+        }
+        if (m_sectionsDock)
+            m_sectionsDock->setRomTypeName(QString::fromLatin1(romTypeName(rom)));
+    }
 }
 
 void MainWindow::readSettings()

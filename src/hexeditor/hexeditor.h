@@ -8,6 +8,7 @@
 #include <QSet>
 
 class QContextMenuEvent;
+class SectionListModel;
 
 #include "chunks.h"
 #include "commands.h"
@@ -303,6 +304,11 @@ public:
      */
     void ensureVisibleCentered();
 
+    /*! Scroll so that the cursor (section start) is pinned to the very top
+     *  of the visible area.
+     */
+    void ensureVisibleTop();
+
     /*! Find first occurrence of ba in HexEditor data
      * \param ba Data to find
      * \param from Point where the search starts
@@ -523,6 +529,10 @@ public:
     bool showPointers();
     void setShowPointers(bool mode);
 
+    bool showSections();
+    void setShowSections(bool mode);
+    void setSectionModel(SectionListModel *model);
+
     QColor pointersColor();
     void setPointersColor(const QColor &color);
 
@@ -705,6 +715,8 @@ private:
     QColor _pointerFrameBackgroundColor;
     bool _readOnly;
     bool _showPointers;
+    bool _showSections = true;
+    SectionListModel *_sectionModel = nullptr;
     bool _hexCaps;
     bool _dynamicBytesPerLine;
     bool _separatorDragging = false;            // true while dragging hex/ascii separator

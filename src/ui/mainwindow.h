@@ -17,6 +17,7 @@
 #include "TablesDockWidget.h"
 #include "PointersDockWidget.h"
 #include "ChangesDockWidget.h"
+#include "SectionsDockWidget.h"
 #include "DisassemblyDockWidget.h"
 #include "SemiAutoTableDialog.h"
 #include "DumpScriptdialog.h"
@@ -37,6 +38,8 @@ class QDragEnterEvent;
 class QDropEvent;
 class QTabWidget;
 QT_END_NAMESPACE
+
+class SectionListModel;
 
 class MainWindow : public QMainWindow
 {
@@ -78,6 +81,7 @@ private slots:
     void showSearchDialog();
     void showVirtualFormatDialog(qint64 rangeFrom = -1, qint64 rangeTo = -1);
     void removeVirtualFormatting(qint64 rangeFrom = -1, qint64 rangeTo = -1);
+    void addSectionFromSelection(int parentIdx = -1);
     void showPointersDialog();
     void pointersUpdated();
     void hexEditContextMenu(const QPoint &globalPos, qint64 bytePos);
@@ -363,6 +367,7 @@ private:
     QAction *tablesDockToggleAct = nullptr;
     QAction *pointersDockToggleAct = nullptr;
     QAction *changesDockToggleAct = nullptr;
+    QAction *sectionsDockToggleAct = nullptr;
     QAction *disassemblyDockToggleAct = nullptr;
 
     HexEditor *hexEdit;
@@ -376,6 +381,8 @@ private:
     TablesDockWidget   *m_tablesDock   = nullptr;
     PointersDockWidget *m_pointersDock  = nullptr;
     ChangesDockWidget  *m_changesDock   = nullptr;
+    SectionsDockWidget *m_sectionsDock  = nullptr;
+    SectionListModel   *m_sectionModel  = nullptr;
     DisassemblyDockWidget *m_disasmDock  = nullptr;
 
     QComboBox *cbRomType;

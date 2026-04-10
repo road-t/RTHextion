@@ -1,4 +1,4 @@
-# RTHextion v2.0 - Retrogames Translation Hex Editor
+# RTHextion v2.1 - Retrogames Translation Hex Editor
 
 A hex editor for retrogames translation and ROMHacking, a tribute to 00's Translhextion by Januschan. 
 
@@ -11,6 +11,7 @@ A hex editor for retrogames translation and ROMHacking, a tribute to 00's Transl
   - Quick original content view
 - **Multi-tab workspace** with persistent session — open multiple files/projects simultaneously, all tabs and their state saved and restored on restart
 - Dock widgets for convenient workflow:
+  - **Sections dock** — organize file structure with nested sections, auto-highlight current section by cursor position, full drag-drop support
   - **Pointers dock** — search data pointers and navigate to referenced locations with real-time preview
   - **Translation tables dock** — view, edit, and switch between translation tables without leaving the editor
   - **Changes dock** — track all modifications to the current file
@@ -22,7 +23,8 @@ A hex editor for retrogames translation and ROMHacking, a tribute to 00's Transl
 - Auto-detect ROM type, default byte order and required pointer arithmetics
 - Customizable user interface with 7 languages (English, Russian, French, German, Spanish, Portuguese, Japanese, Chinese)
 - UI theme support (light/dark) with customizable colors and fonts
-- Virtual format support for visualizing and editing data in a structured way
+- Sections hierarchical organization with colored highlighting 
+- Virtual format support with automatic line breaks around sections
 - Cross-platform support (Windows, macOS, Linux)
 
 ## Screenshots
@@ -31,7 +33,7 @@ A hex editor for retrogames translation and ROMHacking, a tribute to 00's Transl
 <img src="assets/general_view_1.png" alt="General view" width="800" />
 
 #### Virtual formatting for structured data visualization and editing
-<img src="assets/virtual_formatting.png" alt="Virtual formatting" width="800" />
+<img src="assets/sections.png" alt="Sections and virtual formatting" width="800" />
 
 #### Pointers search and navigation with real-time preview and highlighting
 <img src="assets/general_view_2.png" alt="General view" width="800" />

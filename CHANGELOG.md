@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v2.1.0] - 2026-04-10
+
+### Added
+- **Sections organization** — organize file structure with hierarchical sections
+
+### Fixed
+- **Missing translations** — filled all missing Section-related UI translations
+
 ## [v2.0.1] - 2026-04-08
 
 ### Fixed
