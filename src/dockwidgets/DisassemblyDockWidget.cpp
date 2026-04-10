@@ -59,9 +59,9 @@ DisassemblyDockWidget::DisassemblyDockWidget(QWidget *parent)
     toolRow->addStretch();
     layout->addLayout(toolRow);
 
-    // Disassembly table: Offset | Bytes | Mnemonic | Operands
+    // Disassembly table: Offset | Hex | Instruction | Operands
     m_table = new QTableWidget(0, 4, this);
-    m_table->setHorizontalHeaderLabels({tr("Offset"), tr("Bytes"), tr("Instruction"), tr("Operands")});
+    m_table->setHorizontalHeaderLabels({tr("Offset"), tr("Hex"), tr("Instruction"), tr("Operands")});
     m_table->verticalHeader()->setVisible(false);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -293,7 +293,7 @@ void DisassemblyDockWidget::retranslateUi()
     setWindowTitle(tr("Disassembly"));
     if (m_followBtn)
         m_followBtn->setToolTip(tr("Follow cursor"));
-    m_table->setHorizontalHeaderLabels({tr("Offset"), tr("Bytes"), tr("Instruction"), tr("Operands")});
+    m_table->setHorizontalHeaderLabels({tr("Offset"), tr("Hex"), tr("Instruction"), tr("Operands")});
     updateSupportLabel();
 }
 

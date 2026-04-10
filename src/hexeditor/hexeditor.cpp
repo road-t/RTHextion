@@ -3096,9 +3096,7 @@ void HexEditor::mouseDoubleClickEvent(QMouseEvent *event)
 
     if (_showPointers)
     {
-        // jump to pointer source — higher priority even if this byte is also the
-        // start of a pointer itself; the remaining pointer bytes can be used to
-        // follow the pointer to its data target
+        // Highest priority: if something points TO the current offset, jump to that pointer source
         if (_pointers.hasOffset(_bPosCurrent))
         {
             _editAreaIsAscii = false;
@@ -3115,7 +3113,7 @@ void HexEditor::mouseDoubleClickEvent(QMouseEvent *event)
                 // TODO: display context menu/listbox with pointers list
             }
         }
-        // jump to pointed offset
+        // Otherwise, if the current byte is part of a pointer, follow it to the data target
         else
         {
             const qint64 ptrStart = pointerStartAt(_bPosCurrent, kPointerByteSize);
