@@ -365,6 +365,8 @@ bool HexDocument::saveProject(const QString &path,
             out << "    start: 0x" << QString::number(s.startOffset, 16).toUpper() << "\n";
             out << "    end: 0x" << QString::number(s.endOffset, 16).toUpper() << "\n";
             out << "    color: " << s.color.name() << "\n";
+            if (s.parentIndex >= 0)
+                out << "    parent: " << s.parentIndex << "\n";
         }
     }
 
@@ -752,11 +754,19 @@ bool HexDocument::loadProject(const QString &path)
                     cur.color = QColor(stripped.mid(6).trimmed());
                     continue;
                 }
+                if (stripped.startsWith(QLatin1String("parent:")))
+                {
+                    bool ok = false;
+                    const int pi = stripped.mid(7).trimmed().toInt(&ok);
+                    if (ok) cur.parentIndex = pi;
+                    continue;
+                }
             }
 
             // Unrecognised line — leave sections section
             if (!stripped.startsWith(QLatin1Char('-')) && !stripped.startsWith(QLatin1String("start"))
-                && !stripped.startsWith(QLatin1String("end")) && !stripped.startsWith(QLatin1String("color")))
+                && !stripped.startsWith(QLatin1String("end")) && !stripped.startsWith(QLatin1String("color"))
+                && !stripped.startsWith(QLatin1String("parent")))
             {
                 section = Section::Root;
                 // Fall through to root parsing

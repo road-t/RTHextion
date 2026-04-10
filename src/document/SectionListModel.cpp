@@ -1,5 +1,6 @@
 #include "SectionListModel.h"
 #include <QRandomGenerator>
+#include <algorithm>
 
 SectionListModel::SectionListModel(QObject *parent)
     : QObject(parent)
@@ -14,10 +15,28 @@ void SectionListModel::addSection(const Section &s)
 
 void SectionListModel::removeSection(int index)
 {
-    if (index >= 0 && index < m_sections.size()) {
-        m_sections.removeAt(index);
-        emit sectionsChanged();
+    if (index < 0 || index >= m_sections.size())
+        return;
+
+    // Collect the section itself plus all direct children, sorted descending
+    QVector<int> toRemove;
+    toRemove.append(index);
+    for (int i = 0; i < m_sections.size(); ++i) {
+        if (i != index && m_sections[i].parentIndex == index)
+            toRemove.append(i);
     }
+    std::sort(toRemove.begin(), toRemove.end(), std::greater<int>());
+
+    for (int ri : toRemove) {
+        m_sections.removeAt(ri);
+        // Fix up parentIndex for all remaining sections
+        for (auto &s : m_sections) {
+            if (s.parentIndex > ri)
+                --s.parentIndex;
+        }
+    }
+
+    emit sectionsChanged();
 }
 
 void SectionListModel::renameSection(int index, const QString &name)
@@ -36,6 +55,14 @@ void SectionListModel::recolorSection(int index, const QColor &color)
     }
 }
 
+void SectionListModel::updateSection(int index, const Section &s)
+{
+    if (index >= 0 && index < m_sections.size()) {
+        m_sections[index] = s;
+        emit sectionsChanged();
+    }
+}
+
 void SectionListModel::clear()
 {
     if (!m_sections.isEmpty()) {
@@ -46,8 +73,14 @@ void SectionListModel::clear()
 
 QColor SectionListModel::colorAtOffset(qint64 offset) const
 {
+    // Pass 1: prefer subsections (parentIndex >= 0) — they are more specific
     for (const auto &s : m_sections) {
-        if (offset >= s.startOffset && offset < s.endOffset)
+        if (s.parentIndex >= 0 && offset >= s.startOffset && offset < s.endOffset)
+            return s.color;
+    }
+    // Pass 2: fall back to root sections
+    for (const auto &s : m_sections) {
+        if (s.parentIndex < 0 && offset >= s.startOffset && offset < s.endOffset)
             return s.color;
     }
     return QColor();  // invalid — no section
@@ -62,7 +95,7 @@ void SectionListModel::setSections(const QVector<Section> &sections)
 QColor SectionListModel::randomPastelColor()
 {
     const int h = QRandomGenerator::global()->bounded(360);
-    return QColor::fromHsl(h, 140, 210);
+    return QColor::fromHsl(h, 110, 230);  // lighter pastel
 }
 
 qint64 SectionListModel::romHeaderSize(RomType type)

@@ -304,6 +304,11 @@ public:
      */
     void ensureVisibleCentered();
 
+    /*! Scroll so that the cursor (section start) is pinned to the very top
+     *  of the visible area.
+     */
+    void ensureVisibleTop();
+
     /*! Find first occurrence of ba in HexEditor data
      * \param ba Data to find
      * \param from Point where the search starts

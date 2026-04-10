@@ -1047,6 +1047,73 @@ void MainWindow::removeVirtualFormatting(qint64 rangeFrom, qint64 rangeTo)
         hexEdit->clearLineBreaks();
 }
 
+void MainWindow::addSectionFromSelection(int parentIdx)
+{
+    if (!hexEdit || !m_sectionModel)
+        return;
+
+    const qint64 selBegin = hexEdit->getSelectionBegin();
+    const qint64 selEnd   = hexEdit->getSelectionEnd();
+    if (selEnd - selBegin < 1)
+        return;
+
+    // parentIdx >= 0: explicit parent set by context menu "Add subsection"
+    // parentIdx == -1: auto-detect by finding the deepest section that
+    //                  contains the selection start
+    if (parentIdx < 0) {
+        int maxDepth = -1;
+        for (int i = 0; i < m_sectionModel->count(); ++i) {
+            const Section &sec = m_sectionModel->at(i);
+            if (selBegin >= sec.startOffset && selBegin < sec.endOffset) {
+                int d = 0;
+                for (int pi = sec.parentIndex; pi >= 0; pi = m_sectionModel->at(pi).parentIndex)
+                    ++d;
+                if (d > maxDepth) { maxDepth = d; parentIdx = i; }
+            }
+        }
+    }
+
+    const int n = m_sectionModel->count() + 1;
+    const QString title = (parentIdx < 0) ? tr("Add section") : tr("Add subsection");
+    bool ok = false;
+    const QString name = QInputDialog::getText(
+        this, title,
+        tr("Section name:"), QLineEdit::Normal,
+        tr("Section %1").arg(n), &ok);
+    if (!ok || name.isEmpty())
+        return;
+
+    Section s;
+    s.name = name;
+    s.startOffset = selBegin;
+    s.endOffset = selEnd;
+    s.color = SectionListModel::randomPastelColor();
+    s.parentIndex = parentIdx;
+    m_sectionModel->addSection(s);
+
+    // Add 2 blank visual rows before and after the section,
+    // but skip each boundary if it touches the start or end of the file.
+    const qint64 fileSize = hexEdit->dataSize();
+    if (selBegin > 0) {
+        const qint64 pos = selBegin - 1;
+        auto lb = hexEdit->lineBreaks();
+        int cnt = static_cast<int>(std::count(lb.begin(), lb.end(), pos));
+        for (int i = cnt; i < 3; ++i)
+            hexEdit->addLineBreakDirect(pos);
+    }
+    if (selEnd < fileSize) {
+        const qint64 pos = selEnd - 1;
+        auto lb = hexEdit->lineBreaks();
+        int cnt = static_cast<int>(std::count(lb.begin(), lb.end(), pos));
+        for (int i = cnt; i < 3; ++i)
+            hexEdit->addLineBreakDirect(pos);
+    }
+
+    if (m_document)
+        m_document->markDirty();
+    hexEdit->viewport()->update();
+}
+
 void MainWindow::showPointersDialog()
 {
     if (!pointersDialog)
@@ -1556,18 +1623,18 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
 
         for (const qint64 ptr : ptrs)
         {
-            QAction *ptrAct = menu.addAction(QStringLiteral("0x%1").arg(ptr, 8, 16, QChar('0')).toUpper());
+            QAction *ptrAct = menu.addAction(QStringLiteral("0x%1").arg(ptr, 8, 16, QChar('0')));
             ptrActs.append(ptrAct);
         }
 
         menu.addSeparator();
-        QAction *dropAllAct = menu.addAction(tr("Drop all"));
+        QAction *dropAllAct = menu.addAction(tr("Drop pointers"));
         QAction *dropSelectionPtrsAct = nullptr;
         QVector<qint64> dropSelectionPtrs;
         if (hasSelection)
         {
             dropSelectionPtrs = selectedPointerOffsetsForDrop();
-            dropSelectionPtrsAct = menu.addAction(tr("Drop pointers"));
+            dropSelectionPtrsAct = menu.addAction(tr("Drop all pointers"));
             dropSelectionPtrsAct->setEnabled(!dropSelectionPtrs.isEmpty());
         }
         QAction *editScriptAct2 = nullptr;
@@ -1828,24 +1895,7 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
     }
     else if (addSectionAct && chosen == addSectionAct)
     {
-        const qint64 selBegin = hexEdit->getSelectionBegin();
-        const qint64 selEnd   = hexEdit->getSelectionEnd();
-        if (selEnd - selBegin >= 1 && m_sectionModel) {
-            const int n = m_sectionModel->count() + 1;
-            bool ok = false;
-            const QString name = QInputDialog::getText(
-                this, tr("Add section"),
-                tr("Section name:"), QLineEdit::Normal,
-                tr("Section %1").arg(n), &ok);
-            if (ok && !name.isEmpty()) {
-                Section s;
-                s.name = name;
-                s.startOffset = selBegin;
-                s.endOffset = selEnd;
-                s.color = SectionListModel::randomPastelColor();
-                m_sectionModel->addSection(s);
-            }
-        }
+        addSectionFromSelection(-1);
     }
     else if (chosen == quickSearchAct)
     {
@@ -2577,40 +2627,23 @@ void MainWindow::init()
 
     connect(m_sectionsDock, &SectionsDockWidget::jumpToOffset, this, [this](qint64 offset) {
         hexEdit->setCursorPosition(offset * 2);
-        hexEdit->ensureVisible();
+        hexEdit->ensureVisibleTop();
         hexEdit->setFocus();
     });
     connect(m_sectionsDock, &SectionsDockWidget::showSectionsToggled, this, [this](bool checked) {
         hexEdit->setShowSections(checked);
     });
-    connect(m_sectionsDock, &SectionsDockWidget::addSectionRequested, this, [this]() {
-        const qint64 selBegin = hexEdit->getSelectionBegin();
-        const qint64 selEnd   = hexEdit->getSelectionEnd();
-        if (selEnd - selBegin < 1)
-            return;
-        const int n = m_sectionModel->count() + 1;
-        bool ok = false;
-        const QString name = QInputDialog::getText(
-            this, tr("Add section"),
-            tr("Section name:"), QLineEdit::Normal,
-            tr("Section %1").arg(n), &ok);
-        if (!ok || name.isEmpty())
-            return;
-        Section s;
-        s.name = name;
-        s.startOffset = selBegin;
-        s.endOffset = selEnd;
-        s.color = SectionListModel::randomPastelColor();
-        m_sectionModel->addSection(s);
-        if (m_document)
-            m_document->markDirty();
-        hexEdit->viewport()->update();
+    connect(m_sectionsDock, &SectionsDockWidget::addSectionRequested, this, [this](int parentIdx) {
+        addSectionFromSelection(parentIdx);
     });
     connect(m_sectionModel, &SectionListModel::sectionsChanged, this, [this]() {
         if (m_document)
             m_document->markDirty();
         hexEdit->viewport()->update();
     });
+    // Auto-select the matching section in the tree as the cursor moves
+    connect(hexEdit, &HexEditor::currentAddressChanged,
+            m_sectionsDock, &SectionsDockWidget::highlightOffset);
 
     // Ctrl+1..9 shortcuts for switching table tabs
     for (int i = 1; i <= 9; ++i) {

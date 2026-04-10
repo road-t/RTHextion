@@ -80,6 +80,7 @@ private slots:
     void showSearchDialog();
     void showVirtualFormatDialog(qint64 rangeFrom = -1, qint64 rangeTo = -1);
     void removeVirtualFormatting(qint64 rangeFrom = -1, qint64 rangeTo = -1);
+    void addSectionFromSelection(int parentIdx = -1);
     void showPointersDialog();
     void pointersUpdated();
     void hexEditContextMenu(const QPoint &globalPos, qint64 bytePos);

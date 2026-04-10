@@ -6,6 +6,7 @@
 #include <QToolButton>
 
 class SectionListModel;
+class SectionTree;
 
 class SectionsDockWidget : public BaseDockWidget
 {
@@ -25,7 +26,11 @@ public:
 signals:
     void jumpToOffset(qint64 offset);
     void showSectionsToggled(bool checked);
-    void addSectionRequested();
+    // parentIndex == -1: add at ROM root; >= 0: add as child of that section
+    void addSectionRequested(int parentIndex);
+
+public slots:
+    void highlightOffset(qint64 offset);
 
 protected:
     void onPaletteChanged() override;
@@ -33,16 +38,19 @@ protected:
 private slots:
     void onItemClicked(QTreeWidgetItem *item, int column);
     void onTreeContextMenu(const QPoint &pos);
+    void onDropped();
 
 private:
     void rebuildTree();
+    void syncModelFromTree();
     QIcon colorSwatchIcon(const QColor &color) const;
 
-    QTreeWidget *m_tree             = nullptr;
-    QToolButton *m_showSectionsBtn  = nullptr;
-    QToolButton *m_addBtn           = nullptr;
-    SectionListModel *m_model       = nullptr;
-    QString m_romTypeName;
+    SectionTree      *m_tree            = nullptr;
+    QToolButton      *m_showSectionsBtn = nullptr;
+    QToolButton      *m_addBtn          = nullptr;
+    SectionListModel *m_model           = nullptr;
+    QString           m_romTypeName;
+    bool              m_suppressRebuild = false;
 };
 
 #endif // SECTIONSDOCKWIDGET_H

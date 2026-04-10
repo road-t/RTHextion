@@ -5,6 +5,7 @@
 #include <QString>
 #include <QColor>
 #include <QVector>
+#include <QMetaType>
 #include "romdetect.h"
 
 /// A single named section of the file (e.g. header, data block, …).
@@ -14,7 +15,9 @@ struct Section
     qint64  startOffset = 0;
     qint64  endOffset   = 0;   // exclusive (one past last byte)
     QColor  color;
+    int     parentIndex = -1;  // -1 = root section; >=0 = flat index of parent section
 };
+Q_DECLARE_METATYPE(Section)
 
 /// Lightweight container for file sections with paint-lookup support.
 /// Emits sectionsChanged() whenever the list is mutated.
@@ -29,9 +32,10 @@ public:
     const Section &at(int index) const { return m_sections.at(index); }
 
     void addSection(const Section &s);
-    void removeSection(int index);
+    void removeSection(int index);   ///< also removes direct children; fixes parent indices
     void renameSection(int index, const QString &name);
     void recolorSection(int index, const QColor &color);
+    void updateSection(int index, const Section &s);
     void clear();
 
     /// Returns the section colour for the given file offset, or an invalid
