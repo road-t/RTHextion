@@ -989,6 +989,10 @@ HexEditor::HexEditor(QWidget *parent) : QAbstractScrollArea(parent), _addressAre
 
 HexEditor::~HexEditor()
 {
+    // Disconnect before _undoStack is destroyed — its destruction clears
+    // commands, emitting indexChanged, which would call dataChangedPrivate()
+    // → adjust() on a partially destroyed widget, crashing in QRect.
+    disconnect(_undoStack, nullptr, this, nullptr);
 }
 
 // ********************************************************************** Properties
@@ -1479,6 +1483,19 @@ qint64 HexEditor::cursorPosition(QPoint pos)
         if (rowStart >= rowEnd)
             return -1;
 
+        // In disasm rows the ASCII area shows a mnemonic string, not per-byte
+        // glyphs.  A click anywhere on that row should select the first byte
+        // so the hex area highlights the instruction start.
+        {
+            const qint64 rowAbsOffset = _visualRowStartBytes[row];
+            const bool rowIsDisasm = _showDisasm
+                || (_sectionModel && _sectionModel->displayModeAtOffset(rowAbsOffset) == SectionDisplay_Disasm);
+            if (rowIsDisasm) {
+                _editAreaIsAscii = false;          // move focus to hex area
+                return _bPosFirst * 2 + rowByteStart * 2; // first byte of row
+            }
+        }
+
         // Walk slots left-to-right accumulating pixel widths until we hit the click X.
         // Multi-byte TBL/encoding entries have zero-width continuation bytes; clicks snap to the lead byte.
         int accumulated = 0;
@@ -1753,19 +1770,21 @@ void HexEditor::setShowDisasm(bool mode)
     _showDisasm = mode;
 
     if (_showDisasm) {
-        // Save current user line breaks
-        _savedLineBreaks = _lineBreaks;
+        // Preserve the project's/manual line breaks once, then switch to the
+        // full-file disassembly layout.
+        if (!_savedLineBreaksValid) {
+            _savedLineBreaks = _lineBreaks;
+            _savedLineBreaksValid = true;
+        }
         rebuildDisasmLayout();
     } else {
-        // Restore user line breaks
-        _disasmBoundaries.clear();
+        // Return to the project layout, then re-apply section-specific disasm
+        // wraps if any section still requests Disassembly mode.
         _disasmCache.clear();
         _disasmCacheStart = _disasmCacheEnd = -1;
-        _lineBreaks = _savedLineBreaks;
-        _savedLineBreaks.clear();
-        adjust();
-        viewport()->update();
-        emit lineBreaksChanged();
+        if (_savedLineBreaksValid)
+            _lineBreaks = _savedLineBreaks;
+        rebuildSectionAwareLayout();
     }
 
     emit disasmModeChanged(_showDisasm);
@@ -1785,6 +1804,8 @@ void HexEditor::setDisasmRomType(RomType type)
 
     if (_showDisasm)
         rebuildDisasmLayout();
+    else if (hasSectionDisasmMode())
+        rebuildSectionAwareLayout();
 }
 
 void HexEditor::rebuildDisasmLayout()
@@ -1826,6 +1847,162 @@ void HexEditor::rebuildDisasmLayout()
     adjust();
     viewport()->update();
     emit lineBreaksChanged();
+}
+
+void HexEditor::ensureDisasmBoundaries()
+{
+    if (!_disasm || !Disassembler::isSupported(_disasmRomType))
+        return;
+    if (!_disasmBoundaries.isEmpty())
+        return;
+
+    const QByteArray fileData = data();
+    if (fileData.isEmpty())
+        return;
+
+    _disasmBoundaries = _disasm->scanBoundaries(fileData, 0, fileData.size());
+    _disasmCache.clear();
+    _disasmCacheStart = _disasmCacheEnd = -1;
+}
+
+bool HexEditor::hasSectionDisasmMode() const
+{
+    if (!_sectionModel)
+        return false;
+    for (const auto &s : _sectionModel->sections()) {
+        if (s.displayMode == SectionDisplay_Disasm)
+            return true;
+    }
+    return false;
+}
+
+bool HexEditor::isDisasmAt(qint64 offset) const
+{
+    if (_showDisasm)
+        return true;
+    return _sectionModel
+        && _sectionModel->displayModeAtOffset(offset) == SectionDisplay_Disasm;
+}
+
+void HexEditor::rebuildSectionAwareLayout()
+{
+    // Global disassembly already owns the entire layout.
+    if (_showDisasm) {
+        rebuildDisasmLayout();
+        return;
+    }
+
+    const QVector<qint64> baseBreaks = _savedLineBreaksValid ? _savedLineBreaks : _lineBreaks;
+
+    if (!hasSectionDisasmMode()) {
+        if (_lineBreaks != baseBreaks) {
+            _lineBreaks = baseBreaks;
+            adjust();
+            viewport()->update();
+            emit lineBreaksChanged();
+        } else {
+            readBuffers();
+            viewport()->update();
+        }
+        if (!_showDisasm) {
+            _savedLineBreaks.clear();
+            _savedLineBreaksValid = false;
+        }
+        return;
+    }
+
+    if (!_savedLineBreaksValid) {
+        _savedLineBreaks = _lineBreaks;
+        _savedLineBreaksValid = true;
+    }
+
+    ensureDisasmBoundaries();
+
+    const qint64 fileSize = _chunks->size();
+    QVector<qint64> points;
+    points.reserve((_sectionModel ? _sectionModel->count() : 0) * 2 + 2);
+    points.append(0);
+    points.append(fileSize);
+
+    if (_sectionModel) {
+        for (const auto &s : _sectionModel->sections()) {
+            const qint64 start = qBound<qint64>(0, s.startOffset, fileSize);
+            const qint64 end   = qBound<qint64>(0, s.endOffset, fileSize);
+            if (start < end) {
+                points.append(start);
+                points.append(end);
+            }
+        }
+    }
+
+    std::sort(points.begin(), points.end());
+    points.erase(std::unique(points.begin(), points.end()), points.end());
+
+    QVector<QPair<qint64, qint64>> disasmRanges;
+    for (int i = 0; i + 1 < points.size(); ++i) {
+        const qint64 start = points[i];
+        const qint64 end = points[i + 1];
+        if (start >= end)
+            continue;
+        if (_sectionModel && _sectionModel->displayModeAtOffset(start) == SectionDisplay_Disasm)
+            disasmRanges.append({start, end});
+    }
+
+    QVector<qint64> breaks;
+    breaks.reserve(baseBreaks.size() + _disasmBoundaries.size());
+
+    // Keep manual/user breaks only outside section-disasm ranges.
+    int rangeIdx = 0;
+    for (qint64 brk : baseBreaks) {
+        while (rangeIdx < disasmRanges.size() && brk >= disasmRanges[rangeIdx].second)
+            ++rangeIdx;
+        const bool insideDisasmRange = (rangeIdx < disasmRanges.size()
+                                     && brk >= disasmRanges[rangeIdx].first
+                                     && brk < disasmRanges[rangeIdx].second);
+        if (!insideDisasmRange)
+            breaks.append(brk);
+    }
+
+    // Add virtual line breaks so each disasm section behaves like global disasm.
+    int instrIdx = 0;
+    for (const auto &range : disasmRanges) {
+        const qint64 start = range.first;
+        const qint64 end   = range.second;
+        if (start > 0)
+            breaks.append(start - 1); // section starts on a fresh visual row
+
+        while (instrIdx < _disasmBoundaries.size()
+               && (_disasmBoundaries[instrIdx].offset + _disasmBoundaries[instrIdx].size) <= start)
+            ++instrIdx;
+
+        for (int i = instrIdx; i < _disasmBoundaries.size(); ++i) {
+            const auto &b = _disasmBoundaries[i];
+            const qint64 insnStart = b.offset;
+            const qint64 insnEnd = b.offset + b.size;
+            if (insnStart >= end)
+                break;
+
+            const qint64 clippedEnd = qMin(insnEnd, end);
+            const qint64 lastByte = clippedEnd - 1;
+            if (lastByte >= start && lastByte < fileSize - 1)
+                breaks.append(lastByte);
+        }
+
+        if (end > 0 && end < fileSize)
+            breaks.append(end - 1); // next non-disasm bytes also start on a fresh row
+    }
+
+    std::sort(breaks.begin(), breaks.end());
+
+    if (_lineBreaks != breaks) {
+        _lineBreaks = breaks;
+        adjust();
+        viewport()->update();
+        emit lineBreaksChanged();
+    } else {
+        readBuffers();
+        viewport()->update();
+    }
 }
 
 int HexEditor::disasmBoundaryIndex(qint64 fileOffset) const
@@ -1870,13 +2047,10 @@ const DisasmInstruction *HexEditor::disasmInstructionAtOffset(qint64 fileOffset)
     const qint64 endOfs = lastB.offset + lastB.size;
     const int bytes = static_cast<int>(endOfs - startOfs);
 
-    const QByteArray region = _chunks->data(startOfs, bytes);
-    _disasmCache = _disasm->disassemble(region, 0, region.size());
-    // Adjust: disassemble() saw offset 0, but real file offset is startOfs
-    for (auto &instr : _disasmCache) {
-        instr.fileOffset += startOfs;
-        instr.address += static_cast<quint64>(startOfs);
-    }
+    // Disassemble against the real file offsets so Capstone formats
+    // PC-relative branch targets (BNE/BEQ/etc.) correctly in the operand text.
+    const QByteArray fileData = _chunks->data(0, _chunks->size());
+    _disasmCache = _disasm->disassemble(fileData, startOfs, bytes);
     _disasmCacheStart = startOfs;
     _disasmCacheEnd = endOfs;
 
@@ -1901,8 +2075,23 @@ bool HexEditor::showSections()
 
 void HexEditor::setSectionModel(SectionListModel *model)
 {
+    if (_sectionModel)
+        disconnect(_sectionModel, nullptr, this, nullptr);
+
     _sectionModel = model;
-    viewport()->update();
+
+    if (_sectionModel) {
+        connect(_sectionModel, &SectionListModel::sectionsChanged, this, [this]() {
+            rebuildSectionAwareLayout();
+        });
+    }
+
+    rebuildSectionAwareLayout();
+}
+
+void HexEditor::setAllTables(const QVector<TranslationTable*> &tables)
+{
+    _allTables = tables;
 }
 
 void HexEditor::setPointersColor(const QColor &color)
@@ -2278,6 +2467,8 @@ bool HexEditor::isModified()
 void HexEditor::setModified(bool modified)
 {
     _baseModified = modified;
+    if (!modified)
+        _cleanUndoIndex = _undoStack ? (_undoStack->index() - _lineBreakCmdCount) : 0;
     _modified = modified;
 }
 
@@ -2289,6 +2480,20 @@ bool HexEditor::canUndo()
 bool HexEditor::canRedo()
 {
     return _undoStack->canRedo();
+}
+
+void HexEditor::selectByteRange(qint64 start, qint64 end)
+{
+    const qint64 clampedStart = qMax<qint64>(0, start);
+    const qint64 clampedEnd = qMin(end, _chunks->size());
+    if (clampedEnd <= clampedStart)
+        return;
+
+    const qint64 cursorPos = clampedStart * 2;
+    const qint64 selectionEndPos = clampedEnd * 2 - 1;
+    setCursorPosition(cursorPos);
+    resetSelection(cursorPos);
+    setSelection(selectionEndPos);
 }
 
 qint64 HexEditor::lastIndexOf(const QByteArray &ba, qint64 from)
@@ -2314,10 +2519,39 @@ void HexEditor::redo()
         return;
     // Pre-update lb count before indexChanged fires in redo()
     const QUndoCommand *redoCmd = _undoStack->command(_undoStack->index());
-    if (redoCmd && redoCmd->id() == kLineBreakCmdId)
+#ifndef QT_NO_DEBUG
+    qDebug("REDO idx=%d/%d cmd=\"%s\" id=%d children=%d",
+           _undoStack->index(), _undoStack->count(),
+           redoCmd ? qPrintable(redoCmd->text()) : "(null)",
+           redoCmd ? redoCmd->id() : -999,
+           redoCmd ? redoCmd->childCount() : 0);
+#endif
+    const bool isLineBreakCmd = (redoCmd && redoCmd->id() == kLineBreakCmdId);
+    // CharCommand id=1234; macros wrapping CharCommands have id=-1 but child(0)->id()==1234
+    const bool isDataCmd = redoCmd && (redoCmd->id() == 1234
+        || (redoCmd->childCount() > 0 && redoCmd->child(0)->id() == 1234));
+    // Macros (e.g. "Add section") may contain line-break children that were
+    // counted during creation.  Adjust the count so logicalUndoIndex stays correct.
+    int lbChildren = 0;
+    if (redoCmd && !isLineBreakCmd && redoCmd->childCount() > 0) {
+        for (int i = 0; i < redoCmd->childCount(); ++i)
+            if (redoCmd->child(i)->id() == kLineBreakCmdId)
+                ++lbChildren;
+    }
+    if (isLineBreakCmd)
         ++_lineBreakCmdCount;
+    else
+        _lineBreakCmdCount += lbChildren;
+    const bool touchesLineBreaks = isLineBreakCmd || lbChildren > 0;
+    _lineBreakChangeInProgress = touchesLineBreaks;
+    _nonDataChangeInProgress = !isDataCmd && !touchesLineBreaks;
+    const qint64 savedCursor = _cursorPosition;
     _undoStack->redo();
-    setCursorPosition(_chunks->pos() * 2);
+    _lineBreakChangeInProgress = false;
+    _nonDataChangeInProgress = false;
+    // Only CharCommands update _chunks->pos(); pointer/section/linebreak
+    // commands don't touch chunks so the stored position is stale.
+    setCursorPosition(isDataCmd ? _chunks->pos() * 2 : savedCursor);
     refresh();
 }
 
@@ -2363,13 +2597,44 @@ void HexEditor::undo()
         return;
     // Pre-update lb count before indexChanged fires in undo()
     const int idx = _undoStack->index();
+    bool isLineBreakCmd = false;
+    bool isDataCmd = false;
+    int lbChildren = 0;
     if (idx > 0) {
         const QUndoCommand *undoCmd = _undoStack->command(idx - 1);
-        if (undoCmd && undoCmd->id() == kLineBreakCmdId)
+#ifndef QT_NO_DEBUG
+        qDebug("UNDO idx=%d/%d cmd=\"%s\" id=%d children=%d",
+               idx - 1, _undoStack->count(),
+               undoCmd ? qPrintable(undoCmd->text()) : "(null)",
+               undoCmd ? undoCmd->id() : -999,
+               undoCmd ? undoCmd->childCount() : 0);
+#endif
+        isLineBreakCmd = (undoCmd && undoCmd->id() == kLineBreakCmdId);
+        // CharCommand id=1234; macros wrapping CharCommands have id=-1 but child(0)->id()==1234
+        isDataCmd = undoCmd && (undoCmd->id() == 1234
+            || (undoCmd->childCount() > 0 && undoCmd->child(0)->id() == 1234));
+        // Macros (e.g. "Add section") may contain line-break children that were
+        // counted during creation.  Adjust the count so logicalUndoIndex stays correct.
+        if (undoCmd && !isLineBreakCmd && undoCmd->childCount() > 0) {
+            for (int i = 0; i < undoCmd->childCount(); ++i)
+                if (undoCmd->child(i)->id() == kLineBreakCmdId)
+                    ++lbChildren;
+        }
+        if (isLineBreakCmd)
             --_lineBreakCmdCount;
+        else
+            _lineBreakCmdCount -= lbChildren;
     }
+    const bool touchesLineBreaks = isLineBreakCmd || lbChildren > 0;
+    _lineBreakChangeInProgress = touchesLineBreaks;
+    _nonDataChangeInProgress = !isDataCmd && !touchesLineBreaks;
+    const qint64 savedCursor = _cursorPosition;
     _undoStack->undo();
-    setCursorPosition(_chunks->pos() * 2);
+    _lineBreakChangeInProgress = false;
+    _nonDataChangeInProgress = false;
+    // Only CharCommands update _chunks->pos(); pointer/section/linebreak
+    // commands don't touch chunks so the stored position is stale.
+    setCursorPosition(isDataCmd ? _chunks->pos() * 2 : savedCursor);
     refresh();
 }
 
@@ -2682,6 +2947,16 @@ void HexEditor::keyPressEvent(QKeyEvent *event)
     // Edit Commands
     if (!_readOnly && !_showOriginal)
     {
+        // Helper: block data modification when cursor or selection touches a disasm section.
+        const auto editBlockedByDisasm = [this]() {
+            if (isDisasmAt(_bPosCurrent))
+                return true;
+            if (hasSelection()
+                && (isDisasmAt(getSelectionBegin()) || isDisasmAt(getSelectionEnd() - 1)))
+                return true;
+            return false;
+        };
+
         /* Cut */
         if (event->matches(QKeySequence::Cut))
         {
@@ -2699,7 +2974,7 @@ void HexEditor::keyPressEvent(QKeyEvent *event)
             }
 
             // In REPLACE mode, cut only copies without deleting
-            if (!_overwriteMode)
+            if (!_overwriteMode && !editBlockedByDisasm())
             {
                 remove(selBegin, selEnd - selBegin);
                 setCursorPosition(2 * selBegin);
@@ -2711,6 +2986,8 @@ void HexEditor::keyPressEvent(QKeyEvent *event)
             /* Paste */
             if (event->matches(QKeySequence::Paste))
             {
+                if (editBlockedByDisasm()) { /* disasm — no paste */ }
+                else {
                 QClipboard *clipboard = QApplication::clipboard();
                 QByteArray ba;
                 if (_editAreaIsAscii)
@@ -2765,12 +3042,14 @@ void HexEditor::keyPressEvent(QKeyEvent *event)
                     }
                 }
                 resetSelection(getSelectionBegin());
+                } // !editBlockedByDisasm
             }
             else
 
                 /* Delete char */
                 if (event->matches(QKeySequence::Delete))
                 {
+                    if (!editBlockedByDisasm()) {
                     if (getSelectionEnd() - getSelectionBegin() > 1)
                     {
                         _bPosCurrent = getSelectionBegin();
@@ -2793,6 +3072,7 @@ void HexEditor::keyPressEvent(QKeyEvent *event)
                     }
                     setCursorPosition(2 * _bPosCurrent);
                     resetSelection(2 * _bPosCurrent);
+                    } // !editBlockedByDisasm
                 }
                 else
 
@@ -2801,18 +3081,19 @@ void HexEditor::keyPressEvent(QKeyEvent *event)
                     {
                         // First check for a virtual line break to remove
                         bool removedBreak = false;
-                        if (!_lineBreaks.isEmpty()) {
+                        const QVector<qint64> currentBreaks = lineBreaks();
+                        if (!currentBreaks.isEmpty()) {
                             qint64 brkOffset = _bPosCurrent - 1;
                             if (brkOffset >= 0) {
-                                auto it = std::lower_bound(_lineBreaks.constBegin(), _lineBreaks.constEnd(), brkOffset);
-                                if (it != _lineBreaks.constEnd() && *it == brkOffset) {
+                                auto it = std::lower_bound(currentBreaks.constBegin(), currentBreaks.constEnd(), brkOffset);
+                                if (it != currentBreaks.constEnd() && *it == brkOffset) {
                                     removeLineBreak(brkOffset);
                                     removedBreak = true;
                                 }
                             }
                         }
 
-                        if (!removedBreak) {
+                        if (!removedBreak && !editBlockedByDisasm()) {
                         if (!_overwriteMode)
                         {
                             // In INSERT mode backspace only removes line breaks (handled above).
@@ -2865,7 +3146,8 @@ void HexEditor::keyPressEvent(QKeyEvent *event)
                         // Filter hex input
                         if ((((key >= '0' && key <= '9') || (key >= 'a' && key <= 'f')) && _editAreaIsAscii == false) || (key >= ' ' && _editAreaIsAscii))
                         {
-                            if (hasSelection())
+                            if (editBlockedByDisasm()) { /* disasm — no typing */ }
+                            else if (hasSelection())
                             {
                                 if (_overwriteMode)
                                 {
@@ -3398,6 +3680,10 @@ void HexEditor::paintEvent(QPaintEvent *event)
         ensureEncodingDisplayCache();
         const bool useTbDisplayCache = !_tbDisplayChars.isEmpty();
         const bool useEncodingDecoder = !_encodingChars.isEmpty();
+        const int cursorSectionMode = _sectionModel
+            ? _sectionModel->displayModeAtOffset(_bPosCurrent)
+            : SectionDisplay_Default;
+        const bool cursorForcesRaw = (cursorSectionMode == SectionDisplay_Raw);
         const QFontMetrics paintFm = QFontMetrics(font());
         const auto slotGapPx = [this](int baseWidth) {
             return (baseWidth > _pxCharWidth) ? kAsciiColumnGapWidePx : kAsciiColumnGapSinglePx;
@@ -3407,7 +3693,7 @@ void HexEditor::paintEvent(QPaintEvent *event)
         const qint64 cursorBufIdxGlobal = _cursorPosition / 2 - _bPosFirst;
         qint64 cursorLeadBufIdx = cursorBufIdxGlobal;
         int cursorMultiByteSpan = 1;
-        if (useTbDisplayCache && cursorBufIdxGlobal >= 0 && cursorBufIdxGlobal < _tbDisplayChars.size()) {
+        if (!cursorForcesRaw && useTbDisplayCache && cursorBufIdxGlobal >= 0 && cursorBufIdxGlobal < _tbDisplayChars.size()) {
             qint64 li = cursorBufIdxGlobal;
             while (li > 0 && li < _tbDisplayChars.size() && _tbDisplayChars[(int)li].isNull())
                 --li;
@@ -3438,9 +3724,14 @@ void HexEditor::paintEvent(QPaintEvent *event)
             bytesThisRow = qMin(bytesThisRow, static_cast<int>(_dataShown.size() - bPosLine));
             if (bPosLine < 0 || bytesThisRow <= 0) continue;
 
-            const bool useTbMultiByte = useTbDisplayCache;
             const qint64 rowStart = bPosLine;
             const qint64 rowEnd = qMin(bPosLine + bytesThisRow, (qint64)_dataShown.size());
+            const int rowSectionMode = _sectionModel
+                ? _sectionModel->displayModeAtOffset(_bPosFirst + bPosLine)
+                : SectionDisplay_Default;
+            const bool rowForcesRaw = (rowSectionMode == SectionDisplay_Raw);
+            const bool useTbMultiByte = useTbDisplayCache && !rowForcesRaw;
+            const bool rowUsesDisasm = _showDisasm || (rowSectionMode == SectionDisplay_Disasm);
 
             // can be slow here
             for (int colIdx = 0; ((bPosLine + colIdx) < _dataShown.size() && (colIdx < bytesThisRow)); colIdx++)
@@ -3457,7 +3748,7 @@ void HexEditor::paintEvent(QPaintEvent *event)
 
                 const char rawByte = _dataShown.at(bPosLine + colIdx);
                 const bool isZeroByte = (rawByte == 0);
-                painter.setPen(QPen(isZeroByte ? _zeroByteFontColor : _hexFontColor));
+                painter.setPen(QPen((isZeroByte && !rowUsesDisasm) ? _zeroByteFontColor : _hexFontColor));
 
                 qint64 posBa = _bPosFirst + bPosLine + colIdx;
                 const qint64 pointerStart = _showPointers ? pointerStartAt(posBa, kPointerByteSize) : -1;
@@ -3712,6 +4003,11 @@ void HexEditor::paintEvent(QPaintEvent *event)
                     }
                 }
 
+                // Disassembly instruction frame in hex area — disabled.
+                // Disasm rows already have mnemonic text in the ASCII area;
+                // the dashed frame adds visual noise without benefit.
+                // Multi-byte table/encoding frames are handled separately above.
+
                 // Multi-byte cursor group: unconditional fill + frame for this row segment.
                 // Uses per-byte walkback identical to the TBL/encoding frame blocks above.
                 // Runs regardless of _showMultibyteFrame so the cursor is always visible.
@@ -3789,9 +4085,24 @@ void HexEditor::paintEvent(QPaintEvent *event)
                     if (c == viewport()->palette().color(QPalette::Base))
                         c = _asciiAreaColor;
 
-                    // ── Disassembly view mode: show mnemonic + operands per row ──
-                    if (_showDisasm)
+                    // ── Determine effective display mode ──
+                    // Per-section override: if the section has a non-Default mode, use it.
+                    // Otherwise fall back to the global mode.
+                    int secMode = SectionDisplay_Default;
+                    if (_sectionModel)
+                        secMode = _sectionModel->displayModeAtOffset(_bPosFirst + bPosLine);
+
+                    const bool effectiveRaw = (secMode == SectionDisplay_Raw);
+                    const bool effectiveDisasm = (secMode == SectionDisplay_Disasm)
+                        || (secMode == SectionDisplay_Default && _showDisasm);
+                    // Per-section table: 1-based index into _allTables
+                    TranslationTable *secTable = nullptr;
+                    if (secMode > 0 && secMode <= _allTables.size())
+                        secTable = _allTables[secMode - 1];
+
+                    if (effectiveDisasm)
                     {
+                    // ── Disassembly view mode: show mnemonic + operands per row ──
                         const int symWidthPx = _pxCharWidth;
                         r.setRect(pxPosAsciiX2 - 1, pxPosY - _pxCharHeight + _pxSelectionSub + 2,
                                   qMax(1, symWidthPx), _pxCharHeight);
@@ -3801,24 +4112,60 @@ void HexEditor::paintEvent(QPaintEvent *event)
                             const qint64 rowFileOffset = _bPosFirst + bPosLine;
                             const DisasmInstruction *instr = disasmInstructionAtOffset(rowFileOffset);
                             if (instr) {
-                                QString disasmText = instr->mnemonic;
-                                if (!instr->operands.isEmpty())
-                                    disasmText += QLatin1Char(' ') + instr->operands;
+                                const qint64 selBegin = getSelectionBegin();
+                                const qint64 selEnd   = getSelectionEnd();
+                                const bool hasSel = (selEnd - selBegin) > 0;
 
-                                // Use monospace font; draw across the full remaining width
-                                const int textWidth = paintFm.horizontalAdvance(disasmText) + _pxCharWidth;
-                                QRect textRect(pxPosAsciiX2 - 1,
-                                               pxPosY - _pxCharHeight + _pxSelectionSub + 2,
-                                               textWidth, _pxCharHeight);
+                                const qint64 instrStart  = instr->fileOffset;
+                                const qint64 instrEnd    = instrStart + instr->size;
 
-                                if (c != _asciiAreaColor)
-                                    painter.fillRect(textRect, c);
+                                // Any byte of the instruction selected → highlight whole row
+                                const bool instrSel = hasSel && selBegin < instrEnd && selEnd > instrStart;
 
-                                if (instr->isBranch)
-                                    painter.setPen(QPen(palette().color(QPalette::Link)));
-                                else
-                                    painter.setPen(QPen(_asciiFontColor));
-                                painter.drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, disasmText);
+                                const int baseY = pxPosY - _pxCharHeight + _pxSelectionSub + 2;
+                                int textX = pxPosAsciiX2 - 1;
+
+                                // ── Draw mnemonic ──
+                                const int mnW = paintFm.horizontalAdvance(instr->mnemonic);
+                                QRect mnRect(textX, baseY, mnW, _pxCharHeight);
+                                if (instrSel) {
+                                    painter.fillRect(mnRect, _brushSelection.color());
+                                    painter.setPen(_penSelection);
+                                } else {
+                                    if (c != _asciiAreaColor)
+                                        painter.fillRect(mnRect, c);
+                                    painter.setPen(QPen(instr->isBranch
+                                        ? palette().color(QPalette::Link) : _asciiFontColor));
+                                }
+                                painter.drawText(mnRect, Qt::AlignLeft | Qt::AlignVCenter, instr->mnemonic);
+                                textX += mnW;
+
+                                // ── Draw space + operands ──
+                                if (!instr->operands.isEmpty()) {
+                                    const int spW = paintFm.horizontalAdvance(QLatin1Char(' '));
+                                    QRect spRect(textX, baseY, spW, _pxCharHeight);
+                                    if (instrSel) {
+                                        painter.fillRect(spRect, _brushSelection.color());
+                                    } else if (c != _asciiAreaColor) {
+                                        painter.fillRect(spRect, c);
+                                    }
+                                    painter.setPen(instrSel ? _penSelection : QPen(_asciiFontColor));
+                                    painter.drawText(spRect, Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral(" "));
+                                    textX += spW;
+
+                                    const int opW = paintFm.horizontalAdvance(instr->operands);
+                                    QRect opRect(textX, baseY, opW, _pxCharHeight);
+                                    if (instrSel) {
+                                        painter.fillRect(opRect, _brushSelection.color());
+                                        painter.setPen(_penSelection);
+                                    } else {
+                                        if (c != _asciiAreaColor)
+                                            painter.fillRect(opRect, c);
+                                        painter.setPen(QPen(instr->isBranch
+                                            ? palette().color(QPalette::Link) : _asciiFontColor));
+                                    }
+                                    painter.drawText(opRect, Qt::AlignLeft | Qt::AlignVCenter, instr->operands);
+                                }
                             }
                         }
 
@@ -3827,6 +4174,31 @@ void HexEditor::paintEvent(QPaintEvent *event)
 
                         pxPosAsciiX2 += symWidthPx;
                     }
+                    else if (secTable)
+                    {
+                    // ── Per-section table rendering (single-byte lookup) ──
+                    const QString sym = secTable->encodeSymbol(rawByte);
+                    const QString displaySym = sym.isEmpty()
+                        ? QString(_notInTableChar) : sym;
+                    const int baseSymWidthPx = qMax(_pxCharWidth, paintFm.horizontalAdvance(displaySym));
+                    const int symWidthPx = baseSymWidthPx + slotGapPx(baseSymWidthPx);
+                    r.setRect(pxPosAsciiX2 - 1, pxPosY - _pxCharHeight + _pxSelectionSub + 2,
+                              qMax(1, symWidthPx), _pxCharHeight);
+                    if (c != _asciiAreaColor)
+                        painter.fillRect(r, c);
+                    if (isSelectedByte)
+                        painter.setPen(_penSelection);
+                    else if (isHighlightedByte)
+                        painter.setPen(_penHighlighted);
+                    else {
+                        const bool isUnmappedZero = isZeroByte && sym.isEmpty();
+                        painter.setPen(QPen(isUnmappedZero ? _zeroByteFontColor : _asciiFontColor));
+                    }
+                    painter.drawText(r, Qt::AlignLeft | Qt::AlignVCenter, displaySym);
+                    if ((bPosLine + colIdx) == cursorLeadBufIdx)
+                        _asciiCursorRect = QRect(r.x() - 1, r.y() - 2, baseSymWidthPx + 2, r.height() + 2);
+                    pxPosAsciiX2 += symWidthPx;
+                    }
                     else
                     {
                     // ── Normal ASCII rendering ──
@@ -3834,31 +4206,35 @@ void HexEditor::paintEvent(QPaintEvent *event)
                     QChar ch = QChar::fromLatin1(rawByte);
 
                     QString sym;
+                    TranslationTable *activeTable = effectiveRaw ? nullptr : _tb;
+                    const bool activeTbMultiByte = (activeTable != nullptr) && useTbMultiByte;
+                    const bool activeEncodingDecoder = useEncodingDecoder && (effectiveRaw || activeTable == nullptr);
+
                     // For multi-byte table mode: continuation bytes are null entries in cache.
                     const int encBufIdx = (int)(bPosLine + colIdx);
-                    const bool isTbContinuation = useTbMultiByte
+                    const bool isTbContinuation = activeTbMultiByte
                         && encBufIdx < _tbDisplayChars.size()
                         && _tbDisplayChars[encBufIdx].isNull();
 
                     // For encoding mode: look up from the buffer-level cache
-                    const bool isEncodingContinuation = useEncodingDecoder
+                    const bool isEncodingContinuation = activeEncodingDecoder
                         && encBufIdx < _encodingChars.size()
                         && _encodingChars[encBufIdx].isNull();
                     const bool isContinuationByte = isTbContinuation || isEncodingContinuation;
 
-                    if (_tb) {
-                        if (useTbMultiByte && encBufIdx < _tbDisplayChars.size()) {
+                    if (activeTable) {
+                        if (activeTbMultiByte && encBufIdx < _tbDisplayChars.size()) {
                             sym = _tbDisplayChars[encBufIdx];
                         } else {
-                            sym = _tb->encodeSymbol(rawByte);
+                            sym = activeTable->encodeSymbol(rawByte);
                         }
-                    } else if (useEncodingDecoder && encBufIdx < _encodingChars.size()) {
+                    } else if (activeEncodingDecoder && encBufIdx < _encodingChars.size()) {
                         sym = _encodingChars[encBufIdx];
                     } else {
                         sym = ch;
                     }
 
-                    if (_tb)
+                    if (activeTable)
                     {
                         if (!sym.size() && !isTbContinuation)
                             sym = QString(_notInTableChar); // □ for unmapped single-byte
@@ -3878,11 +4254,11 @@ void HexEditor::paintEvent(QPaintEvent *event)
                     int baseSymWidthPx;
                     if (isContinuationByte)
                         baseSymWidthPx = 0;
-                    else if (useTbMultiByte && !sym.isEmpty())
+                    else if (activeTbMultiByte && !sym.isEmpty())
                         baseSymWidthPx = qMax(_pxCharWidth, paintFm.horizontalAdvance(sym));
-                    else if (_tb && !_tbSymbolWidthPxCache.isEmpty())
+                    else if (activeTable && !_tbSymbolWidthPxCache.isEmpty())
                         baseSymWidthPx = _tbSymbolWidthPxCache[byteValue];
-                    else if (useEncodingDecoder && !sym.isEmpty())
+                    else if (activeEncodingDecoder && !sym.isEmpty())
                         baseSymWidthPx = qMax(_pxCharWidth, paintFm.horizontalAdvance(sym));
                     else
                         baseSymWidthPx = _pxCharWidth;
@@ -3969,8 +4345,8 @@ void HexEditor::paintEvent(QPaintEvent *event)
             if (_cursorMultiByteSpan <= 1)
                 painter.drawRect(_hexCursorRect);
 
-            // draw cursor rect
-            if (_asciiArea)
+            // draw cursor rect in ASCII area (skip for disasm — mnemonic text, not per-byte)
+            if (_asciiArea && !isDisasmAt(_bPosCurrent))
                 painter.drawRect(_asciiCursorRect);
 
             painter.setPen(QPen(_hexFontColor));
@@ -4114,6 +4490,7 @@ void HexEditor::init()
 {
     _undoStack->clear();
     _lineBreakCmdCount = 0;
+    _cleanUndoIndex = 0;
     setAddressOffset(0);
     resetSelection(0);
     setCursorPosition(0);
@@ -4125,10 +4502,23 @@ void HexEditor::init()
 
 // ── Virtual line breaks ────────────────────────────────────────
 
-QVector<qint64> HexEditor::lineBreaks() const { return _lineBreaks; }
+QVector<qint64> HexEditor::lineBreaks() const
+{
+    return _savedLineBreaksValid ? _savedLineBreaks : _lineBreaks;
+}
 
 void HexEditor::setLineBreaks(const QVector<qint64> &breaks)
 {
+    if (_savedLineBreaksValid) {
+        _savedLineBreaks = breaks;
+        std::sort(_savedLineBreaks.begin(), _savedLineBreaks.end());
+        if (_showDisasm)
+            emit lineBreaksChanged();
+        else
+            rebuildSectionAwareLayout();
+        return;
+    }
+
     _lineBreaks = breaks;
     std::sort(_lineBreaks.begin(), _lineBreaks.end());
     adjust();
@@ -4138,8 +4528,16 @@ void HexEditor::setLineBreaks(const QVector<qint64> &breaks)
 
 void HexEditor::addLineBreakDirect(qint64 offset)
 {
-    auto it = std::upper_bound(_lineBreaks.begin(), _lineBreaks.end(), offset);
-    _lineBreaks.insert(it, offset);
+    QVector<qint64> &target = _savedLineBreaksValid ? _savedLineBreaks : _lineBreaks;
+    auto it = std::upper_bound(target.begin(), target.end(), offset);
+    target.insert(it, offset);
+    if (_savedLineBreaksValid) {
+        if (_showDisasm)
+            emit lineBreaksChanged();
+        else
+            rebuildSectionAwareLayout();
+        return;
+    }
     adjust();
     viewport()->update();
     emit lineBreaksChanged();
@@ -4147,9 +4545,17 @@ void HexEditor::addLineBreakDirect(qint64 offset)
 
 void HexEditor::removeLineBreakDirect(qint64 offset)
 {
-    auto it = std::lower_bound(_lineBreaks.begin(), _lineBreaks.end(), offset);
-    if (it != _lineBreaks.end() && *it == offset) {
-        _lineBreaks.erase(it);
+    QVector<qint64> &target = _savedLineBreaksValid ? _savedLineBreaks : _lineBreaks;
+    auto it = std::lower_bound(target.begin(), target.end(), offset);
+    if (it != target.end() && *it == offset) {
+        target.erase(it);
+        if (_savedLineBreaksValid) {
+            if (_showDisasm)
+                emit lineBreaksChanged();
+            else
+                rebuildSectionAwareLayout();
+            return;
+        }
         adjust();
         viewport()->update();
         emit lineBreaksChanged();
@@ -4159,25 +4565,40 @@ void HexEditor::removeLineBreakDirect(qint64 offset)
 void HexEditor::addLineBreak(qint64 offset)
 {
     ++_lineBreakCmdCount;  // pre-update before indexChanged fires
+    _lineBreakChangeInProgress = true;
     _undoStack->push(new LineBreakAddCommand(this, offset));
+    _lineBreakChangeInProgress = false;
 }
 
 void HexEditor::removeLineBreak(qint64 offset)
 {
-    auto it = std::lower_bound(_lineBreaks.constBegin(), _lineBreaks.constEnd(), offset);
-    if (it != _lineBreaks.constEnd() && *it == offset) {
+    const QVector<qint64> currentBreaks = lineBreaks();
+    auto it = std::lower_bound(currentBreaks.constBegin(), currentBreaks.constEnd(), offset);
+    if (it != currentBreaks.constEnd() && *it == offset) {
         ++_lineBreakCmdCount;  // pre-update before indexChanged fires
+        _lineBreakChangeInProgress = true;
         _undoStack->push(new LineBreakRemoveCommand(this, offset));
+        _lineBreakChangeInProgress = false;
     }
 }
 
 void HexEditor::toggleLineBreak(qint64 offset)
 {
-    auto it = std::lower_bound(_lineBreaks.begin(), _lineBreaks.end(), offset);
-    if (it != _lineBreaks.end() && *it == offset)
-        _lineBreaks.erase(it);
+    QVector<qint64> &target = _savedLineBreaksValid ? _savedLineBreaks : _lineBreaks;
+    auto it = std::lower_bound(target.begin(), target.end(), offset);
+    if (it != target.end() && *it == offset)
+        target.erase(it);
     else
-        _lineBreaks.insert(it, offset);
+        target.insert(it, offset);
+
+    if (_savedLineBreaksValid) {
+        if (_showDisasm)
+            emit lineBreaksChanged();
+        else
+            rebuildSectionAwareLayout();
+        return;
+    }
+
     adjust();
     viewport()->update();
     emit lineBreaksChanged();
@@ -4185,8 +4606,16 @@ void HexEditor::toggleLineBreak(qint64 offset)
 
 void HexEditor::clearLineBreaks()
 {
-    if (!_lineBreaks.isEmpty()) {
-        _lineBreaks.clear();
+    QVector<qint64> &target = _savedLineBreaksValid ? _savedLineBreaks : _lineBreaks;
+    if (!target.isEmpty()) {
+        target.clear();
+        if (_savedLineBreaksValid) {
+            if (_showDisasm)
+                emit lineBreaksChanged();
+            else
+                rebuildSectionAwareLayout();
+            return;
+        }
         adjust();
         viewport()->update();
         emit lineBreaksChanged();
@@ -4195,11 +4624,19 @@ void HexEditor::clearLineBreaks()
 
 void HexEditor::clearLineBreaksInRange(qint64 from, qint64 to)
 {
-    auto lo = std::lower_bound(_lineBreaks.begin(), _lineBreaks.end(), from);
-    auto hi = std::upper_bound(lo, _lineBreaks.end(), to);
+    QVector<qint64> &target = _savedLineBreaksValid ? _savedLineBreaks : _lineBreaks;
+    auto lo = std::lower_bound(target.begin(), target.end(), from);
+    auto hi = std::upper_bound(lo, target.end(), to);
     if (lo == hi)
         return;
-    _lineBreaks.erase(lo, hi);
+    target.erase(lo, hi);
+    if (_savedLineBreaksValid) {
+        if (_showDisasm)
+            emit lineBreaksChanged();
+        else
+            rebuildSectionAwareLayout();
+        return;
+    }
     adjust();
     viewport()->update();
     emit lineBreaksChanged();
@@ -4388,13 +4825,50 @@ void HexEditor::adjust()
 
 void HexEditor::dataChangedPrivate(int)
 {
-    _modified = _baseModified || ((_undoStack->index() - _lineBreakCmdCount) != 0);
+    const int logicalUndoIndex = _undoStack->index() - _lineBreakCmdCount;
+    _modified = _baseModified || (logicalUndoIndex != _cleanUndoIndex);
+
+    if (_nonDataChangeInProgress) {
+        // Pointer/section commands don't alter hex data — skip layout rebuild
+        // and stale dataChangedAt emission.  The undo()/redo() caller handles
+        // cursor + refresh.
+        emit dataChanged();
+        emit undoAvailable(_undoStack->canUndo());
+        emit redoAvailable(_undoStack->canRedo());
+        return;
+    }
 
     invalidateAsciiAreaWidthCache();
-
     updateAsciiAreaMaxWidth();
 
-    adjust();
+    if (_lineBreakChangeInProgress) {
+        // add/remove line-break already updated layout directly
+    } else if (_showDisasm) {
+        // Global disasm: full rescan needed.
+        _disasmBoundaries.clear();
+        _disasmCache.clear();
+        _disasmCacheStart = _disasmCacheEnd = -1;
+        rebuildDisasmLayout();
+    } else if (hasSectionDisasmMode()) {
+        // Only rescan disasm boundaries when the edit falls inside a
+        // section displayed as disassembly; otherwise the instruction
+        // layout is unchanged and the normal adjust() path is enough.
+        const qint64 changedPos = _chunks->pos();
+        const bool inDisasmSection = _sectionModel
+            && _sectionModel->displayModeAtOffset(changedPos) == SectionDisplay_Disasm;
+        if (inDisasmSection) {
+            _disasmBoundaries.clear();
+            _disasmCache.clear();
+            _disasmCacheStart = _disasmCacheEnd = -1;
+            rebuildSectionAwareLayout();
+        } else {
+            _disasmCache.clear();
+            _disasmCacheStart = _disasmCacheEnd = -1;
+            adjust();
+        }
+    } else {
+        adjust();
+    }
 
     emit dataChanged();
     emit dataChangedAt(_chunks->pos());

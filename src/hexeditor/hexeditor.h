@@ -329,6 +329,8 @@ public:
 
     bool canUndo();
     bool canRedo();
+    UndoStack *undoStack() const { return _undoStack; }
+    void selectByteRange(qint64 start, qint64 end);   ///< select [start, end) bytes
 
     /*! Find last occurrence of ba in HexEditor data
      * \param ba Data to find
@@ -543,6 +545,7 @@ public:
     bool showSections();
     void setShowSections(bool mode);
     void setSectionModel(SectionListModel *model);
+    void setAllTables(const QVector<TranslationTable*> &tables);
 
     QColor pointersColor();
     void setPointersColor(const QColor &color);
@@ -767,6 +770,7 @@ private:
     int _rowsShown;                             // lines of text shown
     UndoStack * _undoStack;                     // Stack to store edit actions for undo/redo
     TranslationTable* _tb = nullptr;            // Translation table
+    QVector<TranslationTable*> _allTables;      // All loaded tables (non-owning, for per-section display)
     QString _currentEncoding = QStringLiteral("ASCII");  // Current text encoding for ASCII area
     QVector<QString> _encodingChars;            // decoded symbols for each byte in _dataShown; null = continuation
     QVector<int> _encodingSpan;                 // bytes in sequence at lead byte; 0 for continuation bytes
@@ -791,13 +795,17 @@ private:
     QVector<qint64> _lineBreaks;                    // sorted byte offsets: row ends after this byte
     QVector<qint64> _visualRowStartBytes;           // precomputed absolute byte offsets for visible rows
     int _lineBreakCmdCount = 0;                     // # of line-break undo commands at or below current undo index
+    int _cleanUndoIndex = 0;                        // logical undo index that represents the last clean/saved state
+    bool _lineBreakChangeInProgress = false;        // skip heavy disasm refresh for break-only undo commands
+    bool _nonDataChangeInProgress = false;          // pointer/section undo — skip layout & stale dataChangedAt
 
     // Disassembly view mode
     bool _showDisasm = false;
     Disassembler *_disasm = nullptr;
     RomType _disasmRomType {};                      // ROM type for disassembly
     QVector<InsnBoundary> _disasmBoundaries; // lightweight instruction boundaries
-    QVector<qint64> _savedLineBreaks;               // user line breaks saved while disasm mode is active
+    QVector<qint64> _savedLineBreaks;               // project/user line breaks saved while derived disasm layout is active
+    bool _savedLineBreaksValid = false;             // distinguishes "saved empty layout" from "no saved layout"
 
     // On-demand disasm cache for visible rows
     mutable QVector<DisasmInstruction> _disasmCache;
@@ -805,6 +813,10 @@ private:
     mutable qint64 _disasmCacheEnd = -1;            // file offset past last cached instruction
 
     void rebuildDisasmLayout();
+    void rebuildSectionAwareLayout(); ///< apply section-specific disasm wraps on top of user line breaks
+    void ensureDisasmBoundaries();    ///< populate boundaries only (no line break change)
+    bool hasSectionDisasmMode() const;
+    bool isDisasmAt(qint64 offset) const;
     const DisasmInstruction *disasmInstructionAtOffset(qint64 fileOffset) const;
     int disasmBoundaryIndex(qint64 fileOffset) const;
     /*! \endcond docNever */
