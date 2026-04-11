@@ -361,6 +361,8 @@ bool HexDocument::saveProject(const QString &path,
             out << "    end: 0x" << QString::number(s.endOffset, 16).toUpper() << "\n";
             out << "    color: " << s.color.name() << "\n";
             out << "    display: " << s.displayMode << "\n";
+            if (s.displayMode == SectionDisplay_Disasm && s.disasmCpu != RomType::Unknown)
+                out << "    disasm_cpu: " << static_cast<int>(s.disasmCpu) << "\n";
             if (s.parentIndex >= 0)
                 out << "    parent: " << s.parentIndex << "\n";
         }
@@ -761,12 +763,20 @@ bool HexDocument::loadProject(const QString &path)
                     if (ok) cur.displayMode = dm;
                     continue;
                 }
+                if (stripped.startsWith(QLatin1String("disasm_cpu:")))
+                {
+                    bool ok = false;
+                    const int dc = stripped.mid(11).trimmed().toInt(&ok);
+                    if (ok) cur.disasmCpu = static_cast<RomType>(dc);
+                    continue;
+                }
             }
 
             // Unrecognised line — leave sections section
             if (!stripped.startsWith(QLatin1Char('-')) && !stripped.startsWith(QLatin1String("start"))
                 && !stripped.startsWith(QLatin1String("end")) && !stripped.startsWith(QLatin1String("color"))
-                && !stripped.startsWith(QLatin1String("parent")) && !stripped.startsWith(QLatin1String("display")))
+                && !stripped.startsWith(QLatin1String("parent")) && !stripped.startsWith(QLatin1String("display"))
+                && !stripped.startsWith(QLatin1String("disasm_cpu")))
             {
                 section = Section::Root;
                 // Fall through to root parsing

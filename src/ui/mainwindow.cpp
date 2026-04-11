@@ -318,15 +318,26 @@ void MainWindow::closeEvent(QCloseEvent *event)
     // Check each session for unsaved changes
     for (int i = 0; i < m_sessions.size(); ++i) {
         m_tabWidget->setCurrentIndex(i);
+
+        // Remember whether the file had unsaved hex edits before prompting.
+        const bool wasFileModified = isWindowModified();
         if (!maybeSave()) {
             event->ignore();
             m_closingActiveTab = -1;
             return;
         }
-        if (!maybeSaveProject()) {
-            event->ignore();
-            m_closingActiveTab = -1;
-            return;
+        // If the user clicked "Save", save() also saves the project (via
+        // saveProjectImpl), clearing the dirty flag — maybeSaveProject() will
+        // be a no-op.  If the user clicked "Discard", honour their intent to
+        // close without saving by skipping the project prompt entirely.
+        // Only ask about the project when the file itself had no unsaved edits
+        // (i.e. maybeSave was a no-op) but the project has separate changes.
+        if (!wasFileModified) {
+            if (!maybeSaveProject()) {
+                event->ignore();
+                m_closingActiveTab = -1;
+                return;
+            }
         }
     }
 
@@ -342,22 +353,27 @@ void MainWindow::showEvent(QShowEvent *event)
 
     // Apply any cursor scrolls that were deferred because the window wasn't
     // visible (and viewport heights were 0) during readSettings().
-    // Schedule via singleShot(0) so this runs after the event loop has
-    // processed the show/resize events and the scroll bar has its real range.
+    // Use a short delay so the event loop has time to fully process the
+    // show/resize/layout cascade before we scroll.  A zero-delay timer
+    // sometimes fires before dock-widget resizing has settled.
     const bool hasPending = std::any_of(m_sessions.begin(), m_sessions.end(),
                                         [](EditorSession *s){ return s->scrollPending; });
     if (hasPending) {
-        QTimer::singleShot(0, this, [this]() {
+        QTimer::singleShot(50, this, [this]() {
             for (EditorSession *s : m_sessions) {
                 if (!s->scrollPending || !s->editor || s->curOffset <= 0) {
                     s->scrollPending = false;
                     continue;
                 }
-                s->scrollPending = false;
-                s->editor->setCursorPosition(s->curOffset * 2);
-                if (s == m_currentSession)
+                if (s == m_currentSession) {
+                    // Active tab's viewport is visible — apply scroll now
+                    s->scrollPending = false;
+                    s->editor->setCursorPosition(s->curOffset * 2);
                     s->editor->ensureVisibleCentered();
-                // Non-active sessions: cursor is set; scroll applied on next tab switch
+                }
+                // Non-active tabs: leave scrollPending = true.
+                // restoreSession() will apply the scroll when the user
+                // switches to that tab and the viewport has a real size.
             }
         });
     }
@@ -2819,6 +2835,12 @@ void MainWindow::init()
     connect(m_sectionsDock, &SectionsDockWidget::addSectionRequested, this, [this](int parentIdx) {
         addSectionFromSelection(parentIdx);
     });
+    connect(m_sectionsDock, &SectionsDockWidget::disasmCpuChanged, this, [this](int /*sectionIdx*/, RomType cpu) {
+        if (!hexEdit) return;
+        // If the section specifies a CPU, use it; otherwise fall back to platform default
+        const RomType effective = (cpu == RomType::Unknown) ? m_detectedRomType : cpu;
+        hexEdit->setDisasmRomType(effective);
+    });
     connect(m_sectionModel, &SectionListModel::sectionsChanged, this, [this]() {
         const bool restoring = m_restoringSession || m_restoringProjectUi;
         if (!restoring && m_document && m_document->sectionSnapshot != m_sectionModel->sections())
@@ -3070,7 +3092,7 @@ void MainWindow::saveCurrentSession()
     m_currentSession->curFile = curFile;
     m_currentSession->tableFilePath = tableFilePath;
     m_currentSession->isUntitled = isUntitled;
-    m_currentSession->curOffset = curOffset;
+    m_currentSession->curOffset = (hexEdit ? hexEdit->getCurrentOffset() : curOffset);
     m_currentSession->table = tb;
     m_currentSession->changeTrackingSnapshot = m_changeTrackingSnapshot;
     m_currentSession->detectedRomType = m_detectedRomType;
@@ -3178,6 +3200,7 @@ void MainWindow::restoreSession(EditorSession *session)
         {
             m_sectionsDock->setShowSectionsChecked(m_document->showSections);
             m_sectionsDock->setRomTypeName(QString::fromLatin1(romTypeName(m_detectedRomType)));
+            m_sectionsDock->setCurrentRomType(m_detectedRomType);
         }
     }
 
@@ -3377,10 +3400,16 @@ void MainWindow::onTabCloseRequested(int index)
     if (m_tabWidget->currentIndex() != index)
         m_tabWidget->setCurrentIndex(index);
 
+    const bool wasFileModified = isWindowModified();
     if (!maybeSave())
         return;
-    if (!maybeSaveProject())
-        return;
+    // Only prompt about the project when the file had no unsaved hex edits.
+    // If the user saved, save() already saved the project too.  If the user
+    // discarded file changes, honour their intent to close without saving.
+    if (!wasFileModified) {
+        if (!maybeSaveProject())
+            return;
+    }
 
     EditorSession *session = m_sessions[index];
     disconnectEditorSignals(session->editor);
@@ -5077,6 +5106,7 @@ void MainWindow::openProjectFile(const QString &path)
     if (m_sectionsDock) {
         m_sectionsDock->setShowSectionsChecked(doc.showSections);
         m_sectionsDock->setRomTypeName(QString::fromLatin1(romTypeName(doc.romType())));
+        m_sectionsDock->setCurrentRomType(doc.romType());
     }
 
     // 6. Alignment (virtual line breaks) — block signal to avoid marking project modified on load
@@ -5521,6 +5551,8 @@ void MainWindow::loadFile(const QString &fileName)
         }
         if (m_sectionsDock)
             m_sectionsDock->setRomTypeName(QString::fromLatin1(romTypeName(rom)));
+        if (m_sectionsDock)
+            m_sectionsDock->setCurrentRomType(rom);
     }
 
     if (m_document)

@@ -8,6 +8,74 @@
 
 #include "romdetect.h"
 
+// ── CPU enumeration helpers for disassembly UI ─────────────────
+
+/// Information about a disassembly-capable CPU for UI menus.
+struct DisasmCpuEntry {
+    RomType representativeRom;  ///< canonical RomType for this CPU
+    const char *cpuName;        ///< e.g. "MOS 6502", "Motorola 68000"
+};
+
+/// Returns the display name for the CPU used by the given RomType's disassembler,
+/// or nullptr if that RomType is not supported for disassembly.
+inline const char *disasmCpuName(RomType type)
+{
+    switch (type) {
+    case RomType::NES:
+    case RomType::Atari2600:
+    case RomType::Atari5200:
+    case RomType::Atari7800:
+        return "MOS 6502";
+    case RomType::GBA:
+        return "ARM7 (Thumb)";
+    case RomType::MD:
+    case RomType::X32:
+        return "Motorola 68000";
+    case RomType::N64:
+    case RomType::N64_LE:
+    case RomType::N64_V64:
+        return "MIPS R4300i";
+    case RomType::WonderSwan:
+    case RomType::WonderSwanColor:
+        return "x86-16 (V30MZ)";
+    default:
+        return nullptr;
+    }
+}
+
+/// Maps a RomType to the canonical representative RomType for its CPU architecture.
+/// Used so that e.g. NES / Atari2600 / Atari7800 all map to the same "6502" CPU.
+inline RomType disasmCanonicalRom(RomType type)
+{
+    switch (type) {
+    case RomType::NES: case RomType::Atari2600:
+    case RomType::Atari5200: case RomType::Atari7800:
+        return RomType::NES;
+    case RomType::GBA:
+        return RomType::GBA;
+    case RomType::MD: case RomType::X32:
+        return RomType::MD;
+    case RomType::N64: case RomType::N64_LE: case RomType::N64_V64:
+        return RomType::N64;
+    case RomType::WonderSwan: case RomType::WonderSwanColor:
+        return RomType::WonderSwan;
+    default:
+        return RomType::Unknown;
+    }
+}
+
+/// All unique CPU entries available for disassembly, for menu population.
+inline QVector<DisasmCpuEntry> disasmSupportedCpus()
+{
+    return {
+        { RomType::NES,        "MOS 6502" },
+        { RomType::GBA,        "ARM7 (Thumb)" },
+        { RomType::MD,         "Motorola 68000" },
+        { RomType::N64,        "MIPS R4300i" },
+        { RomType::WonderSwan, "x86-16 (V30MZ)" },
+    };
+}
+
 /// One disassembled instruction.
 struct DisasmInstruction {
     qint64  fileOffset;   ///< Offset in the file
