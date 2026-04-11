@@ -60,7 +60,6 @@ HEADERS = \
     dockwidgets/ChangesDockWidget.h \
     dockwidgets/SectionsDockWidget.h \
     dockwidgets/BaseDockWidget.h \
-    dockwidgets/DisassemblyDockWidget.h \
     # utils
     utils/Datas.h \
     utils/disassembler.h \
@@ -99,7 +98,6 @@ SOURCES = \
     dockwidgets/ChangesDockWidget.cpp \
     dockwidgets/SectionsDockWidget.cpp \
     dockwidgets/BaseDockWidget.cpp \
-    dockwidgets/DisassemblyDockWidget.cpp \
     # utils
     utils/byteglue.cpp \
     utils/disassembler.cpp
