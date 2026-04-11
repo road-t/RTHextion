@@ -282,6 +282,19 @@ QVector<DisasmInstruction> Disassembler::disassemble(const QByteArray &data, qin
         di.mnemonic = QString::fromLatin1(insn->mnemonic).toUpper();
         di.operands = QString::fromLatin1(insn->op_str);
 
+        // Opcode size heuristic: for M68K the operation word is always 2 bytes;
+        // for fixed-width ISAs (MIPS, ARM) the opcode is the full word;
+        // for variable-length ISAs (x86, 6502) we default to full size.
+        switch (m_romType) {
+        case RomType::MD:
+        case RomType::X32:
+            di.opcodeSize = qMin(2, di.size);
+            break;
+        default:
+            di.opcodeSize = di.size;
+            break;
+        }
+
         // Format raw bytes
         QString bytesHex;
         for (int b = 0; b < di.size; ++b) {

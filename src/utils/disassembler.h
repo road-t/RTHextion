@@ -13,6 +13,7 @@ struct DisasmInstruction {
     qint64  fileOffset;   ///< Offset in the file
     quint64 address;      ///< CPU address (file offset + base)
     int     size;         ///< Instruction size in bytes
+    int     opcodeSize;   ///< Bytes for the opcode/mnemonic part (remainder is operand encoding)
     QString mnemonic;     ///< e.g. "LDA", "JMP", "MOV"
     QString operands;     ///< e.g. "#$40", "$C000", "R0, R1"
     QString bytes;        ///< Raw bytes as hex string
