@@ -176,6 +176,33 @@ private slots:
         QCOMPARE(editor.data().at(0), 'Z');
     }
 
+    void modifiedStateTracksEdits()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(8, 'A'));
+        QVERIFY(!editor.isModified());
+
+        editor.replace(0, 'Z');
+        QVERIFY(editor.isModified());
+    }
+
+    void clearModifiedStateCreatesNewCleanPoint()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(8, 'A'));
+        editor.replace(0, 'Z');
+        QVERIFY(editor.isModified());
+
+        editor.setModified(false);
+        QVERIFY(!editor.isModified());
+
+        editor.replace(1, 'Y');
+        QVERIFY(editor.isModified());
+
+        editor.undo();
+        QVERIFY(!editor.isModified());
+    }
+
     // ---- Properties ----
 
     void addressAreaProperty()
