@@ -41,12 +41,20 @@ public:
     int pointerSize = 4;
     QString currentEncoding = QStringLiteral("ASCII");
 
+    // Per-tab/UI-only visibility state (persisted in app settings, not .rthp).
+    bool showPointers = true;
+    bool showChanges = false;
+    bool changesHexMode = false;
+
     QVector<qint64> navigationHistory;
     int navigationHistoryIndex = -1;
     bool navigationJumpInProgress = false;
 
-    bool tablesDockVisible = false;
-    bool tablesDockVisibilityInitialized = false;
+    bool dockTablesVisible = true;
+    bool dockPointersVisible = true;
+    bool dockChangesVisible = true;
+    bool dockSectionsVisible = true;
+    bool dockVisibilityInitialized = false;
 
     // Per-tab dock collapse/size state (captured on tab switch, applied on tab switch)
     bool dockTablesCollapsed      = false;

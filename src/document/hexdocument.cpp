@@ -320,13 +320,8 @@ bool HexDocument::saveProject(const QString &path,
         }
     }
 
-    // Display settings
-    out << "\nshow_pointers: " << (showPointers ? "true" : "false") << "\n";
-    out << "show_changes: "  << (showChanges  ? "true" : "false") << "\n";
-    out << "changes_hex_mode: " << (changesHexMode ? "true" : "false") << "\n";
-
-    // cursor_position and dock_layout_state are stored in per-project app settings,
-    // not in the project file.
+    // cursor_position, dock_layout_state, and per-tab UI toggles are stored in
+    // app settings, not in the project file.
 
     if (!tablesColumnsState.isEmpty())
         out << "tables_columns_state: " << QString::fromLatin1(tablesColumnsState.toBase64()) << "\n";
@@ -365,6 +360,7 @@ bool HexDocument::saveProject(const QString &path,
             out << "    start: 0x" << QString::number(s.startOffset, 16).toUpper() << "\n";
             out << "    end: 0x" << QString::number(s.endOffset, 16).toUpper() << "\n";
             out << "    color: " << s.color.name() << "\n";
+            out << "    display: " << s.displayMode << "\n";
             if (s.parentIndex >= 0)
                 out << "    parent: " << s.parentIndex << "\n";
         }
@@ -410,9 +406,6 @@ bool HexDocument::loadProject(const QString &path)
     dockLayoutState.clear();
     tablesColumnsState.clear();
     cursorPosition = 0;
-    showPointers = true;
-    showChanges = false;
-    changesHexMode = false;
     showSections = true;
     sectionSnapshot.clear();
     originalBytes.clear();
@@ -761,12 +754,19 @@ bool HexDocument::loadProject(const QString &path)
                     if (ok) cur.parentIndex = pi;
                     continue;
                 }
+                if (stripped.startsWith(QLatin1String("display:")))
+                {
+                    bool ok = false;
+                    const int dm = stripped.mid(8).trimmed().toInt(&ok);
+                    if (ok) cur.displayMode = dm;
+                    continue;
+                }
             }
 
             // Unrecognised line — leave sections section
             if (!stripped.startsWith(QLatin1Char('-')) && !stripped.startsWith(QLatin1String("start"))
                 && !stripped.startsWith(QLatin1String("end")) && !stripped.startsWith(QLatin1String("color"))
-                && !stripped.startsWith(QLatin1String("parent")))
+                && !stripped.startsWith(QLatin1String("parent")) && !stripped.startsWith(QLatin1String("display")))
             {
                 section = Section::Root;
                 // Fall through to root parsing
@@ -929,18 +929,6 @@ bool HexDocument::loadProject(const QString &path)
 
             cursorPosition = val.startsWith(QLatin1String("0x"), Qt::CaseInsensitive)
                 ? val.mid(2).toLongLong(&ok, 16) : val.toLongLong(&ok);
-        }
-        else if (key == QLatin1String("show_pointers"))
-        {
-            showPointers = (val == QLatin1String("true"));
-        }
-        else if (key == QLatin1String("show_changes"))
-        {
-            showChanges = (val == QLatin1String("true"));
-        }
-        else if (key == QLatin1String("changes_hex_mode"))
-        {
-            changesHexMode = (val == QLatin1String("true"));
         }
         else if (key == QLatin1String("show_sections"))
         {

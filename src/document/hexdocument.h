@@ -106,9 +106,7 @@ public:
 
     // ---- Display settings ----
 
-    bool showPointers = true;
-    bool showChanges  = false;
-    bool changesHexMode = false;
+    // Per-tab pointer/change toggles live in EditorSession and app settings.
     bool showSections = true;
 
     // ---- Sections ----
