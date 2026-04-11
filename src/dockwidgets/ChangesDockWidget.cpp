@@ -117,6 +117,7 @@ ChangesDockWidget::ChangesDockWidget(QWidget *parent)
         refresh(m_lastOriginals, m_lastCurrentData,
                 m_lastOrigTable, m_lastActiveTable,
                 m_lastUseTable, m_lastEncoding);
+        emit hexModeChanged(m_hexMode);
     });
 
     // Changes table: # | Offset | Original | Current
@@ -301,6 +302,7 @@ void ChangesDockWidget::setShowOriginalEnabled(bool enabled)
 
 void ChangesDockWidget::setHexMode(bool hexMode)
 {
+    const bool changed = (m_hexMode != hexMode);
     m_hexMode = hexMode;
 
     if (m_textBtn && m_hexBtn) {
@@ -313,6 +315,9 @@ void ChangesDockWidget::setHexMode(bool hexMode)
     refresh(m_lastOriginals, m_lastCurrentData,
             m_lastOrigTable, m_lastActiveTable,
             m_lastUseTable, m_lastEncoding);
+
+    if (changed)
+        emit hexModeChanged(m_hexMode);
 }
 
 QByteArray ChangesDockWidget::saveColumnsState() const

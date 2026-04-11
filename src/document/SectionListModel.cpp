@@ -1,16 +1,71 @@
 #include "SectionListModel.h"
 #include <QRandomGenerator>
+#include <QUndoCommand>
 #include <algorithm>
+#include <functional>
+
+class SectionSnapshotCommand : public QUndoCommand
+{
+public:
+    SectionSnapshotCommand(SectionListModel *model,
+                           const QVector<Section> &before,
+                           const QVector<Section> &after,
+                           const QString &text)
+        : QUndoCommand(text)
+        , m_model(model)
+        , m_before(before)
+        , m_after(after)
+    {
+    }
+
+    void undo() override
+    {
+        if (m_model)
+            m_model->setSectionsDirect(m_before);
+    }
+
+    void redo() override
+    {
+        if (m_model)
+            m_model->setSectionsDirect(m_after);
+    }
+
+private:
+    SectionListModel *m_model = nullptr;
+    QVector<Section> m_before;
+    QVector<Section> m_after;
+};
 
 SectionListModel::SectionListModel(QObject *parent)
     : QObject(parent)
 {
 }
 
+void SectionListModel::setSectionsDirect(const QVector<Section> &sections)
+{
+    if (m_sections == sections)
+        return;
+
+    m_sections = sections;
+    emit sectionsChanged();
+}
+
+void SectionListModel::commitSectionsChange(const QVector<Section> &sections, const QString &text)
+{
+    if (sections == m_sections)
+        return;
+
+    if (m_undoStack)
+        m_undoStack->push(new SectionSnapshotCommand(this, m_sections, sections, text));
+    else
+        setSectionsDirect(sections);
+}
+
 void SectionListModel::addSection(const Section &s)
 {
-    m_sections.append(s);
-    emit sectionsChanged();
+    QVector<Section> next = m_sections;
+    next.append(s);
+    commitSectionsChange(next, tr("Add section"));
 }
 
 void SectionListModel::removeSection(int index)
@@ -18,57 +73,71 @@ void SectionListModel::removeSection(int index)
     if (index < 0 || index >= m_sections.size())
         return;
 
-    // Collect the section itself plus all direct children, sorted descending
+    QVector<Section> next = m_sections;
+
+    // Collect the section itself plus all descendants, sorted descending.
     QVector<int> toRemove;
-    toRemove.append(index);
-    for (int i = 0; i < m_sections.size(); ++i) {
-        if (i != index && m_sections[i].parentIndex == index)
-            toRemove.append(i);
-    }
+    std::function<void(int)> collect = [&](int idx) {
+        toRemove.append(idx);
+        for (int i = 0; i < next.size(); ++i) {
+            if (i != idx && next[i].parentIndex == idx)
+                collect(i);
+        }
+    };
+    collect(index);
+
     std::sort(toRemove.begin(), toRemove.end(), std::greater<int>());
+    toRemove.erase(std::unique(toRemove.begin(), toRemove.end()), toRemove.end());
 
     for (int ri : toRemove) {
-        m_sections.removeAt(ri);
-        // Fix up parentIndex for all remaining sections
-        for (auto &s : m_sections) {
-            if (s.parentIndex > ri)
+        next.removeAt(ri);
+        for (auto &s : next) {
+            if (s.parentIndex == ri)
+                s.parentIndex = -1;
+            else if (s.parentIndex > ri)
                 --s.parentIndex;
         }
     }
 
-    emit sectionsChanged();
+    commitSectionsChange(next, tr("Delete section"));
 }
 
 void SectionListModel::renameSection(int index, const QString &name)
 {
     if (index >= 0 && index < m_sections.size()) {
-        m_sections[index].name = name;
-        emit sectionsChanged();
+        QVector<Section> next = m_sections;
+        next[index].name = name;
+        commitSectionsChange(next, tr("Rename section"));
     }
 }
 
 void SectionListModel::recolorSection(int index, const QColor &color)
 {
     if (index >= 0 && index < m_sections.size()) {
-        m_sections[index].color = color;
-        emit sectionsChanged();
+        QVector<Section> next = m_sections;
+        next[index].color = color;
+        commitSectionsChange(next, tr("Recolor section"));
     }
 }
 
 void SectionListModel::updateSection(int index, const Section &s)
 {
     if (index >= 0 && index < m_sections.size()) {
-        m_sections[index] = s;
-        emit sectionsChanged();
+        QVector<Section> next = m_sections;
+        next[index] = s;
+        commitSectionsChange(next, tr("Edit section"));
     }
 }
 
 void SectionListModel::clear()
 {
-    if (!m_sections.isEmpty()) {
-        m_sections.clear();
-        emit sectionsChanged();
-    }
+    if (!m_sections.isEmpty())
+        commitSectionsChange(QVector<Section>{}, tr("Clear sections"));
+}
+
+void SectionListModel::applySections(const QVector<Section> &sections, const QString &text)
+{
+    commitSectionsChange(sections, text.isEmpty() ? tr("Reorder sections") : text);
 }
 
 QColor SectionListModel::colorAtOffset(qint64 offset) const
@@ -86,10 +155,23 @@ QColor SectionListModel::colorAtOffset(qint64 offset) const
     return QColor();  // invalid — no section
 }
 
+int SectionListModel::displayModeAtOffset(qint64 offset) const
+{
+    // Same 2-pass logic as colorAtOffset: prefer subsections.
+    for (const auto &s : m_sections) {
+        if (s.parentIndex >= 0 && offset >= s.startOffset && offset < s.endOffset)
+            return s.displayMode;
+    }
+    for (const auto &s : m_sections) {
+        if (s.parentIndex < 0 && offset >= s.startOffset && offset < s.endOffset)
+            return s.displayMode;
+    }
+    return SectionDisplay_Default;
+}
+
 void SectionListModel::setSections(const QVector<Section> &sections)
 {
-    m_sections = sections;
-    emit sectionsChanged();
+    setSectionsDirect(sections);
 }
 
 QColor SectionListModel::randomPastelColor()

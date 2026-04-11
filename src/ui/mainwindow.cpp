@@ -56,7 +56,6 @@
 #include "SectionListModel.h"
 #include "romdetect.h"
 #include "romchecksum.h"
-#include "disassembler.h"
 #include "encodingdetect.h"
 
 namespace
@@ -71,6 +70,15 @@ namespace
     const int kMaxRecentFiles = 10;
     const int kMaxRecentTables = 10;
     const int kMaxRecentProjects = 10;
+
+    QString projectUiSettingsPrefix(const QString &projectPath)
+    {
+        QString normalized = QFileInfo(projectPath).canonicalFilePath();
+        if (normalized.isEmpty())
+            normalized = QFileInfo(projectPath).absoluteFilePath();
+        return QStringLiteral("ProjectUi/%1")
+            .arg(QString::fromLatin1(QUrl::toPercentEncoding(normalized)));
+    }
 
     bool isTableLikeFilePath(const QString &path)
     {
@@ -708,7 +716,25 @@ void MainWindow::optionsAccepted()
 void MainWindow::pointersUpdated()
 {
     showPointersAct->setEnabled(!hexEdit->pointers()->empty());
-    if (m_document)
+    if (!m_document || !hexEdit)
+        return;
+
+    if (m_restoringSession || m_restoringProjectUi)
+        return;
+
+    QVector<QPair<qint64, qint64>> currentPointers;
+    PointerListModel *model = hexEdit->pointers();
+    if (model) {
+        const QList<qint64> keys = model->pointerKeys();
+        currentPointers.reserve(keys.size());
+        for (qint64 ptrOfs : keys) {
+            const qint64 target = model->getOffset(ptrOfs);
+            const int size = model->getPointerSize(ptrOfs);
+            currentPointers.append({ptrOfs, PointerListModel::encodePtrValue(target, size)});
+        }
+    }
+
+    if (m_document->pointerSnapshot() != currentPointers)
         m_document->markDirty();
 }
 
@@ -866,6 +892,22 @@ void MainWindow::updateValuePanels()
         lbValueWord->setText(QString("W: %1").arg(wordValue));
         lbValueDword->setText(QString("D: %1").arg(dwordValue));
     }
+}
+
+void MainWindow::selectRangeInEditor(qint64 start, qint64 end, bool focus)
+{
+    if (!hexEdit)
+        return;
+
+    const qint64 clampedStart = qMax<qint64>(0, start);
+    const qint64 clampedEnd = qMin(end, hexEdit->dataSize());
+    if (clampedEnd <= clampedStart)
+        return;
+
+    hexEdit->selectByteRange(clampedStart, clampedEnd);
+    hexEdit->ensureVisibleTop();
+    if (focus)
+        hexEdit->setFocus();
 }
 
 void MainWindow::setSelection(qint64 start, qint64 end)
@@ -1090,6 +1132,11 @@ void MainWindow::addSectionFromSelection(int parentIdx)
     s.endOffset = selEnd;
     s.color = SectionListModel::randomPastelColor();
     s.parentIndex = parentIdx;
+
+    QUndoStack *stack = hexEdit->undoStack();
+    if (stack)
+        stack->beginMacro((parentIdx < 0) ? tr("Add section") : tr("Add subsection"));
+
     m_sectionModel->addSection(s);
 
     // Add 2 blank visual rows before and after the section,
@@ -1100,15 +1147,18 @@ void MainWindow::addSectionFromSelection(int parentIdx)
         auto lb = hexEdit->lineBreaks();
         int cnt = static_cast<int>(std::count(lb.begin(), lb.end(), pos));
         for (int i = cnt; i < 3; ++i)
-            hexEdit->addLineBreakDirect(pos);
+            hexEdit->addLineBreak(pos);
     }
     if (selEnd < fileSize) {
         const qint64 pos = selEnd - 1;
         auto lb = hexEdit->lineBreaks();
         int cnt = static_cast<int>(std::count(lb.begin(), lb.end(), pos));
         for (int i = cnt; i < 3; ++i)
-            hexEdit->addLineBreakDirect(pos);
+            hexEdit->addLineBreak(pos);
     }
+
+    if (stack)
+        stack->endMacro();
 
     if (m_document)
         m_document->markDirty();
@@ -2395,9 +2445,6 @@ void MainWindow::retranslateUi()
     if (m_changesDock)
         m_changesDock->retranslateUi();
 
-    if (m_disasmDock)
-        m_disasmDock->retranslateUi();
-
     if (m_sectionsDock)
         m_sectionsDock->retranslateUi();
 
@@ -2414,8 +2461,6 @@ void MainWindow::retranslateUi()
     showSignedValuesAct->setText(tr("Show signed values"));
     showAddressAreaAct->setText(tr("Address area"));
     showAsciiAreaAct->setText(tr("ASCII area"));
-    if (showDisasmAct)
-        showDisasmAct->setText(tr("Disassembly view"));
     showAddressGridAct->setText(tr("Show grid"));
     if (showDarkThemeAct)
         showDarkThemeAct->setText(tr("Dark theme"));
@@ -2742,26 +2787,9 @@ void MainWindow::init()
     }
     m_changesDock->show();
 
-    // Disassembly dock widget (bottom, to the right of changes)
-    m_disasmDock = new DisassemblyDockWidget(this);
-    m_disasmDock->setHexEdit(hexEdit);
-    m_disasmDock->setRomType(m_detectedRomType);
-    addDockWidget(Qt::BottomDockWidgetArea, m_disasmDock);
-    splitDockWidget(m_changesDock, m_disasmDock, Qt::Horizontal);
-    m_disasmDock->hide();  // hidden by default, user enables via View → Dock
-    connect(m_disasmDock, &DisassemblyDockWidget::jumpToOffset, this, [this](qint64 offset) {
-        hexEdit->setCursorPosition(offset * 2);
-        hexEdit->ensureVisible();
-        hexEdit->setFocus();
-    });
-
-    connect(m_disasmDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
-        if (visible)
-            m_disasmDock->refresh();
-    });
-
     // Sections dock widget (left side)
     m_sectionModel = new SectionListModel(this);
+    m_sectionModel->setUndoStack(hexEdit ? hexEdit->undoStack() : nullptr);
     m_sectionsDock = new SectionsDockWidget(this);
     m_sectionsDock->setModel(m_sectionModel);
     addDockWidget(Qt::LeftDockWidgetArea, m_sectionsDock);
@@ -2773,6 +2801,18 @@ void MainWindow::init()
         hexEdit->ensureVisibleTop();
         hexEdit->setFocus();
     });
+    connect(m_sectionsDock, &SectionsDockWidget::selectRangeRequested, this,
+            [this](qint64 start, qint64 end) { selectRangeInEditor(start, end); });
+    connect(m_sectionsDock, &SectionsDockWidget::virtualFormattingRequested, this,
+            [this](qint64 start, qint64 end) {
+                selectRangeInEditor(start, end, false);
+                showVirtualFormatDialog(start, end);
+            });
+    connect(m_sectionsDock, &SectionsDockWidget::removeVirtualFormattingRequested, this,
+            [this](qint64 start, qint64 end) {
+                selectRangeInEditor(start, end, false);
+                removeVirtualFormatting(start, end);
+            });
     connect(m_sectionsDock, &SectionsDockWidget::showSectionsToggled, this, [this](bool checked) {
         hexEdit->setShowSections(checked);
     });
@@ -2780,13 +2820,35 @@ void MainWindow::init()
         addSectionFromSelection(parentIdx);
     });
     connect(m_sectionModel, &SectionListModel::sectionsChanged, this, [this]() {
-        if (m_document)
+        const bool restoring = m_restoringSession || m_restoringProjectUi;
+        if (!restoring && m_document && m_document->sectionSnapshot != m_sectionModel->sections())
             m_document->markDirty();
-        hexEdit->viewport()->update();
+        if (hexEdit)
+            hexEdit->viewport()->update();
     });
     // Auto-select the matching section in the tree as the cursor moves
     connect(hexEdit, &HexEditor::currentAddressChanged,
             m_sectionsDock, &SectionsDockWidget::highlightOffset);
+
+    // Keep SectionsDockWidget informed about available table names for the
+    // "Display mode" submenu (sync on add / remove / rename).
+    auto syncTableNames = [this]() {
+        if (!m_tablesDock || !m_sectionsDock) return;
+        QStringList names;
+        QVector<TranslationTable*> ptrs;
+        const auto &tabs = m_tablesDock->allTables();
+        for (int i = 0; i < tabs.size(); ++i) {
+            names << tabs[i].name;
+            ptrs << const_cast<TranslationTable*>(&tabs[i].table);
+        }
+        m_sectionsDock->setTableNames(names);
+        hexEdit->setAllTables(ptrs);
+    };
+    connect(m_tablesDock, &TablesDockWidget::activeTableChanged,
+            this, syncTableNames);
+    connect(m_tablesDock, &TablesDockWidget::tableContentChanged,
+            this, syncTableNames);
+    syncTableNames();
 
     // Ctrl+1..9 shortcuts for switching table tabs
     for (int i = 1; i <= 9; ++i) {
@@ -2813,6 +2875,10 @@ void MainWindow::init()
     connect(m_changesDock, &ChangesDockWidget::showChangesToggled, this, [this](bool checked) {
         showChangesAct->setChecked(checked);
         toggleShowChanges();
+    });
+    connect(m_changesDock, &ChangesDockWidget::hexModeChanged, this, [this](bool hexMode) {
+        if (m_currentSession)
+            m_currentSession->changesHexMode = hexMode;
     });
     connect(m_changesDock, &ChangesDockWidget::showOriginalToggled, this, [this](bool show) {
         if (!hexEdit || !m_document)
@@ -2852,9 +2918,39 @@ void MainWindow::init()
         hexEdit->ensureVisible();
         hexEdit->setFocus();
     });
+    connect(m_tablesDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
+        if (m_currentSession) {
+            m_currentSession->dockTablesVisible = visible;
+            m_currentSession->dockVisibilityInitialized = true;
+        }
+        saveProjectDockVisibilityState();
+        updateDockAreaActions();
+    });
+    connect(m_pointersDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
+        if (m_currentSession) {
+            m_currentSession->dockPointersVisible = visible;
+            m_currentSession->dockVisibilityInitialized = true;
+        }
+        saveProjectDockVisibilityState();
+        updateDockAreaActions();
+    });
     connect(m_changesDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
+        if (m_currentSession) {
+            m_currentSession->dockChangesVisible = visible;
+            m_currentSession->dockVisibilityInitialized = true;
+        }
         if (visible && m_document)
             refreshChangesView();
+        saveProjectDockVisibilityState();
+        updateDockAreaActions();
+    });
+    connect(m_sectionsDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
+        if (m_currentSession) {
+            m_currentSession->dockSectionsVisible = visible;
+            m_currentSession->dockVisibilityInitialized = true;
+        }
+        saveProjectDockVisibilityState();
+        updateDockAreaActions();
     });
 
     // Wire up dock title bar collapse callbacks and separator event filters
@@ -2938,14 +3034,17 @@ void MainWindow::connectEditorSignals(HexEditor *editor)
     connect(editor, &HexEditor::selectionChanged, this, &MainWindow::setSelection);
     connect(editor, &HexEditor::currentAddressChanged, this, &MainWindow::setAddress);
     connect(editor, &HexEditor::currentSizeChanged, this, &MainWindow::setSize);
-    connect(editor, &HexEditor::lineBreaksChanged, this, [this]() {
-        if (m_document)
+    connect(editor, &HexEditor::lineBreaksChanged, this, [this, editor]() {
+        const bool restoring = m_restoringSession || m_restoringProjectUi;
+        if (!restoring && m_document && editor == hexEdit
+            && m_document->alignmentOffsets() != editor->lineBreaks())
+        {
             m_document->markDirty();
+        }
+        if (removeVirtualFormattingAct)
+            removeVirtualFormattingAct->setEnabled(editor && !editor->lineBreaks().isEmpty());
         if (m_currentSession)
             updateTabTitle(m_tabWidget->currentIndex());
-        if (removeVirtualFormattingAct)
-            removeVirtualFormattingAct->setEnabled(hexEdit && !hexEdit->lineBreaks().isEmpty());
-        updateTabTitle(m_tabWidget->currentIndex());
     });
 }
 
@@ -2978,13 +3077,19 @@ void MainWindow::saveCurrentSession()
     m_currentSession->pointerOffset = m_pointerOffset;
     m_currentSession->pointerSize = m_pointerSize;
     m_currentSession->currentEncoding = m_currentEncoding;
+    m_currentSession->showPointers = (showPointersAct && showPointersAct->isChecked());
+    m_currentSession->showChanges = (showChangesAct && showChangesAct->isChecked());
+    m_currentSession->changesHexMode = (m_changesDock && m_changesDock->hexMode());
     m_currentSession->navigationHistory = navigationHistory;
     m_currentSession->navigationHistoryIndex = navigationHistoryIndex;
     m_currentSession->navigationJumpInProgress = navigationJumpInProgress;
     m_currentSession->tableSnapshot = m_tablesDock->takeSnapshot();
     m_currentSession->tableActiveIndex = m_tablesDock->currentIndex();
-    m_currentSession->tablesDockVisible = m_tablesDock->isVisible();
-    m_currentSession->tablesDockVisibilityInitialized = true;
+    m_currentSession->dockTablesVisible = m_tablesDock && m_tablesDock->isVisible();
+    m_currentSession->dockPointersVisible = m_pointersDock && m_pointersDock->isVisible();
+    m_currentSession->dockChangesVisible = m_changesDock && m_changesDock->isVisible();
+    m_currentSession->dockSectionsVisible = m_sectionsDock && m_sectionsDock->isVisible();
+    m_currentSession->dockVisibilityInitialized = true;
     if (m_document)
         m_document->useTable = (useTableAct && useTableAct->isChecked());
 
@@ -3039,6 +3144,8 @@ void MainWindow::saveCurrentSession()
 
 void MainWindow::restoreSession(EditorSession *session)
 {
+    m_restoringProjectUi = true;
+
     m_currentSession = session;
     hexEdit = session->editor;
     m_document = session->document;
@@ -3057,20 +3164,13 @@ void MainWindow::restoreSession(EditorSession *session)
 
     m_pointersDock->setHexEdit(hexEdit);
 
-    if (m_disasmDock)
-    {
-        m_disasmDock->setHexEdit(hexEdit);
-        m_disasmDock->setRomType(m_detectedRomType);
-    }
-
     hexEdit->setDisasmRomType(m_detectedRomType);
-    if (showDisasmAct)
-        showDisasmAct->setEnabled(Disassembler::isSupported(m_detectedRomType));
 
     // Restore sections for this tab
     if (m_document && m_sectionModel)
     {
         m_document->restoreSections(m_sectionModel);
+        m_sectionModel->setUndoStack(hexEdit ? hexEdit->undoStack() : nullptr);
         hexEdit->setSectionModel(m_sectionModel);
         hexEdit->setShowSections(m_document->showSections);
 
@@ -3104,7 +3204,6 @@ void MainWindow::restoreSession(EditorSession *session)
     const bool hasTables = m_tablesDock->count() > 0;
     
     // Restore per-tab dock collapse/size state, or fall back to uncollapsed.
-    m_tablesDock->show();
     if (session->dockStateInitialized) {
         auto applyDockState = [](BaseDockWidget *d, bool collapsed, int expW, int expH) {
             if (!d) return;
@@ -3131,6 +3230,21 @@ void MainWindow::restoreSession(EditorSession *session)
                        session->dockSectionsExpandedHeight);
     } else {
         m_tablesDock->setCollapsed(false);
+        m_pointersDock->setCollapsed(false);
+        m_changesDock->setCollapsed(false);
+        m_sectionsDock->setCollapsed(false);
+    }
+
+    if (session->dockVisibilityInitialized) {
+        m_tablesDock->setVisible(session->dockTablesVisible);
+        m_pointersDock->setVisible(session->dockPointersVisible);
+        m_changesDock->setVisible(session->dockChangesVisible);
+        m_sectionsDock->setVisible(session->dockSectionsVisible);
+    } else {
+        m_tablesDock->show();
+        m_pointersDock->show();
+        m_changesDock->show();
+        m_sectionsDock->show();
     }
 
     useTableAct->setEnabled(hasTables);
@@ -3147,19 +3261,22 @@ void MainWindow::restoreSession(EditorSession *session)
     // Sync show-pointers action and dock button with the restored editor's state
     if (showPointersAct) {
         const bool hasPointers = hexEdit && !hexEdit->pointers()->empty();
+        const bool showPointers = session ? session->showPointers : true;
         showPointersAct->setEnabled(hasPointers);
-        const bool sp = hexEdit ? hexEdit->showPointers()
-                                : (m_document && m_document->showPointers);
-        showPointersAct->setChecked(sp);
+        showPointersAct->setChecked(showPointers);
+        if (hexEdit)
+            hexEdit->setShowPointers(showPointers);
         // QAction::toggled connection auto-updates m_pointersDock button
     }
 
     // Sync changes-dock supplementary buttons with restored session
     if (m_changesDock) {
+        const bool showChanges = session ? session->showChanges : false;
+        const bool changesHexMode = session ? session->changesHexMode : false;
         if (showChangesAct)
-            showChangesAct->setChecked(m_document && m_document->showChanges);
+            showChangesAct->setChecked(showChanges);
         m_changesDock->setShowChangesChecked(showChangesAct && showChangesAct->isChecked());
-        m_changesDock->setHexMode(m_document && m_document->changesHexMode);
+        m_changesDock->setHexMode(changesHexMode);
         m_changesDock->setShowOriginalChecked(hexEdit && hexEdit->showOriginal());
     }
 
@@ -3294,9 +3411,6 @@ void MainWindow::onTabCloseRequested(int index)
         m_changesDock->hide();
         m_pointersDock->setHexEdit(nullptr);
         m_pointersDock->hide();
-        m_disasmDock->setHexEdit(nullptr);
-        m_disasmDock->clear();
-        m_disasmDock->hide();
 
         // Keep m_tabWidget visible so dock widgets don't expand to fill its area.
         // An empty QTabWidget shows just a blank area — acceptable as a placeholder.
@@ -4012,14 +4126,6 @@ void MainWindow::createActions()
     showAsciiAreaAct->setCheckable(true);
     showAsciiAreaAct->setChecked(true);
 
-    showDisasmAct = new QAction(tr("Disassembly view"), this);
-    showDisasmAct->setCheckable(true);
-    showDisasmAct->setChecked(false);
-    showDisasmAct->setEnabled(false);
-    connect(showDisasmAct, &QAction::toggled, this, [this](bool checked) {
-        hexEdit->setShowDisasm(checked);
-    });
-
     showAddressGridAct = new QAction(tr("Show grid"), this);
     showAddressGridAct->setCheckable(true);
     showAddressGridAct->setChecked(true);
@@ -4273,8 +4379,6 @@ void MainWindow::createMenus()
     panelsMenu->addAction(showAddressAreaAct);
     panelsMenu->addAction(showAsciiAreaAct);
     panelsMenu->addSeparator();
-    panelsMenu->addAction(showDisasmAct);
-    panelsMenu->addSeparator();
     showStatusBarAct = panelsMenu->addAction(tr("Status bar"));
     showStatusBarAct->setCheckable(true);
     showStatusBarAct->setChecked(true);
@@ -4346,6 +4450,13 @@ void MainWindow::createMenus()
     // Store references to dock toggle actions.
     // Set fixed text and override QDockWidget's auto-sync with windowTitle
     // (which may include counts like "Pointers – 42").
+    sectionsDockToggleAct = m_sectionsDock->toggleViewAction();
+    sectionsDockToggleAct->setText(tr("Sections"));
+    dockMenu->addAction(sectionsDockToggleAct);
+    connect(m_sectionsDock, &QDockWidget::windowTitleChanged, this, [this]() {
+        if (sectionsDockToggleAct) sectionsDockToggleAct->setText(tr("Sections"));
+    });
+
     tablesDockToggleAct = m_tablesDock->toggleViewAction();
     tablesDockToggleAct->setText(tr("Tables"));
     dockMenu->addAction(tablesDockToggleAct);
@@ -4365,13 +4476,6 @@ void MainWindow::createMenus()
     dockMenu->addAction(changesDockToggleAct);
     connect(m_changesDock, &QDockWidget::windowTitleChanged, this, [this]() {
         if (changesDockToggleAct) changesDockToggleAct->setText(tr("Changes"));
-    });
-    
-    disassemblyDockToggleAct = m_disasmDock->toggleViewAction();
-    disassemblyDockToggleAct->setText(tr("Disassembly"));
-    dockMenu->addAction(disassemblyDockToggleAct);
-    connect(m_disasmDock, &QDockWidget::windowTitleChanged, this, [this]() {
-        if (disassemblyDockToggleAct) disassemblyDockToggleAct->setText(tr("Disassembly"));
     });
 
     dockMenu->addSeparator();
@@ -4511,6 +4615,12 @@ void MainWindow::restoreDockLayout()
         m_changesDock->setCollapsed(false);
     }
 
+    if (m_sectionsDock) {
+        m_sectionsDock->setFeatures(defaultFeatures);
+        m_sectionsDock->show();
+        m_sectionsDock->setCollapsed(false);
+    }
+
     setDockAreaCollapsed(Qt::LeftDockWidgetArea, false);
     setDockAreaCollapsed(Qt::RightDockWidgetArea, false);
     setDockAreaCollapsed(Qt::BottomDockWidgetArea, false);
@@ -4519,10 +4629,14 @@ void MainWindow::restoreDockLayout()
         resizeDocks({m_pointersDock, m_changesDock}, {220, 220}, Qt::Vertical);
 
     if (m_currentSession) {
-        m_currentSession->tablesDockVisible = true;
-        m_currentSession->tablesDockVisibilityInitialized = true;
+        m_currentSession->dockTablesVisible = true;
+        m_currentSession->dockPointersVisible = true;
+        m_currentSession->dockChangesVisible = true;
+        m_currentSession->dockSectionsVisible = true;
+        m_currentSession->dockVisibilityInitialized = true;
     }
 
+    saveProjectDockVisibilityState();
     enforceBottomDockEqualWidth();
 
     if (m_document)
@@ -4547,7 +4661,6 @@ void MainWindow::setDockAreaCollapsed(Qt::DockWidgetArea area, bool collapsed)
         };
         capture(m_pointersDock);
         capture(m_changesDock);
-        capture(m_disasmDock);
     }
 
     // Collapse all known dock widgets in the given area.
@@ -4563,8 +4676,6 @@ void MainWindow::setDockAreaCollapsed(Qt::DockWidgetArea area, bool collapsed)
             m_pointersDock->setCollapsed(collapsed);
         else if (dock == m_changesDock)
             m_changesDock->setCollapsed(collapsed);
-        else if (dock == m_disasmDock)
-            m_disasmDock->setCollapsed(collapsed);
         else {
             if (collapsed)
                 dock->hide();
@@ -4576,7 +4687,6 @@ void MainWindow::setDockAreaCollapsed(Qt::DockWidgetArea area, bool collapsed)
     collapseIfInArea(m_tablesDock);
     collapseIfInArea(m_pointersDock);
     collapseIfInArea(m_changesDock);
-    collapseIfInArea(m_disasmDock);
 
     // Restore horizontal widths for bottom docks (preserves the splitter ratio
     // the user had before collapse, instead of forcing 50/50).
@@ -4858,6 +4968,9 @@ void MainWindow::openProjectFile(const QString &path)
         return;
     }
 
+    const bool wasRestoringProjectUi = m_restoringProjectUi;
+    m_restoringProjectUi = true;
+
     // 1. Load the data file
     if (!doc.filePath.isEmpty() && QFile::exists(doc.filePath)) {
         loadFile(doc.filePath);
@@ -4865,6 +4978,7 @@ void MainWindow::openProjectFile(const QString &path)
 
     // 2. Load translation tables into dock widget
     tb = nullptr;
+    m_restoringTableDockState = true;
     m_tablesDock->clearAll();
     bool hasTables = false;
 
@@ -4928,6 +5042,8 @@ void MainWindow::openProjectFile(const QString &path)
         if (!doc.useTable)
             hexEdit->removeTranslationTable();
     }
+
+    m_restoringTableDockState = false;
 
     // 3. Encoding
     m_currentEncoding = doc.currentEncoding();
@@ -5002,28 +5118,33 @@ void MainWindow::openProjectFile(const QString &path)
     updateWindowTitle();
     updateActionStates();
 
-    // Restore display settings
+    // Restore per-tab display settings from the session/app state.
     m_restoringProjectUi = true;
-    showPointersAct->setChecked(doc.showPointers);
-    m_pointersDock->setShowPointersChecked(doc.showPointers);
+    const bool showPointers = m_currentSession ? m_currentSession->showPointers : true;
+    const bool showChanges = m_currentSession ? m_currentSession->showChanges : false;
+    const bool changesHexMode = m_currentSession ? m_currentSession->changesHexMode : false;
+    showPointersAct->setChecked(showPointers);
+    m_pointersDock->setShowPointersChecked(showPointers);
     switchShowPointers();
-    showChangesAct->setChecked(doc.showChanges);
-    m_changesDock->setShowChangesChecked(doc.showChanges);
-    m_changesDock->setHexMode(doc.changesHexMode);
+    showChangesAct->setChecked(showChanges);
+    m_changesDock->setShowChangesChecked(showChanges);
+    m_changesDock->setHexMode(changesHexMode);
     toggleShowChanges();
 
-    // Restore dock layout (positions/sizes) from project, then ensure all docks are always visible.
+    // Restore dock layout (positions/sizes) from project, then re-apply the
+    // per-project closed/open state stored in app settings.
     if (!doc.dockLayoutState.isEmpty())
         restoreState(doc.dockLayoutState);
-    m_tablesDock->show();
-    m_pointersDock->show();
-    m_changesDock->show();
+    restoreProjectDockVisibilityState(path);
     if (!doc.tablesColumnsState.isEmpty())
         m_tablesDock->restoreColumnsState(doc.tablesColumnsState);
     updateDockAreaActions();
 
-    m_restoringProjectUi = false;
+    m_restoringProjectUi = wasRestoringProjectUi;
     m_document->clearDirty();
+    if (hexEdit)
+        hexEdit->setModified(false);
+    setWindowModified(false);
     // Ensure the tab title reflects the now-clean document state (anything that
     // ran between session creation and here may have left a stale '*' via the
     // markDirty callback or from loadFile's pointersUpdated call).
@@ -5091,9 +5212,6 @@ bool MainWindow::saveProjectImpl(const QString &path)
     m_document->setByteOrder(hexEdit->byteOrder);
     m_document->snapshotPointers(hexEdit->pointers());
     m_document->snapshotSections(m_sectionModel);
-    m_document->showPointers = (showPointersAct && showPointersAct->isChecked());
-    m_document->showChanges = (showChangesAct  && showChangesAct->isChecked());
-    m_document->changesHexMode = (m_changesDock && m_changesDock->hexMode());
     m_document->showSections = hexEdit->showSections();
     m_document->dockLayoutState = QByteArray(); // now stored in per-project app settings
     m_document->tablesColumnsState = m_tablesDock ? m_tablesDock->saveColumnsState() : QByteArray();
@@ -5349,12 +5467,7 @@ void MainWindow::loadFile(const QString &fileName)
         updateEndiannesLabel();
     }
 
-    if (m_disasmDock)
-        m_disasmDock->setRomType(rom);
-
     hexEdit->setDisasmRomType(rom);
-    if (showDisasmAct)
-        showDisasmAct->setEnabled(Disassembler::isSupported(rom));
 
     auto applyEncoding = [this](const QString &enc) {
         m_currentEncoding = enc;
@@ -5393,7 +5506,9 @@ void MainWindow::loadFile(const QString &fileName)
 
     settings.setValue("RecentFile0", fileName);
 
-    // Create default Header section for known ROM types (when no project loaded)
+    // Create default Header section for known ROM types (when no project loaded).
+    // Use setSectionsDirect to bypass the undo stack — this is initial state,
+    // not a user action.
     if (m_sectionModel && m_sectionModel->count() == 0 && rom != RomType::Unknown) {
         const qint64 hdrSize = SectionListModel::romHeaderSize(rom);
         if (hdrSize > 0) {
@@ -5402,11 +5517,18 @@ void MainWindow::loadFile(const QString &fileName)
             hdr.startOffset = 0;
             hdr.endOffset = hdrSize;
             hdr.color = SectionListModel::randomPastelColor();
-            m_sectionModel->addSection(hdr);
+            m_sectionModel->setSections(QVector<Section>{hdr});
         }
         if (m_sectionsDock)
             m_sectionsDock->setRomTypeName(QString::fromLatin1(romTypeName(rom)));
     }
+
+    if (m_document)
+        m_document->clearDirty();
+    if (hexEdit)
+        hexEdit->setModified(false);
+    setWindowModified(false);
+    updateTabTitle(m_tabWidget->currentIndex());
 }
 
 void MainWindow::readSettings()
@@ -5543,15 +5665,19 @@ void MainWindow::readSettings()
                 bool    showChanges        = false;
                 bool    changesHexMode     = false;
                 int     tablesActiveIndex  = -1;
-                bool    dockTablesCollapsed      = false;
-                int     dockTablesExpW           = -1;
-                int     dockTablesExpH           = -1;
-                bool    dockPointersCollapsed    = false;
-                int     dockPointersExpW         = -1;
-                int     dockPointersExpH         = -1;
-                bool    dockChangesCollapsed     = false;
-                int     dockChangesExpW          = -1;
-                int     dockChangesExpH          = -1;
+                bool    dockTablesVisible       = true;
+                bool    dockPointersVisible     = true;
+                bool    dockChangesVisible      = true;
+                bool    dockSectionsVisible     = true;
+                bool    dockTablesCollapsed     = false;
+                int     dockTablesExpW          = -1;
+                int     dockTablesExpH          = -1;
+                bool    dockPointersCollapsed   = false;
+                int     dockPointersExpW        = -1;
+                int     dockPointersExpH        = -1;
+                bool    dockChangesCollapsed    = false;
+                int     dockChangesExpW         = -1;
+                int     dockChangesExpH         = -1;
             };
             QVector<TabData> tabs;
             for (int i = 0; i < tabCount; ++i) {
@@ -5568,6 +5694,10 @@ void MainWindow::readSettings()
                 t.showChanges        = settings.value(pfx + QStringLiteral("/showChanges"),    false).toBool();
                 t.changesHexMode     = settings.value(pfx + QStringLiteral("/changesHexMode"), false).toBool();
                 t.tablesActiveIndex  = settings.value(pfx + QStringLiteral("/tablesActiveIndex"), -1).toInt();
+                t.dockTablesVisible    = settings.value(pfx + QStringLiteral("/dockTablesVisible"),    true).toBool();
+                t.dockPointersVisible  = settings.value(pfx + QStringLiteral("/dockPointersVisible"),  true).toBool();
+                t.dockChangesVisible   = settings.value(pfx + QStringLiteral("/dockChangesVisible"),   true).toBool();
+                t.dockSectionsVisible  = settings.value(pfx + QStringLiteral("/dockSectionsVisible"),  true).toBool();
                 t.dockTablesCollapsed   = settings.value(pfx + QStringLiteral("/dockTablesCollapsed"),       false).toBool();
                 t.dockTablesExpW        = settings.value(pfx + QStringLiteral("/dockTablesExpandedWidth"),   -1).toInt();
                 t.dockTablesExpH        = settings.value(pfx + QStringLiteral("/dockTablesExpandedHeight"),  -1).toInt();
@@ -5611,18 +5741,21 @@ void MainWindow::readSettings()
                 }
                 s->scrollPending = true;
 
-                // Document display flags
-                if (s->document) {
-                    s->document->showPointers  = t.showPointers;
-                    s->document->showChanges   = t.showChanges;
-                    s->document->changesHexMode = t.changesHexMode;
-                }
+                // Per-tab display flags
+                s->showPointers = t.showPointers;
+                s->showChanges = t.showChanges;
+                s->changesHexMode = t.changesHexMode;
 
                 // Active table index
                 if (t.tablesActiveIndex >= 0)
                     s->tableActiveIndex = t.tablesActiveIndex;
 
-                // Dock state
+                // Dock visibility/state
+                s->dockTablesVisible        = t.dockTablesVisible;
+                s->dockPointersVisible      = t.dockPointersVisible;
+                s->dockChangesVisible       = t.dockChangesVisible;
+                s->dockSectionsVisible      = t.dockSectionsVisible;
+                s->dockVisibilityInitialized = true;
                 s->dockTablesCollapsed      = t.dockTablesCollapsed;
                 s->dockTablesExpandedWidth  = t.dockTablesExpW;
                 s->dockTablesExpandedHeight = t.dockTablesExpH;
@@ -5660,6 +5793,28 @@ void MainWindow::readSettings()
                             m_currentSession->dockChangesCollapsed,
                             m_currentSession->dockChangesExpandedWidth,
                             m_currentSession->dockChangesExpandedHeight);
+                fixLiveDock(m_sectionsDock,
+                            m_currentSession->dockSectionsCollapsed,
+                            m_currentSession->dockSectionsExpandedWidth,
+                            m_currentSession->dockSectionsExpandedHeight);
+
+                m_tablesDock->setVisible(m_currentSession->dockTablesVisible);
+                m_pointersDock->setVisible(m_currentSession->dockPointersVisible);
+                m_changesDock->setVisible(m_currentSession->dockChangesVisible);
+                m_sectionsDock->setVisible(m_currentSession->dockSectionsVisible);
+
+                if (showPointersAct)
+                    showPointersAct->setChecked(m_currentSession->showPointers);
+                if (hexEdit)
+                    hexEdit->setShowPointers(m_currentSession->showPointers);
+                if (showChangesAct)
+                    showChangesAct->setChecked(m_currentSession->showChanges);
+                if (m_changesDock) {
+                    m_changesDock->setShowChangesChecked(m_currentSession->showChanges);
+                    m_changesDock->setHexMode(m_currentSession->changesHexMode);
+                }
+                if (hexEdit)
+                    hexEdit->setShowChanges(m_currentSession->showChanges);
             }
 
             // Switch to previously active tab and apply its dock state.
@@ -5746,7 +5901,13 @@ void MainWindow::applyShortcutsFromSettings()
 
 void MainWindow::switchShowPointers()
 {
-    hexEdit->setShowPointers(showPointersAct->isChecked());
+    if (!hexEdit || !showPointersAct)
+        return;
+
+    const bool show = showPointersAct->isChecked();
+    hexEdit->setShowPointers(show);
+    if (m_currentSession)
+        m_currentSession->showPointers = show;
 }
 
 void MainWindow::pushNavigationPosition(qint64 position)
@@ -5992,6 +6153,8 @@ bool MainWindow::saveFile(const QString &fileName)
         return false;
     }
 
+    if (hexEdit)
+        hexEdit->setModified(false);
     setCurrentFile(fileName);
     rememberDirectory(kLastFileDirKey, fileName);
     if (checksumFixed)
@@ -6214,13 +6377,24 @@ void MainWindow::writeSettings()
         settings.setValue(pfx + QStringLiteral("/path"),   isProject ? projPath : s->curFile);
         settings.setValue(pfx + QStringLiteral("/cursor"), s->curOffset);
 
-        const HexDocument *doc = s->document;
-        settings.setValue(pfx + QStringLiteral("/showPointers"),   doc ? doc->showPointers   : false);
-        settings.setValue(pfx + QStringLiteral("/showChanges"),    doc ? doc->showChanges    : false);
-        settings.setValue(pfx + QStringLiteral("/changesHexMode"), doc ? doc->changesHexMode : false);
+        settings.setValue(pfx + QStringLiteral("/showPointers"),   s->showPointers);
+        settings.setValue(pfx + QStringLiteral("/showChanges"),    s->showChanges);
+        settings.setValue(pfx + QStringLiteral("/changesHexMode"), s->changesHexMode);
         settings.setValue(pfx + QStringLiteral("/tablesActiveIndex"), s->tableActiveIndex);
 
+        settings.setValue(pfx + QStringLiteral("/dockTablesVisible"),   s->dockTablesVisible);
+        settings.setValue(pfx + QStringLiteral("/dockPointersVisible"), s->dockPointersVisible);
+        settings.setValue(pfx + QStringLiteral("/dockChangesVisible"),  s->dockChangesVisible);
+        settings.setValue(pfx + QStringLiteral("/dockSectionsVisible"), s->dockSectionsVisible);
         settings.setValue(pfx + QStringLiteral("/dockTablesCollapsed"),       s->dockTablesCollapsed);
+
+        if (isProject) {
+            const QString projectPfx = projectUiSettingsPrefix(projPath);
+            settings.setValue(projectPfx + QStringLiteral("/dockTablesVisible"), s->dockTablesVisible);
+            settings.setValue(projectPfx + QStringLiteral("/dockPointersVisible"), s->dockPointersVisible);
+            settings.setValue(projectPfx + QStringLiteral("/dockChangesVisible"), s->dockChangesVisible);
+            settings.setValue(projectPfx + QStringLiteral("/dockSectionsVisible"), s->dockSectionsVisible);
+        }
         settings.setValue(pfx + QStringLiteral("/dockTablesExpandedWidth"),   s->dockTablesExpandedWidth);
         settings.setValue(pfx + QStringLiteral("/dockTablesExpandedHeight"),  s->dockTablesExpandedHeight);
         settings.setValue(pfx + QStringLiteral("/dockPointersCollapsed"),     s->dockPointersCollapsed);
@@ -6262,6 +6436,49 @@ void MainWindow::rememberDirectory(const QString &settingsKey, const QString &fi
 
     QSettings settings;
     settings.setValue(settingsKey, dirPath);
+}
+
+void MainWindow::saveProjectDockVisibilityState() const
+{
+    if (!m_document || m_document->projectFilePath.isEmpty())
+        return;
+
+    QSettings settings;
+    const QString pfx = projectUiSettingsPrefix(m_document->projectFilePath);
+    settings.setValue(pfx + QStringLiteral("/dockTablesVisible"), m_tablesDock ? m_tablesDock->isVisible() : true);
+    settings.setValue(pfx + QStringLiteral("/dockPointersVisible"), m_pointersDock ? m_pointersDock->isVisible() : true);
+    settings.setValue(pfx + QStringLiteral("/dockChangesVisible"), m_changesDock ? m_changesDock->isVisible() : true);
+    settings.setValue(pfx + QStringLiteral("/dockSectionsVisible"), m_sectionsDock ? m_sectionsDock->isVisible() : true);
+}
+
+void MainWindow::restoreProjectDockVisibilityState(const QString &projectPath)
+{
+    if (projectPath.isEmpty())
+        return;
+
+    QSettings settings;
+    const QString pfx = projectUiSettingsPrefix(projectPath);
+    const bool tablesVisible = settings.value(pfx + QStringLiteral("/dockTablesVisible"), true).toBool();
+    const bool pointersVisible = settings.value(pfx + QStringLiteral("/dockPointersVisible"), true).toBool();
+    const bool changesVisible = settings.value(pfx + QStringLiteral("/dockChangesVisible"), true).toBool();
+    const bool sectionsVisible = settings.value(pfx + QStringLiteral("/dockSectionsVisible"), true).toBool();
+
+    if (m_tablesDock)
+        m_tablesDock->setVisible(tablesVisible);
+    if (m_pointersDock)
+        m_pointersDock->setVisible(pointersVisible);
+    if (m_changesDock)
+        m_changesDock->setVisible(changesVisible);
+    if (m_sectionsDock)
+        m_sectionsDock->setVisible(sectionsVisible);
+
+    if (m_currentSession) {
+        m_currentSession->dockTablesVisible = tablesVisible;
+        m_currentSession->dockPointersVisible = pointersVisible;
+        m_currentSession->dockChangesVisible = changesVisible;
+        m_currentSession->dockSectionsVisible = sectionsVisible;
+        m_currentSession->dockVisibilityInitialized = true;
+    }
 }
 
 void MainWindow::addToRecentFiles(const QString &fileName)
@@ -6488,6 +6705,9 @@ void MainWindow::openRecentProject()
 
 void MainWindow::toggleShowChanges()
 {
+    if (!hexEdit || !showChangesAct)
+        return;
+
     const bool show = showChangesAct->isChecked();
     hexEdit->setShowChanges(show);
     if (show)
@@ -6495,11 +6715,10 @@ void MainWindow::toggleShowChanges()
     else
         hexEdit->clearChangedPositions();
 
-    if (m_document)
-        m_document->showChanges = show;
-
-    if (!m_restoringProjectUi && m_document && !m_document->projectFilePath.isEmpty())
-        m_document->markDirty();
+    if (m_currentSession) {
+        m_currentSession->showChanges = show;
+        m_currentSession->changesHexMode = (m_changesDock && m_changesDock->hexMode());
+    }
 }
 
 void MainWindow::updateChangedBytesHighlight()
@@ -7081,12 +7300,7 @@ void MainWindow::onRomTypeChanged(int index)
     setAddress(hexEdit->getCurrentOffset());
     syncRomTypeMenu(index);
 
-    if (m_disasmDock)
-        m_disasmDock->setRomType(m_detectedRomType);
-
     hexEdit->setDisasmRomType(m_detectedRomType);
-    if (showDisasmAct)
-        showDisasmAct->setEnabled(Disassembler::isSupported(m_detectedRomType));
 }
 
 void MainWindow::repopulateRomTypeCombo()
@@ -7120,12 +7334,7 @@ void MainWindow::onMenuRomTypeTriggered(QAction *action)
     updateEndiannesLabel();
     setAddress(hexEdit->getCurrentOffset());
 
-    if (m_disasmDock)
-        m_disasmDock->setRomType(m_detectedRomType);
-
     hexEdit->setDisasmRomType(m_detectedRomType);
-    if (showDisasmAct)
-        showDisasmAct->setEnabled(Disassembler::isSupported(m_detectedRomType));
 }
 
 void MainWindow::setCurrentPointerOffset(qint64 offset)

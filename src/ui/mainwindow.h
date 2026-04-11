@@ -18,7 +18,6 @@
 #include "PointersDockWidget.h"
 #include "ChangesDockWidget.h"
 #include "SectionsDockWidget.h"
-#include "DisassemblyDockWidget.h"
 #include "SemiAutoTableDialog.h"
 #include "DumpScriptdialog.h"
 #include "InsertScriptDialog.h"
@@ -82,6 +81,7 @@ private slots:
     void showVirtualFormatDialog(qint64 rangeFrom = -1, qint64 rangeTo = -1);
     void removeVirtualFormatting(qint64 rangeFrom = -1, qint64 rangeTo = -1);
     void addSectionFromSelection(int parentIdx = -1);
+    void selectRangeInEditor(qint64 start, qint64 end, bool focus = true);
     void showPointersDialog();
     void pointersUpdated();
     void hexEditContextMenu(const QPoint &globalPos, qint64 bytePos);
@@ -172,6 +172,8 @@ private:
     void writeSettings();
     QString lastDirectory(const QString &settingsKey) const;
     void rememberDirectory(const QString &settingsKey, const QString &filePath);
+    void saveProjectDockVisibilityState() const;
+    void restoreProjectDockVisibilityState(const QString &projectPath);
     void updateRecentFileMenu();
     void updateRecentTableMenu();
     void updateRecentProjectMenu();
@@ -281,7 +283,6 @@ private:
     QAction *saveProjectAsAct = nullptr;
 
     QAction *showChangesAct = nullptr;
-    QAction *showDisasmAct = nullptr;
     QAction *createIpsPatchAct = nullptr;
     QAction *loadIpsPatchAct = nullptr;
     QAction *loadOriginalAct = nullptr;
@@ -369,7 +370,6 @@ private:
     QAction *pointersDockToggleAct = nullptr;
     QAction *changesDockToggleAct = nullptr;
     QAction *sectionsDockToggleAct = nullptr;
-    QAction *disassemblyDockToggleAct = nullptr;
 
     HexEditor *hexEdit;
     OptionsDialog *optionsDialog;
@@ -384,7 +384,6 @@ private:
     ChangesDockWidget  *m_changesDock   = nullptr;
     SectionsDockWidget *m_sectionsDock  = nullptr;
     SectionListModel   *m_sectionModel  = nullptr;
-    DisassemblyDockWidget *m_disasmDock  = nullptr;
 
     QComboBox *cbRomType;
     QPushButton *lbEndiannes;

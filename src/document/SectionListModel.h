@@ -8,6 +8,16 @@
 #include <QMetaType>
 #include "romdetect.h"
 
+class QUndoStack;
+
+/// Display-mode constants for sections.
+/// Values > 0 are 1-based table indices (Table 1 … Table N).
+enum {
+    SectionDisplay_Default = 0,   ///< follow global view mode
+    SectionDisplay_Raw     = -2,  ///< raw file encoding, ignore tables
+    SectionDisplay_Disasm  = -1   ///< disassembly view
+};
+
 /// A single named section of the file (e.g. header, data block, …).
 struct Section
 {
@@ -16,7 +26,19 @@ struct Section
     qint64  endOffset   = 0;   // exclusive (one past last byte)
     QColor  color;
     int     parentIndex = -1;  // -1 = root section; >=0 = flat index of parent section
+    int     displayMode = SectionDisplay_Default; // 0=Default, -2=Raw, -1=Disasm, 1..N=Table index
 };
+
+inline bool operator==(const Section &lhs, const Section &rhs)
+{
+    return lhs.name == rhs.name
+        && lhs.startOffset == rhs.startOffset
+        && lhs.endOffset == rhs.endOffset
+        && lhs.color == rhs.color
+        && lhs.parentIndex == rhs.parentIndex
+        && lhs.displayMode == rhs.displayMode;
+}
+
 Q_DECLARE_METATYPE(Section)
 
 /// Lightweight container for file sections with paint-lookup support.
@@ -31,16 +53,23 @@ public:
     int count() const { return m_sections.size(); }
     const Section &at(int index) const { return m_sections.at(index); }
 
+    void setUndoStack(QUndoStack *stack) { m_undoStack = stack; }
+
     void addSection(const Section &s);
-    void removeSection(int index);   ///< also removes direct children; fixes parent indices
+    void removeSection(int index);   ///< removes the section and its descendants; fixes parent indices
     void renameSection(int index, const QString &name);
     void recolorSection(int index, const QColor &color);
     void updateSection(int index, const Section &s);
     void clear();
+    void applySections(const QVector<Section> &sections, const QString &text = QString());
 
     /// Returns the section colour for the given file offset, or an invalid
     /// QColor if the offset does not belong to any section.
     QColor colorAtOffset(qint64 offset) const;
+
+    /// Returns the display mode for the deepest section containing the offset.
+    /// Falls back to SectionDisplay_Default if the offset is outside all sections.
+    int displayModeAtOffset(qint64 offset) const;
 
     const QVector<Section> &sections() const { return m_sections; }
     void setSections(const QVector<Section> &sections);
@@ -55,7 +84,13 @@ signals:
     void sectionsChanged();
 
 private:
+    void setSectionsDirect(const QVector<Section> &sections);
+    void commitSectionsChange(const QVector<Section> &sections, const QString &text);
+
     QVector<Section> m_sections;
+    QUndoStack *m_undoStack = nullptr;
+
+    friend class SectionSnapshotCommand;
 };
 
 #endif // SECTIONLISTMODEL_H

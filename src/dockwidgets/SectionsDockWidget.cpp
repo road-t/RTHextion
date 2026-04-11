@@ -10,6 +10,7 @@
 #include <QMenu>
 #include <QPainter>
 #include <QDropEvent>
+#include <QSignalBlocker>
 #include <functional>
 
 // ---------------------------------------------------------------------------
@@ -113,6 +114,8 @@ SectionsDockWidget::SectionsDockWidget(QWidget *parent)
     });
     connect(m_tree, &QTreeWidget::itemClicked,
             this, &SectionsDockWidget::onItemClicked);
+    connect(m_tree, &QTreeWidget::itemDoubleClicked,
+            this, &SectionsDockWidget::onItemDoubleClicked);
     connect(m_tree, &QTreeWidget::customContextMenuRequested,
             this, &SectionsDockWidget::onTreeContextMenu);
 }
@@ -139,6 +142,11 @@ void SectionsDockWidget::setRomTypeName(const QString &name)
     }
 }
 
+void SectionsDockWidget::setTableNames(const QStringList &names)
+{
+    m_tableNames = names;
+}
+
 void SectionsDockWidget::refresh()
 {
     rebuildTree();
@@ -146,6 +154,7 @@ void SectionsDockWidget::refresh()
 
 void SectionsDockWidget::setShowSectionsChecked(bool checked)
 {
+    const QSignalBlocker blocker(m_showSectionsBtn);
     m_showSectionsBtn->setChecked(checked);
 }
 
@@ -173,6 +182,20 @@ void SectionsDockWidget::onItemClicked(QTreeWidgetItem *item, int /*column*/)
         emit jumpToOffset(offset);
 }
 
+void SectionsDockWidget::onItemDoubleClicked(QTreeWidgetItem *item, int /*column*/)
+{
+    if (!item || !m_model)
+        return;
+
+    const int sectionIdx = item->data(0, Qt::UserRole + 1).toInt();
+    if (sectionIdx < 0 || sectionIdx >= m_model->count())
+        return;
+
+    const Section &s = m_model->at(sectionIdx);
+    if (s.endOffset > s.startOffset)
+        emit selectRangeRequested(s.startOffset, s.endOffset);
+}
+
 void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
 {
     QTreeWidgetItem *item = m_tree->itemAt(pos);
@@ -185,11 +208,48 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
 
     const int depth = treeItemDepth(item);  // 2 = root section, 3+ = subsection
 
+    const Section &section = m_model->at(sectionIdx);
+
     QMenu menu(this);
     QAction *renameAct  = menu.addAction(tr("Rename"));
     QAction *recolorAct = menu.addAction(tr("Change color"));
     // Any section can have subsections (unlimited nesting)
     QAction *addSubAct  = menu.addAction(tr("Add subsection"));
+    QAction *vfFormatAct = menu.addAction(tr("Virtually format") + "...");
+    QAction *vfRemoveAct = menu.addAction(tr("Remove virtual formatting"));
+    menu.addSeparator();
+
+    // ── Display mode submenu ──
+    QMenu *displayMenu = menu.addMenu(tr("Display mode"));
+    const int curMode = section.displayMode;
+
+    QAction *actDefault = displayMenu->addAction(tr("Default"));
+    actDefault->setCheckable(true);
+    actDefault->setChecked(curMode == SectionDisplay_Default);
+    actDefault->setData(SectionDisplay_Default);
+
+    QAction *actRaw = displayMenu->addAction(tr("Raw"));
+    actRaw->setCheckable(true);
+    actRaw->setChecked(curMode == SectionDisplay_Raw);
+    actRaw->setData(SectionDisplay_Raw);
+
+    if (!m_tableNames.isEmpty()) {
+        displayMenu->addSeparator();
+        for (int ti = 0; ti < m_tableNames.size(); ++ti) {
+            const int tableMode = ti + 1; // 1-based
+            QAction *actTbl = displayMenu->addAction(m_tableNames[ti]);
+            actTbl->setCheckable(true);
+            actTbl->setChecked(curMode == tableMode);
+            actTbl->setData(tableMode);
+        }
+    }
+
+    displayMenu->addSeparator();
+    QAction *actDisasm = displayMenu->addAction(tr("Disassembly"));
+    actDisasm->setCheckable(true);
+    actDisasm->setChecked(curMode == SectionDisplay_Disasm);
+    actDisasm->setData(SectionDisplay_Disasm);
+
     menu.addSeparator();
     QAction *deleteAct  = menu.addAction(tr("Delete"));
     Q_UNUSED(depth)
@@ -213,8 +273,20 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
             m_model->recolorSection(sectionIdx, color);
     } else if (addSubAct && chosen == addSubAct) {
         emit addSectionRequested(sectionIdx);
+    } else if (chosen == vfFormatAct) {
+        emit virtualFormattingRequested(section.startOffset, section.endOffset);
+    } else if (chosen == vfRemoveAct) {
+        emit removeVirtualFormattingRequested(section.startOffset, section.endOffset);
     } else if (chosen == deleteAct) {
         m_model->removeSection(sectionIdx);
+    } else if (displayMenu->actions().contains(chosen)) {
+        // Display mode action from the submenu
+        const int newMode = chosen->data().toInt();
+        Section s = m_model->at(sectionIdx);
+        if (s.displayMode != newMode) {
+            s.displayMode = newMode;
+            m_model->updateSection(sectionIdx, s);
+        }
     }
 }
 
@@ -313,10 +385,25 @@ void SectionsDockWidget::syncModelFromTree()
     for (int i = 0; i < romRoot->childCount(); ++i)
         processItem(romRoot->child(i), -1);
 
+    // If a subsection is promoted to a higher level, sibling ranges on that new
+    // level must not overlap. Clamp each earlier sibling to the next sibling's
+    // start offset.
+    for (int i = 0; i < newSections.size(); ++i) {
+        for (int j = 0; j < newSections.size(); ++j) {
+            if (i == j || newSections[i].parentIndex != newSections[j].parentIndex)
+                continue;
+            if (newSections[i].startOffset < newSections[j].startOffset
+                && newSections[i].endOffset > newSections[j].startOffset) {
+                newSections[i].endOffset = qMax(newSections[i].startOffset,
+                                                newSections[j].startOffset);
+            }
+        }
+    }
+
     // Update model: suppress the rebuildTree triggered by sectionsChanged so
     // that we rebuild once explicitly below.
     m_suppressRebuild = true;
-    m_model->setSections(newSections);  // emits sectionsChanged (notifies MainWindow etc.)
+    m_model->applySections(newSections, tr("Move section"));
     m_suppressRebuild = false;
     rebuildTree();
 }

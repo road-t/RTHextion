@@ -52,6 +52,7 @@ public:
 signals:
     void showChangesToggled(bool checked);
     void showOriginalToggled(bool show);
+    void hexModeChanged(bool hexMode);
     void jumpToOffset(qint64 offset);
 
 protected:
