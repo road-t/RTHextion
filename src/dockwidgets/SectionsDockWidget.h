@@ -2,6 +2,7 @@
 #define SECTIONSDOCKWIDGET_H
 
 #include "BaseDockWidget.h"
+#include "romdetect.h"
 #include <QTreeWidget>
 #include <QToolButton>
 
@@ -17,6 +18,7 @@ public:
 
     void setModel(SectionListModel *model);
     void setRomTypeName(const QString &name);
+    void setCurrentRomType(RomType type);
     void setTableNames(const QStringList &names);
     void refresh();
 
@@ -32,6 +34,7 @@ signals:
     void showSectionsToggled(bool checked);
     // parentIndex == -1: add at ROM root; >= 0: add as child of that section
     void addSectionRequested(int parentIndex);
+    void disasmCpuChanged(int sectionIdx, RomType cpu);
 
 public slots:
     void highlightOffset(qint64 offset);
@@ -56,6 +59,7 @@ private:
     SectionListModel *m_model           = nullptr;
     QString           m_romTypeName;
     QStringList       m_tableNames;
+    RomType           m_currentRomType = RomType::Unknown;
     bool              m_suppressRebuild = false;
 };
 

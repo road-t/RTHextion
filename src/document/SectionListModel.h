@@ -27,6 +27,7 @@ struct Section
     QColor  color;
     int     parentIndex = -1;  // -1 = root section; >=0 = flat index of parent section
     int     displayMode = SectionDisplay_Default; // 0=Default, -2=Raw, -1=Disasm, 1..N=Table index
+    RomType disasmCpu   = RomType::Unknown;       // CPU override for disasm mode (Unknown = platform default)
 };
 
 inline bool operator==(const Section &lhs, const Section &rhs)
@@ -36,7 +37,8 @@ inline bool operator==(const Section &lhs, const Section &rhs)
         && lhs.endOffset == rhs.endOffset
         && lhs.color == rhs.color
         && lhs.parentIndex == rhs.parentIndex
-        && lhs.displayMode == rhs.displayMode;
+        && lhs.displayMode == rhs.displayMode
+        && lhs.disasmCpu == rhs.disasmCpu;
 }
 
 Q_DECLARE_METATYPE(Section)

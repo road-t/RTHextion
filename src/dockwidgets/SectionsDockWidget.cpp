@@ -1,6 +1,7 @@
 #include "SectionsDockWidget.h"
 #include "SectionListModel.h"
 #include "DockTitleBar.h"
+#include "disassembler.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -142,6 +143,11 @@ void SectionsDockWidget::setRomTypeName(const QString &name)
     }
 }
 
+void SectionsDockWidget::setCurrentRomType(RomType type)
+{
+    m_currentRomType = type;
+}
+
 void SectionsDockWidget::setTableNames(const QStringList &names)
 {
     m_tableNames = names;
@@ -245,10 +251,42 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
     }
 
     displayMenu->addSeparator();
-    QAction *actDisasm = displayMenu->addAction(tr("Disassembly"));
-    actDisasm->setCheckable(true);
-    actDisasm->setChecked(curMode == SectionDisplay_Disasm);
-    actDisasm->setData(SectionDisplay_Disasm);
+
+    // ── Disassembly CPU submenu ──
+    QMenu *disasmMenu = displayMenu->addMenu(tr("Disassembly"));
+
+    const RomType platformCanon = disasmCanonicalRom(m_currentRomType);
+    const char *platformCpuName = disasmCpuName(m_currentRomType);
+
+    // Current section's effective CPU for checking
+    const RomType sectionCpu = section.disasmCpu;
+    const RomType sectionCanon = (sectionCpu == RomType::Unknown)
+                                     ? platformCanon
+                                     : disasmCanonicalRom(sectionCpu);
+
+    // If the platform has a supported CPU, show it duplicated at the top
+    if (platformCpuName) {
+        const QString label = m_romTypeName.isEmpty()
+                                  ? QString::fromLatin1(platformCpuName)
+                                  : tr("%1: %2").arg(m_romTypeName, QString::fromLatin1(platformCpuName));
+        QAction *actPlatform = disasmMenu->addAction(label);
+        actPlatform->setCheckable(true);
+        actPlatform->setChecked(curMode == SectionDisplay_Disasm
+                                && sectionCanon == platformCanon);
+        // Store RomType::Unknown to mean "use platform default"
+        actPlatform->setData(static_cast<int>(RomType::Unknown));
+        disasmMenu->addSeparator();
+    }
+
+    // Full list of supported CPUs
+    const auto cpuList = disasmSupportedCpus();
+    for (const auto &cpu : cpuList) {
+        QAction *actCpu = disasmMenu->addAction(QString::fromLatin1(cpu.cpuName));
+        actCpu->setCheckable(true);
+        actCpu->setChecked(curMode == SectionDisplay_Disasm
+                           && sectionCanon == cpu.representativeRom);
+        actCpu->setData(static_cast<int>(cpu.representativeRom));
+    }
 
     menu.addSeparator();
     QAction *deleteAct  = menu.addAction(tr("Delete"));
@@ -279,8 +317,18 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
         emit removeVirtualFormattingRequested(section.startOffset, section.endOffset);
     } else if (chosen == deleteAct) {
         m_model->removeSection(sectionIdx);
+    } else if (disasmMenu->actions().contains(chosen)) {
+        // Disassembly CPU selection from the submenu
+        const RomType cpu = static_cast<RomType>(chosen->data().toInt());
+        Section s = m_model->at(sectionIdx);
+        if (s.displayMode != SectionDisplay_Disasm || s.disasmCpu != cpu) {
+            s.displayMode = SectionDisplay_Disasm;
+            s.disasmCpu = cpu;
+            m_model->updateSection(sectionIdx, s);
+            emit disasmCpuChanged(sectionIdx, cpu);
+        }
     } else if (displayMenu->actions().contains(chosen)) {
-        // Display mode action from the submenu
+        // Display mode action from the submenu (Default, Raw, Table)
         const int newMode = chosen->data().toInt();
         Section s = m_model->at(sectionIdx);
         if (s.displayMode != newMode) {
