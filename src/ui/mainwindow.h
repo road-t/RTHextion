@@ -39,6 +39,7 @@ class QTabWidget;
 QT_END_NAMESPACE
 
 class SectionListModel;
+class UpdateChecker;
 
 class MainWindow : public QMainWindow
 {
@@ -58,6 +59,10 @@ protected:
 
 private slots:
     void about();
+    void checkForUpdates();
+    void onUpdateAvailable(const QString &version, const QString &url, const QString &notes);
+    void onUpToDate();
+    void onUpdateCheckFailed(const QString &error);
     void dataChanged();
     void onHexDataChangedAt(qint64 offset);
     void flushChangesUiUpdate();
@@ -314,6 +319,7 @@ private:
     QAction *pointersSettingsAct;
 
     QAction *aboutAct;
+    QAction *checkUpdatesAct = nullptr;
     QAction *optionsAct;
     QAction *langEnglishAct;
     QAction *langFrenchAct;
@@ -410,6 +416,7 @@ private:
     bool m_lightPaletteCaptured = false;
     QString m_currentEncoding = QStringLiteral("ASCII");
     QString m_readyText;
+    UpdateChecker *m_updateChecker = nullptr;
     QVector<qint64> navigationHistory;
     int navigationHistoryIndex = -1;
     bool navigationJumpInProgress = false;

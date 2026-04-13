@@ -1,4 +1,4 @@
-QT += core gui widgets concurrent
+QT += core gui widgets concurrent network
 CONFIG += c++17
 
 TEMPLATE = app
@@ -64,6 +64,7 @@ HEADERS = \
     utils/Datas.h \
     utils/disassembler.h \
     utils/encodingdetect.h \
+    utils/updatechecker.h \
     utils/romdetect.h
 
 SOURCES = \
@@ -100,7 +101,8 @@ SOURCES = \
     dockwidgets/BaseDockWidget.cpp \
     # utils
     utils/byteglue.cpp \
-    utils/disassembler.cpp
+    utils/disassembler.cpp \
+    utils/updatechecker.cpp
 
 RESOURCES = \
     rthextion.qrc

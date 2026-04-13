@@ -18,6 +18,7 @@
 #include <QSettings>
 #include <QScrollBar>
 #include <QUrl>
+#include <QDesktopServices>
 #include <QShortcut>
 #include <QSplitter>
 #include <QDir>
@@ -57,6 +58,7 @@
 #include "romdetect.h"
 #include "romchecksum.h"
 #include "encodingdetect.h"
+#include "updatechecker.h"
 
 namespace
 {
@@ -377,6 +379,22 @@ void MainWindow::showEvent(QShowEvent *event)
             }
         });
     }
+
+    // Automatic update check — once per 24 hours, silent (no dialog if up-to-date)
+    if (UpdateChecker::shouldAutoCheck()) {
+        QTimer::singleShot(3000, this, [this]() {
+            if (!m_updateChecker) {
+                m_updateChecker = new UpdateChecker(this);
+                connect(m_updateChecker, &UpdateChecker::updateAvailable,
+                        this, &MainWindow::onUpdateAvailable);
+                connect(m_updateChecker, &UpdateChecker::upToDate,
+                        this, &MainWindow::onUpToDate);
+                connect(m_updateChecker, &UpdateChecker::checkFailed,
+                        this, &MainWindow::onUpdateCheckFailed);
+            }
+            m_updateChecker->check(/*silent=*/true);
+        });
+    }
 }
 
 void MainWindow::dragEnterEvent(QDragEnterEvent *event)
@@ -518,7 +536,78 @@ void MainWindow::about()
         layout->addItem(spacer, layout->rowCount(), 0, 1, layout->columnCount());
     }
 
+    // Add "Check for Updates" button on the left side of the button box
+    auto *updateBtn = aboutBox.addButton(tr("Check for Updates..."), QMessageBox::ActionRole);
+    // Move it to the leftmost position by re-inserting it at the front
+    if (auto *btnLayout = qobject_cast<QGridLayout *>(aboutBox.layout())) {
+        // QMessageBox buttons live in last row; we insert our button row before OK
+        btnLayout->addWidget(updateBtn, 0, 0, Qt::AlignLeft);
+    }
+
     aboutBox.exec();
+
+    if (aboutBox.clickedButton() == updateBtn)
+        checkForUpdates();
+}
+
+/*****************************************************************************/
+void MainWindow::checkForUpdates()
+{
+    if (!m_updateChecker)
+    {
+        m_updateChecker = new UpdateChecker(this);
+        connect(m_updateChecker, &UpdateChecker::updateAvailable,
+                this, &MainWindow::onUpdateAvailable);
+        connect(m_updateChecker, &UpdateChecker::upToDate,
+                this, &MainWindow::onUpToDate);
+        connect(m_updateChecker, &UpdateChecker::checkFailed,
+                this, &MainWindow::onUpdateCheckFailed);
+    }
+    statusBar()->showMessage(tr("Checking for updates..."), 3000);
+    m_updateChecker->check(/*silent=*/false);
+}
+
+void MainWindow::onUpdateAvailable(const QString &version, const QString &url,
+                                   const QString &notes)
+{
+    statusBar()->clearMessage();
+    QMessageBox box(this);
+    box.setWindowTitle(tr("Update Available"));
+    box.setIcon(QMessageBox::Information);
+    box.setTextFormat(Qt::RichText);
+    box.setText(tr("A new version of %1 is available: <b>v%2</b><br>"
+                   "You are running <b>v%3</b>.")
+                    .arg(AppInfo::Name, version,
+                         QString::fromLatin1(AppInfo::Version)));
+    if (!notes.isEmpty())
+    {
+        QString info = notes;
+        // Trim to a reasonable length for display
+        if (info.length() > 800)
+            info = info.left(800) + QStringLiteral("...");
+        box.setDetailedText(info);
+    }
+    auto *downloadBtn = box.addButton(tr("Download"), QMessageBox::AcceptRole);
+    box.addButton(QMessageBox::Close);
+    box.exec();
+    if (box.clickedButton() == downloadBtn)
+        QDesktopServices::openUrl(QUrl(url));
+}
+
+void MainWindow::onUpToDate()
+{
+    statusBar()->clearMessage();
+    QMessageBox::information(this, tr("No Updates"),
+                             tr("%1 is up to date (v%2).")
+                                 .arg(AppInfo::Name)
+                                 .arg(QString::fromLatin1(AppInfo::Version)));
+}
+
+void MainWindow::onUpdateCheckFailed(const QString &error)
+{
+    statusBar()->clearMessage();
+    QMessageBox::warning(this, tr("Update Check Failed"),
+                         tr("Could not check for updates:\n%1").arg(error));
 }
 
 void MainWindow::dataChanged()
@@ -2428,6 +2517,7 @@ void MainWindow::retranslateUi()
     // Actions - Help/Options
     aboutAct->setText(tr("About %1").arg(AppInfo::Name));
     aboutAct->setStatusTip(tr("Show the application's About box"));
+    checkUpdatesAct->setText(tr("Check for Updates..."));
     optionsAct->setText(tr("Preferences"));
     optionsAct->setStatusTip(tr("Show the application options dialog"));
 
@@ -3968,6 +4058,10 @@ void MainWindow::createActions()
     aboutAct->setMenuRole(QAction::NoRole); // prevent macOS from auto-moving to Apple menu
     connect(aboutAct, SIGNAL(triggered()), this, SLOT(about()));
 
+    checkUpdatesAct = new QAction(tr("Check for Updates..."), this);
+    checkUpdatesAct->setMenuRole(QAction::NoRole);
+    connect(checkUpdatesAct, &QAction::triggered, this, &MainWindow::checkForUpdates);
+
     findAct = new QAction(QIcon(":/images/find.png"), tr("Find/Replace"), this);
     findAct->setShortcuts(QKeySequence::Find);
     findAct->setStatusTip(tr("Show the dialog for finding and replacing"));
@@ -4576,6 +4670,8 @@ void MainWindow::createMenus()
     viewMenu->addSeparator();
 
     helpMenu = menuBar()->addMenu(tr("Help"));
+    helpMenu->addAction(checkUpdatesAct);
+    helpMenu->addSeparator();
     helpMenu->addAction(aboutAct);
 }
 
