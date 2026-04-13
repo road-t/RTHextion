@@ -355,7 +355,12 @@ private:
     QAction *showStatusEncodingAct = nullptr;
     QAction *showSignedValuesAct;
     QAction *showAddressAreaAct;
-    QAction *showAsciiAreaAct;
+    QMenu   *asciiAreaMenu = nullptr;
+    QActionGroup *asciiAreaGroup = nullptr;
+    QAction *panelModeTextAct = nullptr;
+    QAction *panelModeGraphicsAct = nullptr;
+    QAction *panelModeSoundAct = nullptr;
+    QAction *panelModeDisasmAct = nullptr;
     QAction *showAddressGridAct;
     QAction *showDarkThemeAct = nullptr;
     QAction *showMapPointersAct;

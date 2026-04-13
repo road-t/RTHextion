@@ -793,7 +793,6 @@ bool MainWindow::save()
             msgBox.setWindowTitle(QString::fromLatin1(AppInfo::Name));
             msgBox.setText(tr("This file has project data (tables, pointers, formatting) "
                               "that is not saved in the file itself."));
-            msgBox.setInformativeText(tr("To preserve all changes, save the project."));
             auto *btnSaveProject = msgBox.addButton(tr("Save Project"), QMessageBox::AcceptRole);
             msgBox.addButton(tr("File Only"), QMessageBox::RejectRole);
             msgBox.setDefaultButton(btnSaveProject);
@@ -1155,21 +1154,22 @@ void MainWindow::addSectionFromSelection(int parentIdx)
 
     m_sectionModel->addSection(s);
 
-    // Add 2 blank visual rows before and after the section,
-    // but skip each boundary if it touches the start or end of the file.
+    // Add up to 2 blank visual rows before and after the section,
+    // but only add line breaks that weren't already there.
+    // Skip each boundary if it touches the start or end of the file.
     const qint64 fileSize = hexEdit->dataSize();
     if (selBegin > 0) {
         const qint64 pos = selBegin - 1;
         auto lb = hexEdit->lineBreaks();
         int cnt = static_cast<int>(std::count(lb.begin(), lb.end(), pos));
-        for (int i = cnt; i < 3; ++i)
+        for (int i = cnt; i < 2; ++i)
             hexEdit->addLineBreak(pos);
     }
     if (selEnd < fileSize) {
         const qint64 pos = selEnd - 1;
         auto lb = hexEdit->lineBreaks();
         int cnt = static_cast<int>(std::count(lb.begin(), lb.end(), pos));
-        for (int i = cnt; i < 3; ++i)
+        for (int i = cnt; i < 2; ++i)
             hexEdit->addLineBreak(pos);
     }
 
@@ -2476,7 +2476,16 @@ void MainWindow::retranslateUi()
         showStatusEncodingAct->setText(tr("Encoding"));
     showSignedValuesAct->setText(tr("Show signed values"));
     showAddressAreaAct->setText(tr("Address area"));
-    showAsciiAreaAct->setText(tr("ASCII area"));
+    if (asciiAreaMenu)
+        asciiAreaMenu->setTitle(tr("ASCII area"));
+    if (panelModeTextAct)
+        panelModeTextAct->setText(tr("Text"));
+    if (panelModeGraphicsAct)
+        panelModeGraphicsAct->setText(tr("Graphics"));
+    if (panelModeSoundAct)
+        panelModeSoundAct->setText(tr("Sound"));
+    if (panelModeDisasmAct)
+        panelModeDisasmAct->setText(tr("Disassembly"));
     showAddressGridAct->setText(tr("Show grid"));
     if (showDarkThemeAct)
         showDarkThemeAct->setText(tr("Dark theme"));
@@ -4151,9 +4160,31 @@ void MainWindow::createActions()
     showAddressAreaAct->setCheckable(true);
     showAddressAreaAct->setChecked(true);
 
-    showAsciiAreaAct = new QAction(tr("ASCII area"), this);
-    showAsciiAreaAct->setCheckable(true);
-    showAsciiAreaAct->setChecked(true);
+    // ASCII area panel mode submenu actions
+    asciiAreaMenu = new QMenu(tr("Data area"), this);
+    asciiAreaGroup = new QActionGroup(this);
+    asciiAreaGroup->setExclusive(true);
+
+    panelModeTextAct = new QAction(tr("Text"), this);
+    panelModeTextAct->setCheckable(true);
+    panelModeTextAct->setChecked(true);
+    asciiAreaGroup->addAction(panelModeTextAct);
+    asciiAreaMenu->addAction(panelModeTextAct);
+/*
+    panelModeGraphicsAct = new QAction(tr("Graphics"), this);
+    panelModeGraphicsAct->setCheckable(true);
+    asciiAreaGroup->addAction(panelModeGraphicsAct);
+    asciiAreaMenu->addAction(panelModeGraphicsAct);
+
+    panelModeSoundAct = new QAction(tr("Sound"), this);
+    panelModeSoundAct->setCheckable(true);
+    asciiAreaGroup->addAction(panelModeSoundAct);
+    asciiAreaMenu->addAction(panelModeSoundAct);
+*/
+    panelModeDisasmAct = new QAction(tr("Disassembly"), this);
+    panelModeDisasmAct->setCheckable(true);
+    asciiAreaGroup->addAction(panelModeDisasmAct);
+    asciiAreaMenu->addAction(panelModeDisasmAct);
 
     showAddressGridAct = new QAction(tr("Show grid"), this);
     showAddressGridAct->setCheckable(true);
@@ -4186,11 +4217,26 @@ void MainWindow::createActions()
             { updateValuePanels(); });
     connect(showAddressAreaAct, &QAction::toggled, this, [this](bool checked)
             { hexEdit->setAddressArea(checked); });
-    connect(showAsciiAreaAct, &QAction::toggled, this, [this](bool checked)
+    connect(asciiAreaGroup, &QActionGroup::triggered, this, [this](QAction *act)
             {
-                hexEdit->setAsciiArea(checked);
                 QSettings s;
-                s.setValue("AsciiArea", checked);
+                if (act == panelModeTextAct) {
+                    hexEdit->setShowDisasm(false);
+                    hexEdit->setAsciiArea(true);
+                    s.setValue("PanelMode", QStringLiteral("text"));
+                } else if (act == panelModeGraphicsAct) {
+                    hexEdit->setShowDisasm(false);
+                    hexEdit->setAsciiArea(true);
+                    s.setValue("PanelMode", QStringLiteral("graphics"));
+                } else if (act == panelModeSoundAct) {
+                    hexEdit->setShowDisasm(false);
+                    hexEdit->setAsciiArea(true);
+                    s.setValue("PanelMode", QStringLiteral("sound"));
+                } else if (act == panelModeDisasmAct) {
+                    hexEdit->setAsciiArea(true);
+                    hexEdit->setShowDisasm(true);
+                    s.setValue("PanelMode", QStringLiteral("disasm"));
+                }
             });
     connect(showAddressGridAct, &QAction::toggled, this, [this](bool checked)
             { hexEdit->setShowHexGrid(checked); });
@@ -4406,7 +4452,7 @@ void MainWindow::createMenus()
 
     panelsMenu = viewMenu->addMenu(tr("Panels"));
     panelsMenu->addAction(showAddressAreaAct);
-    panelsMenu->addAction(showAsciiAreaAct);
+    panelsMenu->addMenu(asciiAreaMenu);
     panelsMenu->addSeparator();
     showStatusBarAct = panelsMenu->addAction(tr("Status bar"));
     showStatusBarAct->setCheckable(true);
@@ -5610,7 +5656,21 @@ void MainWindow::readSettings()
     }
 
     hexEdit->setAddressArea(settings.value("AddressArea", true).toBool());
-    hexEdit->setAsciiArea(settings.value("AsciiArea", true).toBool());
+    // Panel mode: backward-compatible with old "AsciiArea" bool setting
+    {
+        const QString pm = settings.value("PanelMode").toString();
+        if (pm == QLatin1String("disasm")) {
+            hexEdit->setAsciiArea(true);
+            hexEdit->setShowDisasm(true);
+        } else if (pm == QLatin1String("graphics") || pm == QLatin1String("sound")) {
+            hexEdit->setAsciiArea(true);
+            hexEdit->setShowDisasm(false);
+        } else {
+            // "text" or legacy bool
+            hexEdit->setAsciiArea(settings.value("AsciiArea", true).toBool());
+            hexEdit->setShowDisasm(false);
+        }
+    }
     hexEdit->setHighlighting(true);
     hexEdit->setOverwriteMode(settings.value("OverwriteMode", true).toBool());
 
@@ -5650,8 +5710,18 @@ void MainWindow::readSettings()
 
     if (showAddressAreaAct)
         showAddressAreaAct->setChecked(hexEdit->addressArea());
-    if (showAsciiAreaAct)
-        showAsciiAreaAct->setChecked(hexEdit->asciiArea());
+    // Sync panel mode radio buttons
+    if (panelModeTextAct) {
+        const QString pm = settings.value("PanelMode").toString();
+        if (pm == QLatin1String("disasm"))
+            panelModeDisasmAct->setChecked(true);
+        else if (pm == QLatin1String("graphics"))
+            panelModeGraphicsAct->setChecked(true);
+        else if (pm == QLatin1String("sound"))
+            panelModeSoundAct->setChecked(true);
+        else
+            panelModeTextAct->setChecked(true);
+    }
     if (showAddressGridAct)
         showAddressGridAct->setChecked(hexEdit->showHexGrid());
 
@@ -6086,7 +6156,19 @@ void MainWindow::updateHexEditorSettings()
         QSettings settings;
 
         editor->setAddressArea(settings.value("AddressArea", true).toBool());
-        editor->setAsciiArea(settings.value("AsciiArea", true).toBool());
+        {
+            const QString pm = settings.value("PanelMode").toString();
+            if (pm == QLatin1String("disasm")) {
+                editor->setAsciiArea(true);
+                editor->setShowDisasm(true);
+            } else if (pm == QLatin1String("graphics") || pm == QLatin1String("sound")) {
+                editor->setAsciiArea(true);
+                editor->setShowDisasm(false);
+            } else {
+                editor->setAsciiArea(settings.value("AsciiArea", true).toBool());
+                editor->setShowDisasm(false);
+            }
+        }
         editor->setHighlighting(true);
         editor->setHighlightingColor(settings.value("HighlightingColor").value<QColor>());
         editor->setPointedColor(settings.value("PointedColor").value<QColor>());
@@ -6128,8 +6210,18 @@ void MainWindow::updateHexEditorSettings()
 
     if (showAddressAreaAct && hexEdit)
         showAddressAreaAct->setChecked(hexEdit->addressArea());
-    if (showAsciiAreaAct && hexEdit)
-        showAsciiAreaAct->setChecked(hexEdit->asciiArea());
+    if (panelModeTextAct && hexEdit) {
+        QSettings s;
+        const QString pm = s.value("PanelMode").toString();
+        if (pm == QLatin1String("disasm"))
+            panelModeDisasmAct->setChecked(true);
+        else if (pm == QLatin1String("graphics"))
+            panelModeGraphicsAct->setChecked(true);
+        else if (pm == QLatin1String("sound"))
+            panelModeSoundAct->setChecked(true);
+        else
+            panelModeTextAct->setChecked(true);
+    }
     if (showAddressGridAct && hexEdit)
         showAddressGridAct->setChecked(hexEdit->showHexGrid());
 }
