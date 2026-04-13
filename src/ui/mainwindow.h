@@ -86,6 +86,7 @@ private slots:
     void showVirtualFormatDialog(qint64 rangeFrom = -1, qint64 rangeTo = -1);
     void removeVirtualFormatting(qint64 rangeFrom = -1, qint64 rangeTo = -1);
     void addSectionFromSelection(int parentIdx = -1);
+    void detectFunctions();
     void selectRangeInEditor(qint64 start, qint64 end, bool focus = true);
     void showPointersDialog();
     void pointersUpdated();
@@ -396,15 +397,15 @@ private:
     SectionsDockWidget *m_sectionsDock  = nullptr;
     SectionListModel   *m_sectionModel  = nullptr;
 
-    QComboBox *cbRomType;
-    QPushButton *lbEndiannes;
-    QLabel *lbValueByte;
-    QLabel *lbValueWord;
-    QLabel *lbValueDword;
-    QLabel *lbSelection;
-    QLabel *lbAddress;
-    QPushButton *lbOverwriteMode;
-    QLabel *lbSize, *lbSizeName;
+    QComboBox *cbRomType = nullptr;
+    QPushButton *lbEndiannes = nullptr;
+    QLabel *lbValueByte = nullptr;
+    QLabel *lbValueWord = nullptr;
+    QLabel *lbValueDword = nullptr;
+    QLabel *lbSelection = nullptr;
+    QLabel *lbAddress = nullptr;
+    QPushButton *lbOverwriteMode = nullptr;
+    QLabel *lbSize = nullptr, *lbSizeName = nullptr;
     QLabel *lbEncoding = nullptr;
 
     RomType m_detectedRomType = RomType::Unknown;

@@ -83,6 +83,10 @@ EditorTheme EditorTheme::defaultLight()
     t.pointerFontColor = QColor(Qt::black);
     t.pointerFrameColor = QColor(0x00, 0x00, 0xFF);
     t.pointerFrameBgColor = QColor(0x00, 0xFF, 0x00, 0x80);
+    t.sectionHeaderFontColor = QColor(Qt::black);
+    t.sectionHeaderBgColor = QColor(0xD8, 0xD8, 0xD8, 0x90);
+    t.sectionHeaderFont = t.hexFont;
+    t.sectionHeaderFont.setBold(true);
     t.scrollMapPtrBgColor = QColor(0xd0, 0xd0, 0xd0);
     t.scrollMapTargetBgColor = QColor(0xd0, 0xd0, 0xd0);
     return t;
@@ -117,6 +121,10 @@ EditorTheme EditorTheme::defaultDark()
     t.pointerFontColor = QColor(0xEE, 0xEE, 0xEE);
     t.pointerFrameColor = QColor(0x50, 0x80, 0xFF);
     t.pointerFrameBgColor = QColor(0x00, 0x80, 0x00, 0x60);
+    t.sectionHeaderFontColor = QColor(0xDD, 0xDD, 0xDD);
+    t.sectionHeaderBgColor = QColor(0x66, 0x66, 0x66, 0xA0);
+    t.sectionHeaderFont = t.hexFont;
+    t.sectionHeaderFont.setBold(true);
     t.scrollMapPtrBgColor = QColor(0x40, 0x40, 0x40);
     t.scrollMapTargetBgColor = QColor(0x40, 0x40, 0x40);
     return t;
@@ -157,8 +165,11 @@ QJsonObject EditorTheme::toJson() const
     c[QStringLiteral("pointerFontColor")] = colorToJson(pointerFontColor);
     c[QStringLiteral("pointerFrameColor")] = colorToJson(pointerFrameColor);
     c[QStringLiteral("pointerFrameBgColor")] = colorToJson(pointerFrameBgColor);
+    c[QStringLiteral("sectionHeaderFontColor")] = colorToJson(sectionHeaderFontColor);
+    c[QStringLiteral("sectionHeaderBgColor")] = colorToJson(sectionHeaderBgColor);
     c[QStringLiteral("scrollMapPtrBgColor")] = colorToJson(scrollMapPtrBgColor);
     c[QStringLiteral("scrollMapTargetBgColor")] = colorToJson(scrollMapTargetBgColor);
+    o[QStringLiteral("sectionHeaderFont")] = fontToJson(sectionHeaderFont);
     o[QStringLiteral("colors")] = c;
     return o;
 }
@@ -195,8 +206,11 @@ EditorTheme EditorTheme::fromJson(const QJsonObject &o)
     t.pointerFontColor = colorFromJson(c.value(QStringLiteral("pointerFontColor")), def.pointerFontColor);
     t.pointerFrameColor = colorFromJson(c.value(QStringLiteral("pointerFrameColor")), def.pointerFrameColor);
     t.pointerFrameBgColor = colorFromJson(c.value(QStringLiteral("pointerFrameBgColor")), def.pointerFrameBgColor);
+    t.sectionHeaderFontColor = colorFromJson(c.value(QStringLiteral("sectionHeaderFontColor")), def.sectionHeaderFontColor);
+    t.sectionHeaderBgColor = colorFromJson(c.value(QStringLiteral("sectionHeaderBgColor")), def.sectionHeaderBgColor);
     t.scrollMapPtrBgColor = colorFromJson(c.value(QStringLiteral("scrollMapPtrBgColor")), def.scrollMapPtrBgColor);
     t.scrollMapTargetBgColor = colorFromJson(c.value(QStringLiteral("scrollMapTargetBgColor")), def.scrollMapTargetBgColor);
+    t.sectionHeaderFont = fontFromJson(o.value(QStringLiteral("sectionHeaderFont")), def.sectionHeaderFont);
     return t;
 }
 
@@ -233,6 +247,9 @@ void EditorTheme::applyToSettings() const
     s.setValue(QStringLiteral("PointerFontColor"), pointerFontColor);
     s.setValue(QStringLiteral("PointerFrameColor"), pointerFrameColor);
     s.setValue(QStringLiteral("PointerFrameBgColor"), pointerFrameBgColor);
+    s.setValue(QStringLiteral("SectionHeaderFontColor"), sectionHeaderFontColor);
+    s.setValue(QStringLiteral("SectionHeaderBgColor"), sectionHeaderBgColor);
+    s.setValue(QStringLiteral("SectionHeaderFont"), sectionHeaderFont);
     s.setValue(QStringLiteral("ScrollMapPtrBgColor"), scrollMapPtrBgColor);
     s.setValue(QStringLiteral("ScrollMapTargetBgColor"), scrollMapTargetBgColor);
 }
@@ -269,6 +286,9 @@ EditorTheme EditorTheme::fromCurrentSettings()
     t.pointerFontColor = s.value(QStringLiteral("PointerFontColor"), def.pointerFontColor).value<QColor>();
     t.pointerFrameColor = s.value(QStringLiteral("PointerFrameColor"), def.pointerFrameColor).value<QColor>();
     t.pointerFrameBgColor = s.value(QStringLiteral("PointerFrameBgColor"), def.pointerFrameBgColor).value<QColor>();
+    t.sectionHeaderFontColor = s.value(QStringLiteral("SectionHeaderFontColor"), def.sectionHeaderFontColor).value<QColor>();
+    t.sectionHeaderBgColor = s.value(QStringLiteral("SectionHeaderBgColor"), def.sectionHeaderBgColor).value<QColor>();
+    t.sectionHeaderFont = s.value(QStringLiteral("SectionHeaderFont"), def.sectionHeaderFont).value<QFont>();
     t.scrollMapPtrBgColor = s.value(QStringLiteral("ScrollMapPtrBgColor"), def.scrollMapPtrBgColor).value<QColor>();
     t.scrollMapTargetBgColor = s.value(QStringLiteral("ScrollMapTargetBgColor"), def.scrollMapTargetBgColor).value<QColor>();
     return t;

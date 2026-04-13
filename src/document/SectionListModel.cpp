@@ -169,6 +169,32 @@ int SectionListModel::displayModeAtOffset(qint64 offset) const
     return SectionDisplay_Default;
 }
 
+QString SectionListModel::sectionNameAtStartOffset(qint64 offset) const
+{
+    for (const auto &s : m_sections) {
+        if (s.parentIndex >= 0 && s.startOffset == offset)
+            return s.name;
+    }
+    for (const auto &s : m_sections) {
+        if (s.parentIndex < 0 && s.startOffset == offset)
+            return s.name;
+    }
+    return QString();
+}
+
+int SectionListModel::sectionIndexAtStartOffset(qint64 offset) const
+{
+    for (int i = 0; i < m_sections.size(); ++i) {
+        if (m_sections[i].parentIndex >= 0 && m_sections[i].startOffset == offset)
+            return i;
+    }
+    for (int i = 0; i < m_sections.size(); ++i) {
+        if (m_sections[i].parentIndex < 0 && m_sections[i].startOffset == offset)
+            return i;
+    }
+    return -1;
+}
+
 void SectionListModel::setSections(const QVector<Section> &sections)
 {
     setSectionsDirect(sections);

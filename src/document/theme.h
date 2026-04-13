@@ -46,6 +46,11 @@ struct EditorTheme
     QColor pointerFrameColor;
     QColor pointerFrameBgColor;
 
+    // Sections
+    QColor sectionHeaderFontColor;
+    QColor sectionHeaderBgColor;
+    QFont sectionHeaderFont;
+
     // Maps
     QColor scrollMapPtrBgColor;
     QColor scrollMapTargetBgColor;

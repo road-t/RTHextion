@@ -82,6 +82,8 @@ namespace
             settings.setValue("ScrollMapPtrBgColor", QColor(0xd0, 0xd0, 0xd0));
         if (!settings.contains("ScrollMapTargetBgColor"))
             settings.setValue("ScrollMapTargetBgColor", QColor(0xd0, 0xd0, 0xd0));
+        if (!settings.contains("SectionHeaderBgColor"))
+            settings.setValue("SectionHeaderBgColor", QColor(0xD8, 0xD8, 0xD8, 0x90));
 
         // Palette-dependent colors - use system defaults if not set
         if (!settings.contains("AddressAreaColor"))
@@ -96,6 +98,8 @@ namespace
             settings.setValue("AsciiFontColor", QApplication::palette().color(QPalette::WindowText));
         if (!settings.contains("HexFontColor"))
             settings.setValue("HexFontColor", QApplication::palette().color(QPalette::WindowText));
+        if (!settings.contains("SectionHeaderFontColor"))
+            settings.setValue("SectionHeaderFontColor", QApplication::palette().color(QPalette::WindowText));
 
         // Font setting
         if (!settings.contains("WidgetFont"))
@@ -106,6 +110,12 @@ namespace
             QFont defaultFont("Courier New", 14);
 #endif
             settings.setValue("WidgetFont", defaultFont);
+        }
+        if (!settings.contains("SectionHeaderFont"))
+        {
+            QFont sectionHeaderFont = settings.value("WidgetFont").value<QFont>();
+            sectionHeaderFont.setBold(true);
+            settings.setValue("SectionHeaderFont", sectionHeaderFont);
         }
 
         // Persist all settings to disk

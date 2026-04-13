@@ -5,6 +5,7 @@
 #include <QByteArray>
 #include <QVector>
 #include <cstdint>
+#include <functional>
 
 #include "romdetect.h"
 
@@ -86,11 +87,28 @@ struct DisasmInstruction {
     QString operands;     ///< e.g. "#$40", "$C000", "R0, R1"
     QString bytes;        ///< Raw bytes as hex string
     bool    isBranch;     ///< Is this a branch/jump instruction?
+    bool    isCall;       ///< Is this a subroutine call (JSR, CALL, BL, JAL, etc.)?
+    bool    isReturn;     ///< Is this a return instruction (RTS, RET, BX LR, JR RA, etc.)?
     qint64  branchTarget; ///< File offset of branch target (-1 if not a branch or unresolvable)
 };
 
 /// Lightweight instruction boundary for fast full-file scanning.
 struct InsnBoundary { qint64 offset; int size; };
+
+/// Detected function entry with its start/end file offsets.
+struct DetectedFunction {
+    qint64  startOffset;  ///< File offset of the first instruction
+    qint64  endOffset;    ///< File offset one past the last byte (exclusive)
+    quint64 cpuAddress;   ///< CPU address of the entry point
+};
+
+/// A reference from a call/jump instruction to its target,
+/// where the target address is embedded as absolute bytes in the instruction.
+struct CallPointer {
+    qint64 ptrFileOffset; ///< File offset of the embedded address bytes
+    qint64 targetOffset;  ///< File offset of the call target
+    int    ptrSize;       ///< Byte size of the embedded address (2 or 4)
+};
 
 /// Disassembler wrapper around Capstone.
 /// Supports architectures via RomType mapping.
@@ -122,8 +140,20 @@ public:
     QVector<InsnBoundary> scanBoundaries(const QByteArray &data, qint64 offset,
                                          int maxBytes);
 
+    /// Scan the data for function boundaries by finding CALL targets and RET instructions.
+    /// Returns detected functions sorted by start offset.
+    /// progressCb receives 0-100 percent progress.
+    /// If outCallPointers is non-null, absolute-address call references are appended.
+    QVector<DetectedFunction> scanFunctions(const QByteArray &data, qint64 offset,
+                                            int maxBytes,
+                                            std::function<void(int)> progressCb = nullptr,
+                                            QVector<CallPointer> *outCallPointers = nullptr);
+
     /// Returns the current ROM type.
     RomType romType() const { return m_romType; }
+
+    /// Returns the CPU base address (for converting file offset <-> CPU address).
+    qint64 baseAddress() const { return m_baseAddress; }
 
 private:
     void close();
@@ -132,6 +162,7 @@ private:
     RomType  m_romType = RomType::Unknown;
     qint64   m_baseAddress = 0;  ///< CPU base address offset from file offset
     size_t   m_handle = 0;       ///< Capstone handle (csh)
+    int      m_arch = 0;         ///< Capstone cs_arch for this ROM type
     bool     m_open = false;
 };
 

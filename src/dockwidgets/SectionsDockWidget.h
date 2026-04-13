@@ -15,6 +15,7 @@ class SectionsDockWidget : public BaseDockWidget
 
 public:
     explicit SectionsDockWidget(QWidget *parent = nullptr);
+    ~SectionsDockWidget() override;
 
     void setModel(SectionListModel *model);
     void setRomTypeName(const QString &name);
@@ -35,9 +36,11 @@ signals:
     // parentIndex == -1: add at ROM root; >= 0: add as child of that section
     void addSectionRequested(int parentIndex);
     void disasmCpuChanged(int sectionIdx, RomType cpu);
+    void detectFunctionsRequested();
 
 public slots:
     void highlightOffset(qint64 offset);
+    void startRenameSection(int sectionIndex);
 
 protected:
     void onPaletteChanged() override;
@@ -47,6 +50,7 @@ private slots:
     void onItemDoubleClicked(QTreeWidgetItem *item, int column);
     void onTreeContextMenu(const QPoint &pos);
     void onDropped();
+    void onItemChanged(QTreeWidgetItem *item, int column);
 
 private:
     void rebuildTree();
@@ -61,6 +65,7 @@ private:
     QStringList       m_tableNames;
     RomType           m_currentRomType = RomType::Unknown;
     bool              m_suppressRebuild = false;
+    bool              m_rebuildingTree = false;
 };
 
 #endif // SECTIONSDOCKWIDGET_H

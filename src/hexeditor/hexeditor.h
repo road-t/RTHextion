@@ -216,6 +216,15 @@ class HEXEDITOR_API HexEditor : public QAbstractScrollArea
     /*! Color used for dashed frame of currently active multi-byte table entry in hex area. */
     Q_PROPERTY(QColor multibyteFrameColor READ multibyteFrameColor WRITE setMultibyteFrameColor)
 
+    /*! Section header text color in the main editor area. */
+    Q_PROPERTY(QColor sectionHeaderFontColor READ sectionHeaderFontColor WRITE setSectionHeaderFontColor)
+
+    /*! Section header background strip color in the main editor area. */
+    Q_PROPERTY(QColor sectionHeaderBackgroundColor READ sectionHeaderBackgroundColor WRITE setSectionHeaderBackgroundColor)
+
+    /*! Section header font in the main editor area. */
+    Q_PROPERTY(QFont sectionHeaderFont READ sectionHeaderFont WRITE setSectionHeaderFont)
+
     /*! Background color used to highlight bytes that differ from the project's original data. */
     Q_PROPERTY(QColor changesColor READ changesColor WRITE setChangesColor)
 
@@ -425,6 +434,10 @@ signals:
         bytePos is the byte offset under the cursor at the time of the click. */
     void contextMenuRequested(const QPoint &globalPos, qint64 bytePos);
 
+    /*! Emitted when the user double-clicks a section header row.
+        sectionIndex is the flat index in SectionListModel. */
+    void sectionHeaderDoubleClicked(int sectionIndex);
+
     /*! \cond docNever */
 public:
     ~HexEditor();
@@ -473,6 +486,15 @@ public:
 
     QColor multibyteFrameColor();
     void setMultibyteFrameColor(const QColor &color);
+
+    QColor sectionHeaderFontColor() const;
+    void setSectionHeaderFontColor(const QColor &color);
+
+    QColor sectionHeaderBackgroundColor() const;
+    void setSectionHeaderBackgroundColor(const QColor &color);
+
+    QFont sectionHeaderFont() const;
+    void setSectionHeaderFont(const QFont &font);
 
     bool showMultibyteFrame() const;
     void setShowMultibyteFrame(bool show);
@@ -703,6 +725,9 @@ private:
     QColor _zeroByteFontColor;
     QColor _multibyteFrameColor;
     bool _showMultibyteFrame = true;
+    QColor _sectionHeaderFontColor;
+    QColor _sectionHeaderBackgroundColor;
+    QFont _sectionHeaderFont;
     int _addressWidth;
     bool _asciiArea;
     qint64 _addressOffset;

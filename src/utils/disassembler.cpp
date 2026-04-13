@@ -1,6 +1,8 @@
 #include "disassembler.h"
 
 #include <capstone/capstone.h>
+#include <QSet>
+#include <algorithm>
 
 Disassembler::Disassembler() = default;
 
@@ -135,6 +137,7 @@ bool Disassembler::setRomType(RomType type)
     cs_option(h, CS_OPT_SKIPDATA, CS_OPT_ON);
 
     m_handle = static_cast<size_t>(h);
+    m_arch = static_cast<int>(arch);
     m_open = true;
 
     // Set base address (CPU address = file offset + base)
@@ -151,7 +154,7 @@ qint64 Disassembler::resolveTarget(quint64 cpuTarget) const
 }
 
 /// Check if an instruction is a branch/jump type
-static bool isBranchInstruction(csh handle, const cs_insn *insn)
+static bool isBranchInstruction(csh handle, const cs_insn *insn, cs_arch arch)
 {
     if (!insn->detail)
         return false;
@@ -166,84 +169,258 @@ static bool isBranchInstruction(csh handle, const cs_insn *insn)
     // Architecture-specific fallback: detect common branch mnemonics
     const QString mn = QString::fromLatin1(insn->mnemonic).toLower();
 
-    // 6502
-    if (mn == "jmp" || mn == "jsr" || mn == "bcc" || mn == "bcs" ||
-        mn == "beq" || mn == "bne" || mn == "bmi" || mn == "bpl" ||
-        mn == "bvc" || mn == "bvs")
-        return true;
+    switch (arch) {
+    case CS_ARCH_MOS65XX:
+        if (mn == "jmp" || mn == "jsr" || mn == "bcc" || mn == "bcs" ||
+            mn == "beq" || mn == "bne" || mn == "bmi" || mn == "bpl" ||
+            mn == "bvc" || mn == "bvs")
+            return true;
+        break;
 
-    // M68K
-    if (mn.startsWith("bra") || mn.startsWith("bsr") || mn.startsWith("bcc") ||
-        mn.startsWith("bcs") || mn.startsWith("beq") || mn.startsWith("bne") ||
-        mn.startsWith("bge") || mn.startsWith("bgt") || mn.startsWith("ble") ||
-        mn.startsWith("blt") || mn.startsWith("bhi") || mn.startsWith("bls") ||
-        mn.startsWith("bmi") || mn.startsWith("bpl") || mn.startsWith("bvc") ||
-        mn.startsWith("bvs") || mn == "jmp" || mn == "jsr" || mn == "dbra" ||
-        mn.startsWith("db"))
-        return true;
+    case CS_ARCH_M68K:
+        if (mn.startsWith("bra") || mn.startsWith("bsr") || mn.startsWith("bcc") ||
+            mn.startsWith("bcs") || mn.startsWith("beq") || mn.startsWith("bne") ||
+            mn.startsWith("bge") || mn.startsWith("bgt") || mn.startsWith("ble") ||
+            mn.startsWith("blt") || mn.startsWith("bhi") || mn.startsWith("bls") ||
+            mn.startsWith("bmi") || mn.startsWith("bpl") || mn.startsWith("bvc") ||
+            mn.startsWith("bvs") || mn == "jmp" || mn == "jsr" || mn == "dbra" ||
+            mn.startsWith("dbf") || mn.startsWith("dbeq") || mn.startsWith("dbne") ||
+            mn.startsWith("dbcc") || mn.startsWith("dbcs") || mn.startsWith("dbhi") ||
+            mn.startsWith("dbls") || mn.startsWith("dbge") || mn.startsWith("dbgt") ||
+            mn.startsWith("dble") || mn.startsWith("dblt") || mn.startsWith("dbmi") ||
+            mn.startsWith("dbpl") || mn.startsWith("dbvc") || mn.startsWith("dbvs"))
+            return true;
+        break;
 
-    // MIPS
-    if (mn.startsWith("b") || mn == "j" || mn == "jr" ||
-        mn == "jal" || mn == "jalr")
-        return true;
+    case CS_ARCH_MIPS:
+        if (mn.startsWith("b") || mn == "j" || mn == "jr" ||
+            mn == "jal" || mn == "jalr")
+            return true;
+        break;
 
-    // ARM/Thumb
-    if (mn == "b" || mn == "bl" || mn == "bx" || mn == "blx" ||
-        mn.startsWith("b.") || mn == "cbz" || mn == "cbnz")
-        return true;
+    case CS_ARCH_ARM:
+        if (mn == "b" || mn == "bl" || mn == "bx" || mn == "blx" ||
+            mn.startsWith("b.") || mn == "cbz" || mn == "cbnz")
+            return true;
+        break;
 
-    // x86-16
-    if (mn.startsWith("j") || mn == "call" || mn == "loop" ||
-        mn == "loope" || mn == "loopne")
-        return true;
+    case CS_ARCH_X86:
+        if (mn.startsWith("j") || mn == "call" || mn == "loop" ||
+            mn == "loope" || mn == "loopne")
+            return true;
+        break;
+
+    default:
+        break;
+    }
 
     (void)handle;
     return false;
 }
 
-/// Try to extract the numeric branch target from the operand string.
-static qint64 extractBranchTarget(const cs_insn *insn)
+/// Check if an instruction is a subroutine call (JSR, CALL, BL, JAL, BSR, etc.)
+static bool isCallInstruction(csh handle, const cs_insn *insn)
+{
+    if (!insn->detail)
+        return false;
+
+    // Check Capstone CS_GRP_CALL group
+    for (uint8_t i = 0; i < insn->detail->groups_count; ++i) {
+        if (insn->detail->groups[i] == CS_GRP_CALL)
+            return true;
+    }
+
+    // Architecture-specific fallback
+    const QString mn = QString::fromLatin1(insn->mnemonic).toLower();
+
+    // 6502: JSR
+    if (mn == "jsr") return true;
+    // M68K: JSR, BSR
+    if (mn == "jsr" || mn.startsWith("bsr")) return true;
+    // MIPS: JAL, JALR
+    if (mn == "jal" || mn == "jalr") return true;
+    // ARM/Thumb: BL, BLX
+    if (mn == "bl" || mn == "blx") return true;
+    // x86-16: CALL
+    if (mn == "call") return true;
+
+    (void)handle;
+    return false;
+}
+
+/// Check if an instruction is a return (RTS, RTI, RET, BX LR, JR RA, etc.)
+static bool isReturnInstruction(csh handle, const cs_insn *insn)
+{
+    if (!insn->detail)
+        return false;
+
+    // Check Capstone CS_GRP_RET / CS_GRP_IRET groups
+    for (uint8_t i = 0; i < insn->detail->groups_count; ++i) {
+        uint8_t grp = insn->detail->groups[i];
+        if (grp == CS_GRP_RET || grp == CS_GRP_IRET)
+            return true;
+    }
+
+    const QString mn = QString::fromLatin1(insn->mnemonic).toLower();
+
+    // 6502: RTS, RTI
+    if (mn == "rts" || mn == "rti") return true;
+    // M68K: RTS, RTE, RTR
+    if (mn == "rts" || mn == "rte" || mn == "rtr") return true;
+    // MIPS: JR $RA (Capstone: "jr" with operand "$ra")
+    if (mn == "jr") {
+        const QString ops = QString::fromLatin1(insn->op_str).trimmed().toLower();
+        if (ops == "$ra" || ops == "ra") return true;
+    }
+    // ARM/Thumb: BX LR, POP {…, PC}
+    if (mn == "bx") {
+        const QString ops = QString::fromLatin1(insn->op_str).trimmed().toLower();
+        if (ops == "lr") return true;
+    }
+    if (mn == "pop") {
+        const QString ops = QString::fromLatin1(insn->op_str).trimmed().toLower();
+        if (ops.contains("pc")) return true;
+    }
+    // x86-16: RET, RETF, IRET
+    if (mn == "ret" || mn == "retf" || mn == "iret") return true;
+
+    (void)handle;
+    return false;
+}
+
+/// Extract the numeric branch/call target as a CPU address.
+/// Uses Capstone detail operands for the specific architecture first,
+/// falls back to string parsing.
+static qint64 extractBranchTarget(const cs_insn *insn, cs_arch arch)
 {
     if (!insn->detail)
         return -1;
 
-    // For x86: check immediate operands
-    // For ARM: check immediate operands
-    // For MIPS: check immediate operands
-    // For M68K: check immediate operands
-    // Generic approach: try to parse the operand string as a hex number
+    // ── Capstone architecture-specific operand extraction ──
+    // IMPORTANT: insn->detail is a union — only access the struct for the
+    // current architecture, otherwise we read garbage.
 
+#if CS_API_MAJOR >= 4
+    switch (arch) {
+    case CS_ARCH_M68K: {
+        const cs_m68k *m68k = &insn->detail->m68k;
+        for (uint8_t i = 0; i < m68k->op_count; ++i) {
+            const cs_m68k_op &op = m68k->operands[i];
+            if (op.type == M68K_OP_IMM)
+                return static_cast<qint64>(op.imm);
+            if (op.type == M68K_OP_BR_DISP)
+                return static_cast<qint64>(insn->address) + 2 + op.br_disp.disp;
+            // For M68K_OP_MEM (JSR/JMP absolute), mem.disp is int16_t which
+            // is too narrow for 32-bit addresses.  Fall through to string
+            // parsing which handles both short and long absolute reliably.
+        }
+        break;
+    }
+    case CS_ARCH_ARM: {
+        const cs_arm *arm = &insn->detail->arm;
+        for (uint8_t i = 0; i < arm->op_count; ++i) {
+            if (arm->operands[i].type == ARM_OP_IMM)
+                return static_cast<qint64>(arm->operands[i].imm);
+        }
+        break;
+    }
+    case CS_ARCH_X86: {
+        const cs_x86 *x86 = &insn->detail->x86;
+        for (uint8_t i = 0; i < x86->op_count; ++i) {
+            if (x86->operands[i].type == X86_OP_IMM)
+                return static_cast<qint64>(x86->operands[i].imm);
+        }
+        break;
+    }
+    case CS_ARCH_MIPS: {
+        const cs_mips *mips = &insn->detail->mips;
+        for (uint8_t i = 0; i < mips->op_count; ++i) {
+            if (mips->operands[i].type == MIPS_OP_IMM)
+                return static_cast<qint64>(mips->operands[i].imm);
+        }
+        break;
+    }
+    default:
+        break;
+    }
+#else
+    (void)arch;
+#endif
+
+    // ── Fallback: parse the operand string ──
     const QString ops = QString::fromLatin1(insn->op_str).trimmed();
     if (ops.isEmpty())
         return -1;
 
-    // Try parsing as "0xNNNN" or "$NNNN" or plain number
-    QString numStr = ops;
+    auto isHex = [](QChar c) {
+        return (c >= QLatin1Char('0') && c <= QLatin1Char('9'))
+            || (c >= QLatin1Char('a') && c <= QLatin1Char('f'))
+            || (c >= QLatin1Char('A') && c <= QLatin1Char('F'));
+    };
 
-    // Remove leading # for ARM immediate
-    if (numStr.startsWith('#'))
-        numStr = numStr.mid(1);
+    auto parseNumericToken = [&](QString tok, qint64 &out) -> bool {
+        tok = tok.trimmed();
+        if (tok.isEmpty())
+            return false;
 
-    // Remove $ prefix (6502 style)
-    if (numStr.startsWith('$'))
-        numStr = numStr.mid(1);
+        if (tok.startsWith(QLatin1Char('#')))
+            tok = tok.mid(1).trimmed();
 
-    // Remove 0x prefix
-    bool ok = false;
-    qint64 val = -1;
+        // Normalize wrappers/suffixes like: ($EDFA).W, (0x1234), *$FF00
+        tok.remove(QLatin1Char('('));
+        tok.remove(QLatin1Char(')'));
+        tok.remove(QLatin1Char('['));
+        tok.remove(QLatin1Char(']'));
+        tok.remove(QLatin1Char('*'));
 
-    if (numStr.startsWith("0x", Qt::CaseInsensitive)) {
-        val = numStr.mid(2).toLongLong(&ok, 16);
-    } else {
-        // Try hex first (without prefix)
-        val = numStr.toLongLong(&ok, 16);
-        if (!ok) {
-            // Try decimal
-            val = numStr.toLongLong(&ok, 10);
+        const QString tl = tok.toLower();
+        if (tl.endsWith(QLatin1String(".w")) || tl.endsWith(QLatin1String(".l"))
+            || tl.endsWith(QLatin1String(".b"))) {
+            tok.chop(2);
         }
+
+        bool ok = false;
+
+        // $HEX (possibly not at token start)
+        int pos = tok.indexOf(QLatin1Char('$'));
+        if (pos >= 0) {
+            int i = pos + 1;
+            int j = i;
+            while (j < tok.size() && isHex(tok[j])) ++j;
+            if (j > i) {
+                out = tok.mid(i, j - i).toLongLong(&ok, 16);
+                if (ok) return true;
+            }
+        }
+
+        // 0xHEX (possibly not at token start)
+        pos = tok.indexOf(QLatin1String("0x"), 0, Qt::CaseInsensitive);
+        if (pos >= 0) {
+            int i = pos + 2;
+            int j = i;
+            while (j < tok.size() && isHex(tok[j])) ++j;
+            if (j > i) {
+                out = tok.mid(i, j - i).toLongLong(&ok, 16);
+                if (ok) return true;
+            }
+        }
+
+        out = tok.toLongLong(&ok, 16);
+        if (ok) return true;
+        out = tok.toLongLong(&ok, 10);
+        return ok;
+    };
+
+    // For multi-operand instructions (e.g., DBRA d0, $1234), try each
+    // comma-separated token from last to first, looking for a numeric literal.
+    const QStringList parts = ops.split(QLatin1Char(','));
+    for (int p = parts.size() - 1; p >= 0; --p) {
+        qint64 val = -1;
+        if (parseNumericToken(parts[p], val))
+            return val;
     }
 
-    return ok ? val : -1;
+    return -1;
 }
 
 QVector<DisasmInstruction> Disassembler::disassemble(const QByteArray &data, qint64 offset,
@@ -304,10 +481,12 @@ QVector<DisasmInstruction> Disassembler::disassemble(const QByteArray &data, qin
         }
         di.bytes = bytesHex;
 
-        di.isBranch = isBranchInstruction(h, insn);
+        di.isBranch = isBranchInstruction(h, insn, static_cast<cs_arch>(m_arch));
+        di.isCall   = isCallInstruction(h, insn);
+        di.isReturn = isReturnInstruction(h, insn);
 
         if (di.isBranch) {
-            qint64 target = extractBranchTarget(insn);
+            qint64 target = extractBranchTarget(insn, static_cast<cs_arch>(m_arch));
             if (target >= 0) {
                 di.branchTarget = resolveTarget(static_cast<quint64>(target));
             } else {
@@ -356,4 +535,162 @@ QVector<InsnBoundary> Disassembler::scanBoundaries(
 
     cs_free(insn, 1);
     return result;
+}
+
+QVector<DetectedFunction> Disassembler::scanFunctions(
+    const QByteArray &data, qint64 offset, int maxBytes,
+    std::function<void(int)> progressCb,
+    QVector<CallPointer> *outCallPointers)
+{
+    QVector<DetectedFunction> funcs;
+    if (!m_open || offset < 0 || offset >= data.size())
+        return funcs;
+
+    const int available = qMin(maxBytes, static_cast<int>(data.size() - offset));
+    if (available <= 0)
+        return funcs;
+
+    const uint8_t *codeBase = reinterpret_cast<const uint8_t *>(data.constData() + offset);
+    const uint8_t *code = codeBase;
+    size_t codeSize = static_cast<size_t>(available);
+    quint64 addr = static_cast<quint64>(offset + m_baseAddress);
+    const qint64 fileStart = offset;
+    const qint64 fileEnd   = offset + available;
+
+    csh h = static_cast<csh>(m_handle);
+    cs_insn *insn = cs_malloc(h);
+    if (!insn)
+        return funcs;
+
+    // Phase 1: single pass — collect CALL targets (absolute addresses within ROM)
+    //          and RET positions (file offset of the RET instruction itself)
+    QSet<qint64> callTargets;
+    QVector<qint64> retEndOffsets;  // file offset one past each RET
+
+    int bytesProcessed = 0;
+    const int progressStep = qMax(1, available / 100);
+    int nextProgress = progressStep;
+
+    while (codeSize > 0) {
+        if (!cs_disasm_iter(h, &code, &codeSize, &addr, insn))
+            break;
+
+        // Progress callback
+        bytesProcessed = available - static_cast<int>(codeSize);
+        if (progressCb && bytesProcessed >= nextProgress) {
+            progressCb(bytesProcessed * 50 / available);  // 0-50% for phase 1
+            nextProgress = bytesProcessed + progressStep;
+        }
+
+        if (isCallInstruction(h, insn)) {
+            qint64 cpuTarget = extractBranchTarget(insn, static_cast<cs_arch>(m_arch));
+            if (cpuTarget >= 0) {
+                qint64 targetFileOfs = resolveTarget(static_cast<quint64>(cpuTarget));
+                if (targetFileOfs >= fileStart && targetFileOfs < fileEnd) {
+                    // Collect pointer info for calls with embedded absolute
+                    // addresses. For M68K, only these are treated as function
+                    // entry evidence (filters local BSR label noise).
+                    const qint64 instrFileOfs = static_cast<qint64>(insn->address) - m_baseAddress;
+                    int ptrOfs = -1, ptrSize = -1;
+                    bool hasEmbeddedPtr = false;
+#if CS_API_MAJOR >= 4
+                    switch (static_cast<cs_arch>(m_arch)) {
+                    case CS_ARCH_M68K: {
+                        const QString mn = QString::fromLatin1(insn->mnemonic).toLower();
+                        if (mn == "jsr" || mn == "jmp") {
+                            const cs_m68k *m68k = &insn->detail->m68k;
+                            for (uint8_t j = 0; j < m68k->op_count; ++j) {
+                                if (m68k->operands[j].address_mode == M68K_AM_ABSOLUTE_DATA_LONG) {
+                                    ptrOfs = 2;
+                                    ptrSize = 4;
+                                    hasEmbeddedPtr = true;
+                                    break;
+                                } else if (m68k->operands[j].address_mode == M68K_AM_ABSOLUTE_DATA_SHORT) {
+                                    ptrOfs = 2;
+                                    ptrSize = 2;
+                                    hasEmbeddedPtr = true;
+                                    break;
+                                }
+                            }
+                        }
+                        break;
+                    }
+                    case CS_ARCH_MOS65XX: {
+                        const QString mn = QString::fromLatin1(insn->mnemonic).toLower();
+                        if (mn == "jsr" && insn->size == 3) {
+                            ptrOfs = 1;
+                            ptrSize = 2;
+                            hasEmbeddedPtr = true;
+                        }
+                        break;
+                    }
+                    default:
+                        break;
+                    }
+#endif
+
+                    const cs_arch arch = static_cast<cs_arch>(m_arch);
+                    const bool acceptAsFunctionEntry = (arch == CS_ARCH_M68K)
+                        ? hasEmbeddedPtr
+                        : true;
+
+                    if (acceptAsFunctionEntry)
+                        callTargets.insert(targetFileOfs);
+
+                    if (outCallPointers && hasEmbeddedPtr && ptrOfs >= 0 && ptrSize > 0)
+                        outCallPointers->append({instrFileOfs + ptrOfs, targetFileOfs, ptrSize});
+                }
+            }
+        }
+
+        if (isReturnInstruction(h, insn)) {
+            qint64 fOfs = static_cast<qint64>(insn->address) - m_baseAddress;
+            retEndOffsets.append(fOfs + insn->size);
+        }
+    }
+
+    cs_free(insn, 1);
+
+    if (callTargets.isEmpty())
+        return funcs;
+
+    // Phase 2: build functions from call targets + RET endings
+    QVector<qint64> sortedTargets(callTargets.begin(), callTargets.end());
+    std::sort(sortedTargets.begin(), sortedTargets.end());
+    std::sort(retEndOffsets.begin(), retEndOffsets.end());
+
+    if (progressCb)
+        progressCb(55);
+
+    for (int i = 0; i < sortedTargets.size(); ++i) {
+        const qint64 funcStart = sortedTargets[i];
+        const qint64 nextFuncStart = (i + 1 < sortedTargets.size())
+                                         ? sortedTargets[i + 1]
+                                         : fileEnd;
+
+        // Find a RET-end after funcStart.
+        // Prefer the last RET before nextFuncStart, but if none exists there,
+        // keep the first RET after funcStart so valid entries are not dropped.
+        auto it = std::lower_bound(retEndOffsets.begin(), retEndOffsets.end(), funcStart + 1);
+        if (it == retEndOffsets.end())
+            continue;
+
+        qint64 funcEnd = *it;
+        auto it2 = it;
+        while (it2 != retEndOffsets.end() && *it2 <= nextFuncStart) {
+            funcEnd = *it2;
+            ++it2;
+        }
+
+        DetectedFunction df;
+        df.startOffset = funcStart;
+        df.endOffset   = funcEnd;
+        df.cpuAddress  = static_cast<quint64>(funcStart + m_baseAddress);
+        funcs.append(df);
+
+        if (progressCb)
+            progressCb(55 + (i + 1) * 45 / sortedTargets.size());
+    }
+
+    return funcs;
 }

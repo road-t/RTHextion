@@ -12,6 +12,8 @@
 #include <QTimer>
 #include <QSet>
 #include <QSettings>
+#include <QInputDialog>
+#include <QLineEdit>
 #include <QUndoCommand>
 #include <QStringDecoder>
 #include <QStringEncoder>
@@ -899,6 +901,13 @@ HexEditor::HexEditor(QWidget *parent) : QAbstractScrollArea(parent), _addressAre
     setAsciiFontColor(QPalette::WindowText);
     setHexAreaBackgroundColor(Qt::white);
     setHexAreaGridColor(QColor(0x99, 0x99, 0x99));
+    setSectionHeaderFontColor(this->palette().color(QPalette::WindowText));
+    setSectionHeaderBackgroundColor(QColor(0xD8, 0xD8, 0xD8, 0x90));
+    {
+        QFont secFont = this->font();
+        secFont.setBold(true);
+        setSectionHeaderFont(secFont);
+    }
     _cursorCharColor = QColor(0x00, 0x60, 0xFF, 0x80);
     _zeroByteFontColor = QColor(0xCC, 0xCC, 0xCC);
     _addressZeroByteFontColor = QColor(0xCC, 0xCC, 0xCC);  // same default as _zeroByteFontColor
@@ -2177,6 +2186,39 @@ QColor HexEditor::multibyteFrameColor()
     return _multibyteFrameColor;
 }
 
+QColor HexEditor::sectionHeaderFontColor() const
+{
+    return _sectionHeaderFontColor;
+}
+
+void HexEditor::setSectionHeaderFontColor(const QColor &color)
+{
+    _sectionHeaderFontColor = color;
+    viewport()->update();
+}
+
+QColor HexEditor::sectionHeaderBackgroundColor() const
+{
+    return _sectionHeaderBackgroundColor;
+}
+
+void HexEditor::setSectionHeaderBackgroundColor(const QColor &color)
+{
+    _sectionHeaderBackgroundColor = color;
+    viewport()->update();
+}
+
+QFont HexEditor::sectionHeaderFont() const
+{
+    return _sectionHeaderFont;
+}
+
+void HexEditor::setSectionHeaderFont(const QFont &font)
+{
+    _sectionHeaderFont = font;
+    viewport()->update();
+}
+
 bool HexEditor::showMultibyteFrame() const
 {
     return _showMultibyteFrame;
@@ -3356,7 +3398,31 @@ void HexEditor::mouseMoveEvent(QMouseEvent *event)
             else if (_asciiArea)
             {
                 const int separatorScreenX = _pxPosAsciiX - (_pxGapHexAscii / 2) - pxOfsX_mv;
-                viewport()->setCursor((std::abs(event->x() - separatorScreenX) < 8) ? Qt::SizeHorCursor : Qt::ArrowCursor);
+                if (std::abs(event->x() - separatorScreenX) < 8) {
+                    viewport()->setCursor(Qt::SizeHorCursor);
+                } else {
+                    // Hand cursor over branch instructions in disasm area
+                    bool handSet = false;
+                    const int posX = event->x() + pxOfsX_mv;
+                    if (posX >= _pxPosAsciiX) {
+                        const qint64 nPos = cursorPosition(event->pos());
+                        if (nPos >= 0) {
+                            const qint64 byteOfs = nPos / 2;
+                            const bool isDisasm = _showDisasm
+                                || (_sectionModel && _sectionModel->displayModeAtOffset(byteOfs) == SectionDisplay_Disasm);
+                            if (isDisasm) {
+                                const DisasmInstruction *instr = disasmInstructionAtOffset(byteOfs);
+                                if (instr && instr->isBranch && instr->branchTarget >= 0
+                                    && instr->branchTarget < _chunks->size()) {
+                                    viewport()->setCursor(Qt::PointingHandCursor);
+                                    handSet = true;
+                                }
+                            }
+                        }
+                    }
+                    if (!handSet)
+                        viewport()->setCursor(Qt::ArrowCursor);
+                }
             }
             else
             {
@@ -3526,7 +3592,49 @@ void HexEditor::mouseReleaseEvent(QMouseEvent *event)
 
 void HexEditor::mouseDoubleClickEvent(QMouseEvent *event)
 {
-    Q_UNUSED(event)
+    // ── Section header rename: detect click on empty header row ──
+    if (_sectionModel) {
+        const int rowStridePx = _pxCharHeight + kHexRowExtraGapPx;
+        const int posY = static_cast<int>(event->position().y()) - 3;
+        const int row = posY / rowStridePx;
+        if (row >= 0 && row < _visualRowStartBytes.size()) {
+            const int bytesThisRow = (row + 1 < _visualRowStartBytes.size())
+                ? static_cast<int>(_visualRowStartBytes[row + 1] - _visualRowStartBytes[row])
+                : _bytesPerLine;
+            if (bytesThisRow <= 0) {
+                const qint64 absOfs = _visualRowStartBytes[row];
+                // Only react on the last consecutive empty row (the one
+                // that visually shows the section name), not on blank
+                // separator rows above it.
+                bool nextRowIsData = true;
+                if (row + 2 < _visualRowStartBytes.size()) {
+                    nextRowIsData = (_visualRowStartBytes[row + 2]
+                                     - _visualRowStartBytes[row + 1]) > 0;
+                }
+                if (nextRowIsData) {
+                    const int secIdx = _sectionModel->sectionIndexAtStartOffset(absOfs);
+                    if (secIdx >= 0) {
+                        // Edit directly from the main hex area on double-click.
+                        bool ok = false;
+                        const QString oldName = _sectionModel->at(secIdx).name;
+                        const QString newName = QInputDialog::getText(
+                            this,
+                            tr("Rename section"),
+                            tr("Section name:"),
+                            QLineEdit::Normal,
+                            oldName,
+                            &ok);
+                        if (ok) {
+                            const QString trimmed = newName.trimmed();
+                            if (!trimmed.isEmpty() && trimmed != oldName)
+                                _sectionModel->renameSection(secIdx, trimmed);
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+    }
 
     if (_showPointers)
     {
@@ -3546,6 +3654,7 @@ void HexEditor::mouseDoubleClickEvent(QMouseEvent *event)
             {
                 // TODO: display context menu/listbox with pointers list
             }
+            return;
         }
         // Otherwise, if the current byte is part of a pointer, follow it to the data target
         else
@@ -3556,6 +3665,26 @@ void HexEditor::mouseDoubleClickEvent(QMouseEvent *event)
                 _editAreaIsAscii = true;
                 setCursorPosition(_pointers.getOffset(ptrStart) * 2);
                 ensureVisible();
+                return;
+            }
+        }
+    }
+
+    // ── Follow branch target in disassembly rows ──
+    {
+        const bool isDisasm = _showDisasm
+            || (_sectionModel && _sectionModel->displayModeAtOffset(_bPosCurrent) == SectionDisplay_Disasm);
+        if (isDisasm) {
+            const DisasmInstruction *instr = disasmInstructionAtOffset(_bPosCurrent);
+            if (instr && instr->isBranch && instr->branchTarget >= 0
+                && instr->branchTarget < _chunks->size())
+            {
+                setCursorPosition(instr->branchTarget * 2);
+                // Show one row above the target so the section header is visible
+                ensureVisibleTop();
+                if (verticalScrollBar()->value() > 0)
+                    verticalScrollBar()->setValue(verticalScrollBar()->value() - 1);
+                return;
             }
         }
     }
@@ -3722,7 +3851,45 @@ void HexEditor::paintEvent(QPaintEvent *event)
                 ? static_cast<int>(_visualRowStartBytes[row + 1] - _visualRowStartBytes[row])
                 : _bytesPerLine;
             bytesThisRow = qMin(bytesThisRow, static_cast<int>(_dataShown.size() - bPosLine));
-            if (bPosLine < 0 || bytesThisRow <= 0) continue;
+            if (bPosLine < 0) continue;
+            if (bytesThisRow <= 0) {
+                // ── Section header row: draw the name only on the LAST
+                //    consecutive empty row so earlier rows stay blank. ──
+                if (_sectionModel) {
+                    const qint64 absOfs = _visualRowStartBytes[row];
+                    // Check whether the next row is a data row (bytesThisRow > 0).
+                    // If so, the current row is the last empty row before data —
+                    // that's where we draw the section header.
+                    bool nextRowIsData = true;
+                    if (row + 2 < _visualRowStartBytes.size()) {
+                        nextRowIsData = (_visualRowStartBytes[row + 2]
+                                         - _visualRowStartBytes[row + 1]) > 0;
+                    }
+                    if (nextRowIsData) {
+                        const QString secName = _sectionModel->sectionNameAtStartOffset(absOfs);
+                        if (!secName.isEmpty()) {
+                            const int textX = _pxPosHexX - pxOfsX;
+                            const QRect textRect(textX, pxPosY - _pxCharHeight + _pxSelectionSub + 2,
+                                                 viewport()->width() - textX, _pxCharHeight);
+
+                            if (_sectionHeaderBackgroundColor.isValid())
+                                painter.fillRect(textRect, _sectionHeaderBackgroundColor);
+
+                            const QFont prevFont = painter.font();
+                            const QPen prevPen = painter.pen();
+                            painter.setFont(_sectionHeaderFont);
+                            painter.setPen(_sectionHeaderFontColor.isValid()
+                                               ? _sectionHeaderFontColor
+                                               : palette().color(QPalette::Text));
+                            painter.drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter,
+                                             secName + QStringLiteral(":"));
+                            painter.setFont(prevFont);
+                            painter.setPen(prevPen);
+                        }
+                    }
+                }
+                continue;
+            }
 
             const qint64 rowStart = bPosLine;
             const qint64 rowEnd = qMin(bPosLine + bytesThisRow, (qint64)_dataShown.size());
@@ -3751,10 +3918,12 @@ void HexEditor::paintEvent(QPaintEvent *event)
                 painter.setPen(QPen((isZeroByte && !rowUsesDisasm) ? _zeroByteFontColor : _hexFontColor));
 
                 qint64 posBa = _bPosFirst + bPosLine + colIdx;
-                const qint64 pointerStart = _showPointers ? pointerStartAt(posBa, kPointerByteSize) : -1;
+                const qint64 pointerStart = (_showPointers && !rowUsesDisasm)
+                    ? pointerStartAt(posBa, kPointerByteSize)
+                    : -1;
                 const bool isPointerByte = pointerStart >= 0;
                 const int actualPtrSize = isPointerByte ? _pointers.getPointerSize(pointerStart) : kPointerByteSize;
-                const bool isPointedByte = _showPointers && _pointers.hasOffset(posBa);
+                const bool isPointedByte = (_showPointers && !rowUsesDisasm) && _pointers.hasOffset(posBa);
                 const bool isSelectedByte = (getSelectionEnd() - getSelectionBegin() > 1)
                                          && (getSelectionBegin() <= posBa) && (getSelectionEnd() > posBa);
                 const bool isHighlightedByte = _highlighting && _markedShown.at((int)(posBa - _bPosFirst));
@@ -3781,7 +3950,7 @@ void HexEditor::paintEvent(QPaintEvent *event)
                 }
 
                 // POINTERS
-                if (_showPointers)
+                if (_showPointers && !rowUsesDisasm)
                 {
                     // cursor image for pointed data
                     if (isPointedByte)
@@ -4153,7 +4322,21 @@ void HexEditor::paintEvent(QPaintEvent *event)
                                     painter.drawText(spRect, Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral(" "));
                                     textX += spW;
 
-                                    const int opW = paintFm.horizontalAdvance(instr->operands);
+                                    // Show section name for branch/call targets when available.
+                                    QString displayOps = instr->operands;
+                                    const bool clickableBranch = instr->isBranch
+                                        && instr->branchTarget >= 0
+                                        && instr->branchTarget < _chunks->size();
+                                    bool usingSectionLabel = false;
+                                    if (clickableBranch && _sectionModel) {
+                                        const QString label = _sectionModel->sectionNameAtStartOffset(instr->branchTarget);
+                                        if (!label.isEmpty()) {
+                                            displayOps = label;
+                                            usingSectionLabel = true;
+                                        }
+                                    }
+
+                                    const int opW = paintFm.horizontalAdvance(displayOps);
                                     QRect opRect(textX, baseY, opW, _pxCharHeight);
                                     if (instrSel) {
                                         painter.fillRect(opRect, _brushSelection.color());
@@ -4161,10 +4344,22 @@ void HexEditor::paintEvent(QPaintEvent *event)
                                     } else {
                                         if (c != _asciiAreaColor)
                                             painter.fillRect(opRect, c);
+                                        if (usingSectionLabel)
+                                            painter.fillRect(opRect, _brushPointers.color());
                                         painter.setPen(QPen(instr->isBranch
                                             ? palette().color(QPalette::Link) : _asciiFontColor));
                                     }
-                                    painter.drawText(opRect, Qt::AlignLeft | Qt::AlignVCenter, instr->operands);
+                                    if (clickableBranch && !instrSel) {
+                                        QFont uf = painter.font();
+                                        uf.setUnderline(true);
+                                        painter.setFont(uf);
+                                    }
+                                    painter.drawText(opRect, Qt::AlignLeft | Qt::AlignVCenter, displayOps);
+                                    if (clickableBranch && !instrSel) {
+                                        QFont uf = painter.font();
+                                        uf.setUnderline(false);
+                                        painter.setFont(uf);
+                                    }
                                 }
                             }
                         }

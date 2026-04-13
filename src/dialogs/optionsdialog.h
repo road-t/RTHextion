@@ -110,6 +110,11 @@ private:
     QComboBox   *m_cbBytesPerLine = nullptr;
     QPushButton *m_btnDelete = nullptr;
     QPushButton *m_btnExport = nullptr;
+    QPushButton *m_pbSectionHeaderFont = nullptr;
+    QPushButton *m_pbSectionHeaderFontColor = nullptr;
+    QPushButton *m_pbSectionHeaderBgColor = nullptr;
+    QLabel      *m_lbSectionHeaderFontColor = nullptr;
+    QLabel      *m_lbSectionHeaderBgColor = nullptr;
 
     QList<HotkeyEntry>          m_hotkeys;
     QMap<QString, QKeySequence> m_originalHotkeys;
@@ -149,7 +154,10 @@ private:
         QColor changesColor;
         QColor scrollMapPtrBgColor;
         QColor scrollMapTargetBgColor;
+        QColor sectionHeaderFontColor;
+        QColor sectionHeaderBgColor;
         QFont widgetFont;
+        QFont sectionHeaderFont;
         QString nonPrintableNoTableChar;
         QString notInTableChar;
         bool detectEndianness = true;

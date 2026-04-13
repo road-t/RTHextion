@@ -73,6 +73,14 @@ public:
     /// Falls back to SectionDisplay_Default if the offset is outside all sections.
     int displayModeAtOffset(qint64 offset) const;
 
+    /// Returns the name of the section whose startOffset matches exactly,
+    /// preferring subsections over root sections.  Empty if no match.
+    QString sectionNameAtStartOffset(qint64 offset) const;
+
+    /// Returns the flat index of the section whose startOffset matches exactly
+    /// (preferring subsections), or -1 if no match.
+    int sectionIndexAtStartOffset(qint64 offset) const;
+
     const QVector<Section> &sections() const { return m_sections; }
     void setSections(const QVector<Section> &sections);
 

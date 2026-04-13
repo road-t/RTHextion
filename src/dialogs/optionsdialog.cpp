@@ -241,7 +241,10 @@ void OptionsDialog::saveCurrentSettings()
     m_originalSettings.changesColor = ui->lbChangesColor->palette().color(ui->lbChangesColor->backgroundRole());
     m_originalSettings.scrollMapPtrBgColor = ui->lbScrollMapPtrBgColor->palette().color(ui->lbScrollMapPtrBgColor->backgroundRole());
     m_originalSettings.scrollMapTargetBgColor = ui->lbScrollMapTargetBgColor->palette().color(ui->lbScrollMapTargetBgColor->backgroundRole());
+    m_originalSettings.sectionHeaderFontColor = m_lbSectionHeaderFontColor ? currentSwatchColor(m_lbSectionHeaderFontColor) : QColor(Qt::black);
+    m_originalSettings.sectionHeaderBgColor = m_lbSectionHeaderBgColor ? currentSwatchColor(m_lbSectionHeaderBgColor) : QColor(0xD8, 0xD8, 0xD8, 0x90);
     m_originalSettings.widgetFont = ui->pbWidgetFont->font();
+    m_originalSettings.sectionHeaderFont = m_pbSectionHeaderFont ? m_pbSectionHeaderFont->font() : ui->pbWidgetFont->font();
     m_originalSettings.nonPrintableNoTableChar = sanitizeSingleChar(ui->leNonPrintableNoTableChar->text(), kDefaultNonPrintableNoTableChar);
     m_originalSettings.notInTableChar = sanitizeSingleChar(ui->leNotInTableChar->text(), kDefaultNotInTableChar);
     m_originalSettings.detectEndianness = ui->cbDetectEndianness->isChecked();
@@ -301,10 +304,19 @@ void OptionsDialog::restoreSettings()
     setColor(ui->lbChangesColor, m_originalSettings.changesColor);
     setColor(ui->lbScrollMapPtrBgColor, m_originalSettings.scrollMapPtrBgColor);
     setColor(ui->lbScrollMapTargetBgColor, m_originalSettings.scrollMapTargetBgColor);
+    if (m_lbSectionHeaderFontColor)
+        setColor(m_lbSectionHeaderFontColor, m_originalSettings.sectionHeaderFontColor);
+    if (m_lbSectionHeaderBgColor)
+        setColor(m_lbSectionHeaderBgColor, m_originalSettings.sectionHeaderBgColor);
     if (m_cbDarkMode)
         m_cbDarkMode->setChecked(m_originalSettings.darkMode);
     ui->pbWidgetFont->setFont(m_originalSettings.widgetFont);
     updateFontButtonText(m_originalSettings.widgetFont);
+    if (m_pbSectionHeaderFont) {
+        m_pbSectionHeaderFont->setFont(m_originalSettings.sectionHeaderFont);
+        m_pbSectionHeaderFont->setText(
+            QStringLiteral("%1, %2pt").arg(m_originalSettings.sectionHeaderFont.family()).arg(m_originalSettings.sectionHeaderFont.pointSize()));
+    }
     ui->leNonPrintableNoTableChar->setText(sanitizeSingleChar(m_originalSettings.nonPrintableNoTableChar, kDefaultNonPrintableNoTableChar));
     ui->leNotInTableChar->setText(sanitizeSingleChar(m_originalSettings.notInTableChar, kDefaultNotInTableChar));
     ui->cbDetectEndianness->setChecked(m_originalSettings.detectEndianness);
@@ -403,6 +415,10 @@ void OptionsDialog::readSettings()
     setColor(ui->lbChangesColor, settings.value("ChangesColor", QColor(0x99, 0xff, 0x99, 0xff)).value<QColor>());
     setColor(ui->lbScrollMapPtrBgColor, settings.value("ScrollMapPtrBgColor", QColor(0xd0, 0xd0, 0xd0)).value<QColor>());
     setColor(ui->lbScrollMapTargetBgColor, settings.value("ScrollMapTargetBgColor", QColor(0xd0, 0xd0, 0xd0)).value<QColor>());
+    if (m_lbSectionHeaderFontColor)
+        setColor(m_lbSectionHeaderFontColor, settings.value("SectionHeaderFontColor", palette().color(QPalette::WindowText)).value<QColor>());
+    if (m_lbSectionHeaderBgColor)
+        setColor(m_lbSectionHeaderBgColor, settings.value("SectionHeaderBgColor", QColor(0xD8, 0xD8, 0xD8, 0x90)).value<QColor>());
 
 #ifdef Q_OS_WIN32
     QFont defaultFont("Courier", 14);
@@ -412,6 +428,12 @@ void OptionsDialog::readSettings()
     QFont selectedFont = settings.value("WidgetFont", defaultFont).value<QFont>();
     ui->pbWidgetFont->setFont(selectedFont);
     updateFontButtonText(selectedFont);
+    if (m_pbSectionHeaderFont) {
+        QFont sectionHeaderFont = settings.value("SectionHeaderFont", selectedFont).value<QFont>();
+        m_pbSectionHeaderFont->setFont(sectionHeaderFont);
+        m_pbSectionHeaderFont->setText(
+            QStringLiteral("%1, %2pt").arg(sectionHeaderFont.family()).arg(sectionHeaderFont.pointSize()));
+    }
     applyPlaceholderFieldFont(ui->leNonPrintableNoTableChar, ui->leNotInTableChar, selectedFont);
 
     ui->leNonPrintableNoTableChar->setText(sanitizeSingleChar(settings.value("NonPrintableNoTableChar", QString(kDefaultNonPrintableNoTableChar)).toString(), kDefaultNonPrintableNoTableChar));
@@ -472,9 +494,15 @@ void OptionsDialog::writeSettings()
     settings.setValue("ChangesColor", ui->lbChangesColor->palette().color(ui->lbChangesColor->backgroundRole()));
     settings.setValue("ScrollMapPtrBgColor", ui->lbScrollMapPtrBgColor->palette().color(ui->lbScrollMapPtrBgColor->backgroundRole()));
     settings.setValue("ScrollMapTargetBgColor", ui->lbScrollMapTargetBgColor->palette().color(ui->lbScrollMapTargetBgColor->backgroundRole()));
+    if (m_lbSectionHeaderFontColor)
+        settings.setValue("SectionHeaderFontColor", currentSwatchColor(m_lbSectionHeaderFontColor));
+    if (m_lbSectionHeaderBgColor)
+        settings.setValue("SectionHeaderBgColor", currentSwatchColor(m_lbSectionHeaderBgColor));
     
     // Write other settings
     settings.setValue("WidgetFont", ui->pbWidgetFont->font());
+    if (m_pbSectionHeaderFont)
+        settings.setValue("SectionHeaderFont", m_pbSectionHeaderFont->font());
     settings.setValue("NonPrintableNoTableChar", sanitizeSingleChar(ui->leNonPrintableNoTableChar->text(), kDefaultNonPrintableNoTableChar));
     settings.setValue("NotInTableChar", sanitizeSingleChar(ui->leNotInTableChar->text(), kDefaultNotInTableChar));
     // AddressAreaWidth and BytesPerLine written above from combos
@@ -849,6 +877,10 @@ void OptionsDialog::resetToDefaults()
     setColor(ui->lbChangesColor, QColor(0x99, 0xff, 0x99, 0xff));
     setColor(ui->lbScrollMapPtrBgColor, QColor(0xd0, 0xd0, 0xd0));
     setColor(ui->lbScrollMapTargetBgColor, QColor(0xd0, 0xd0, 0xd0));
+    if (m_lbSectionHeaderFontColor)
+        setColor(m_lbSectionHeaderFontColor, this->palette().color(QPalette::WindowText));
+    if (m_lbSectionHeaderBgColor)
+        setColor(m_lbSectionHeaderBgColor, QColor(0xD8, 0xD8, 0xD8, 0x90));
 
 #ifdef Q_OS_WIN32
     QFont defaultFont("Courier", 14);
@@ -857,6 +889,13 @@ void OptionsDialog::resetToDefaults()
 #endif
     ui->pbWidgetFont->setFont(defaultFont);
     updateFontButtonText(defaultFont);
+    if (m_pbSectionHeaderFont) {
+        QFont sectionHeaderFont = defaultFont;
+        sectionHeaderFont.setBold(true);
+        m_pbSectionHeaderFont->setFont(sectionHeaderFont);
+        m_pbSectionHeaderFont->setText(
+            QStringLiteral("%1, %2pt").arg(sectionHeaderFont.family()).arg(sectionHeaderFont.pointSize()));
+    }
     applyPlaceholderFieldFont(ui->leNonPrintableNoTableChar, ui->leNotInTableChar, defaultFont);
     ui->leNonPrintableNoTableChar->setText(QString(kDefaultNonPrintableNoTableChar));
     ui->leNotInTableChar->setText(QString(kDefaultNotInTableChar));
@@ -1147,6 +1186,65 @@ void OptionsDialog::initThemesTab()
     fontHL->addWidget(ui->pbWidgetFont);
     rightVL->addWidget(fontGroup);
 
+    // Sections group
+    auto *sectionsGroup = new QGroupBox(tr("Sections"));
+    sectionsGroup->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
+    auto *sectionsGrid = new QGridLayout(sectionsGroup);
+
+    m_pbSectionHeaderFont = new QPushButton(tr("Header font"));
+    m_pbSectionHeaderFontColor = new QPushButton(tr("Header text color"));
+    m_pbSectionHeaderBgColor = new QPushButton(tr("Header background"));
+
+    m_lbSectionHeaderFontColor = new QLabel();
+    m_lbSectionHeaderBgColor = new QLabel();
+    for (QLabel *swatch : {m_lbSectionHeaderFontColor, m_lbSectionHeaderBgColor}) {
+        swatch->setMinimumSize(20, 20);
+        swatch->setMaximumSize(20, 20);
+        swatch->setFrameShape(QFrame::Panel);
+        swatch->setFrameShadow(QFrame::Sunken);
+        swatch->setAutoFillBackground(true);
+    }
+
+    sectionsGrid->addWidget(m_pbSectionHeaderFont, 0, 0, 1, 2);
+    sectionsGrid->addWidget(m_pbSectionHeaderFontColor, 1, 0);
+    sectionsGrid->addWidget(m_lbSectionHeaderFontColor, 1, 1);
+    sectionsGrid->addWidget(m_pbSectionHeaderBgColor, 2, 0);
+    sectionsGrid->addWidget(m_lbSectionHeaderBgColor, 2, 1);
+    rightVL->addWidget(sectionsGroup);
+
+    connect(m_pbSectionHeaderFont, &QPushButton::clicked, this, [this]() {
+        bool ok = false;
+        const QFont chosen = QFontDialog::getFont(&ok,
+            m_pbSectionHeaderFont ? m_pbSectionHeaderFont->font() : ui->pbWidgetFont->font(), this);
+        if (!ok)
+            return;
+        m_pbSectionHeaderFont->setFont(chosen);
+        m_pbSectionHeaderFont->setText(
+            QStringLiteral("%1, %2pt").arg(chosen.family()).arg(chosen.pointSize()));
+        updateSettings();
+    });
+
+    connect(m_pbSectionHeaderFontColor, &QPushButton::clicked, this, [this]() {
+        if (!m_lbSectionHeaderFontColor)
+            return;
+        const QColor c = QColorDialog::getColor(currentSwatchColor(m_lbSectionHeaderFontColor), this);
+        if (!c.isValid())
+            return;
+        setColor(m_lbSectionHeaderFontColor, c);
+        updateSettings();
+    });
+
+    connect(m_pbSectionHeaderBgColor, &QPushButton::clicked, this, [this]() {
+        if (!m_lbSectionHeaderBgColor)
+            return;
+        const QColor c = QColorDialog::getColor(currentSwatchColor(m_lbSectionHeaderBgColor), this,
+                                                QString(), QColorDialog::ShowAlphaChannel);
+        if (!c.isValid())
+            return;
+        setColor(m_lbSectionHeaderBgColor, c);
+        updateSettings();
+    });
+
     // Reparent color groups from old Appearance tab
     rightVL->addWidget(ui->gbAddressArea);
     rightVL->addWidget(ui->gbHexArea);
@@ -1386,6 +1484,15 @@ void OptionsDialog::applyThemeToUi(const EditorTheme &theme)
     setColor(ui->lbPointerFrameBgColor, theme.pointerFrameBgColor);
     setColor(ui->lbScrollMapPtrBgColor, theme.scrollMapPtrBgColor);
     setColor(ui->lbScrollMapTargetBgColor, theme.scrollMapTargetBgColor);
+    if (m_lbSectionHeaderFontColor)
+        setColor(m_lbSectionHeaderFontColor, theme.sectionHeaderFontColor);
+    if (m_lbSectionHeaderBgColor)
+        setColor(m_lbSectionHeaderBgColor, theme.sectionHeaderBgColor);
+    if (m_pbSectionHeaderFont) {
+        m_pbSectionHeaderFont->setFont(theme.sectionHeaderFont);
+        m_pbSectionHeaderFont->setText(
+            QStringLiteral("%1, %2pt").arg(theme.sectionHeaderFont.family()).arg(theme.sectionHeaderFont.pointSize()));
+    }
 
     updateAreaControls();
     m_suppressUpdate = false;
@@ -1423,5 +1530,8 @@ EditorTheme OptionsDialog::captureThemeFromUi() const
     t.pointerFrameBgColor = currentSwatchColor(ui->lbPointerFrameBgColor);
     t.scrollMapPtrBgColor = currentSwatchColor(ui->lbScrollMapPtrBgColor);
     t.scrollMapTargetBgColor = currentSwatchColor(ui->lbScrollMapTargetBgColor);
+    t.sectionHeaderFontColor = m_lbSectionHeaderFontColor ? currentSwatchColor(m_lbSectionHeaderFontColor) : QColor(Qt::black);
+    t.sectionHeaderBgColor = m_lbSectionHeaderBgColor ? currentSwatchColor(m_lbSectionHeaderBgColor) : QColor(0xD8, 0xD8, 0xD8, 0x90);
+    t.sectionHeaderFont = m_pbSectionHeaderFont ? m_pbSectionHeaderFont->font() : t.hexFont;
     return t;
 }

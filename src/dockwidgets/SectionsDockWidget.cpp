@@ -117,8 +117,17 @@ SectionsDockWidget::SectionsDockWidget(QWidget *parent)
             this, &SectionsDockWidget::onItemClicked);
     connect(m_tree, &QTreeWidget::itemDoubleClicked,
             this, &SectionsDockWidget::onItemDoubleClicked);
+        connect(m_tree, &QTreeWidget::itemChanged,
+            this, &SectionsDockWidget::onItemChanged);
     connect(m_tree, &QTreeWidget::customContextMenuRequested,
             this, &SectionsDockWidget::onTreeContextMenu);
+}
+
+SectionsDockWidget::~SectionsDockWidget()
+{
+    if (m_model)
+        disconnect(m_model, nullptr, this, nullptr);
+    m_tree = nullptr;
 }
 
 void SectionsDockWidget::setModel(SectionListModel *model)
@@ -209,8 +218,18 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
         return;
 
     const int sectionIdx = item->data(0, Qt::UserRole + 1).toInt();
-    if (sectionIdx < 0 || sectionIdx >= m_model->count())
+
+    // ROM root node: show a minimal context menu with "Detect functions"
+    if (sectionIdx < 0 || sectionIdx >= m_model->count()) {
+        if (sectionIdx != -1)
+            return;
+        QMenu menu(this);
+        QAction *detectAct = menu.addAction(tr("Detect functions"));
+        QAction *chosen = menu.exec(m_tree->viewport()->mapToGlobal(pos));
+        if (chosen == detectAct)
+            emit detectFunctionsRequested();
         return;
+    }
 
     const int depth = treeItemDepth(item);  // 2 = root section, 3+ = subsection
 
@@ -297,13 +316,7 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
         return;
 
     if (chosen == renameAct) {
-        bool ok = false;
-        const QString name = QInputDialog::getText(
-            this, tr("Rename section"),
-            tr("Name") + ':', QLineEdit::Normal,
-            m_model->at(sectionIdx).name, &ok);
-        if (ok && !name.isEmpty())
-            m_model->renameSection(sectionIdx, name);
+        startRenameSection(sectionIdx);
     } else if (chosen == recolorAct) {
         const QColor color = QColorDialog::getColor(
             m_model->at(sectionIdx).color, this, tr("Section color"));
@@ -340,8 +353,11 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
 
 void SectionsDockWidget::rebuildTree()
 {
-    if (m_suppressRebuild)
+    if (m_suppressRebuild || m_rebuildingTree || !m_tree)
         return;
+
+    m_rebuildingTree = true;
+    const QSignalBlocker blocker(m_tree);
 
     m_tree->clear();
 
@@ -374,7 +390,10 @@ void SectionsDockWidget::rebuildTree()
             child->setIcon(0, colorSwatchIcon(s.color));
 
             // All section items are draggable and can accept drops (unlimited nesting)
-            child->setFlags(child->flags() | Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled);
+            child->setFlags(child->flags()
+                            | Qt::ItemIsDragEnabled
+                            | Qt::ItemIsDropEnabled
+                            | Qt::ItemIsEditable);
 
             itemByIdx[i] = child;
         }
@@ -382,6 +401,7 @@ void SectionsDockWidget::rebuildTree()
 
     m_tree->expandAll();
     m_tree->resizeColumnToContents(0);
+    m_rebuildingTree = false;
 }
 
 QIcon SectionsDockWidget::colorSwatchIcon(const QColor &color) const
@@ -518,4 +538,59 @@ void SectionsDockWidget::highlightOffset(qint64 offset)
         m_tree->setCurrentItem(target);
         m_tree->blockSignals(false);
     }
+}
+
+void SectionsDockWidget::startRenameSection(int sectionIndex)
+{
+    if (!m_model || sectionIndex < 0 || sectionIndex >= m_model->count())
+        return;
+
+    QTreeWidgetItem *romRoot = m_tree->topLevelItem(0);
+    if (!romRoot)
+        return;
+
+    std::function<QTreeWidgetItem *(QTreeWidgetItem *)> findItem =
+        [&](QTreeWidgetItem *parent) -> QTreeWidgetItem * {
+            for (int i = 0; i < parent->childCount(); ++i) {
+                auto *ch = parent->child(i);
+                if (ch->data(0, Qt::UserRole + 1).toInt() == sectionIndex)
+                    return ch;
+                if (auto *found = findItem(ch))
+                    return found;
+            }
+            return nullptr;
+        };
+
+    QTreeWidgetItem *target = findItem(romRoot);
+    if (!target)
+        return;
+
+    m_tree->setCurrentItem(target);
+    m_tree->scrollToItem(target);
+    m_tree->editItem(target, 0);
+}
+
+void SectionsDockWidget::onItemChanged(QTreeWidgetItem *item, int column)
+{
+    if (m_rebuildingTree || m_suppressRebuild)
+        return;
+
+    if (!item || column != 0 || !m_model)
+        return;
+
+    const int sectionIdx = item->data(0, Qt::UserRole + 1).toInt();
+    if (sectionIdx < 0 || sectionIdx >= m_model->count())
+        return;
+
+    const QString newName = item->text(0).trimmed();
+    const QString oldName = m_model->at(sectionIdx).name;
+
+    if (newName.isEmpty()) {
+        QSignalBlocker blocker(m_tree);
+        item->setText(0, oldName);
+        return;
+    }
+
+    if (newName != oldName)
+        m_model->renameSection(sectionIdx, newName);
 }

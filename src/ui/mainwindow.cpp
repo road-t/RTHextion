@@ -33,6 +33,7 @@
 #include <QInputDialog>
 #include <QFile>
 #include <QPushButton>
+#include <QProgressDialog>
 #include <QPainter>
 #include <QFontMetrics>
 #include <QPointer>
@@ -55,6 +56,7 @@
 #include "ChangesDockWidget.h"
 #include "SectionsDockWidget.h"
 #include "SectionListModel.h"
+#include "disassembler.h"
 #include "romdetect.h"
 #include "romchecksum.h"
 #include "encodingdetect.h"
@@ -1268,6 +1270,143 @@ void MainWindow::addSectionFromSelection(int parentIdx)
     if (m_document)
         m_document->markDirty();
     hexEdit->viewport()->update();
+}
+
+void MainWindow::detectFunctions()
+{
+    if (!hexEdit || !m_sectionModel)
+        return;
+
+    const RomType romType = m_detectedRomType;
+    if (!Disassembler::isSupported(romType)) {
+        QMessageBox::warning(this, tr("Detect functions"),
+                             tr("Disassembly is not supported for the current ROM type."));
+        return;
+    }
+
+    const qint64 fileSize = hexEdit->dataSize();
+    if (fileSize <= 0)
+        return;
+
+    const qint64 headerSize = SectionListModel::romHeaderSize(romType);
+    const qint64 codeStart  = headerSize;
+    const qint64 codeLen    = fileSize - codeStart;
+    if (codeLen <= 0)
+        return;
+
+    // Read the ROM data
+    QByteArray romData = hexEdit->dataAt(0, fileSize);
+    if (romData.size() < fileSize)
+        return;
+
+    // Disassemble and detect functions
+    Disassembler disasm;
+    if (!disasm.setRomType(romType)) {
+        QMessageBox::warning(this, tr("Detect functions"),
+                             tr("Failed to initialize disassembler."));
+        return;
+    }
+
+    // Progress dialog
+    QProgressDialog progress(tr("Detecting functions..."), tr("Cancel"), 0, 100, this);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(0);
+    progress.setValue(0);
+    bool cancelled = false;
+
+    QVector<CallPointer> callPointers;
+
+    QVector<DetectedFunction> functions = disasm.scanFunctions(
+        romData, codeStart, static_cast<int>(codeLen),
+        [&](int percent) {
+            if (cancelled) return;
+            progress.setValue(percent);
+            QApplication::processEvents();
+            if (progress.wasCanceled())
+                cancelled = true;
+        },
+        &callPointers);
+
+    progress.setValue(100);
+
+    if (cancelled)
+        return;
+
+    if (functions.isEmpty()) {
+        QMessageBox::information(this, tr("Detect functions"),
+                                 tr("No functions detected."));
+        return;
+    }
+
+    // ── Build all sections and line breaks in bulk, then apply once ──
+
+    QVector<Section> allSections = m_sectionModel->sections();
+    const int codeParentIdx = allSections.size();
+
+    Section codeSection;
+    codeSection.name        = tr("Code");
+    codeSection.startOffset = codeStart;
+    codeSection.endOffset   = fileSize;
+    codeSection.color       = SectionListModel::randomPastelColor();
+    codeSection.parentIndex = -1;
+    codeSection.displayMode = SectionDisplay_Disasm;
+    codeSection.disasmCpu   = RomType::Unknown;
+    allSections.append(codeSection);
+
+    QVector<qint64> allBreaks = hexEdit->lineBreaks();
+
+    // One break before the code section so it starts on a fresh row.
+    // rebuildSectionAwareLayout() adds its own breaks at disasm section
+    // boundaries, creating one empty "header" row between functions.
+    if (codeStart > 0) {
+        if (!allBreaks.contains(codeStart - 1))
+            allBreaks.append(codeStart - 1);
+    }
+
+    for (int fi = 0; fi < functions.size(); ++fi) {
+        const DetectedFunction &df = functions[fi];
+
+        const QString funcName = QStringLiteral("sub_%1")
+            .arg(df.cpuAddress, 0, 16, QLatin1Char('0')).toUpper();
+
+        Section funcSection;
+        funcSection.name        = funcName;
+        funcSection.startOffset = df.startOffset;
+        funcSection.endOffset   = df.endOffset;
+        funcSection.color       = SectionListModel::randomPastelColor();
+        funcSection.parentIndex = codeParentIdx;
+        funcSection.displayMode = SectionDisplay_Disasm;
+        funcSection.disasmCpu   = RomType::Unknown;
+        allSections.append(funcSection);
+    }
+
+    std::sort(allBreaks.begin(), allBreaks.end());
+    m_sectionModel->applySections(allSections, tr("Detect functions"));
+    hexEdit->setLineBreaks(allBreaks);
+
+    // Add call pointers (absolute-address JSR/JMP references) to the pointer list.
+    // Only keep pointers whose target matches a detected function entry.
+    if (!callPointers.isEmpty()) {
+        QSet<qint64> funcStarts;
+        for (const auto &f : functions)
+            funcStarts.insert(f.startOffset);
+
+        QVector<QPair<qint64, qint64>> ptrBatch;
+        for (const auto &cp : callPointers) {
+            if (funcStarts.contains(cp.targetOffset)) {
+                ptrBatch.append({cp.ptrFileOffset,
+                                 PointerListModel::encodePtrValue(cp.targetOffset, cp.ptrSize)});
+            }
+        }
+        if (!ptrBatch.isEmpty())
+            hexEdit->pointers()->addPointersBatch(ptrBatch);
+    }
+
+    if (m_document)
+        m_document->markDirty();
+    hexEdit->viewport()->update();
+
+    statusBar()->showMessage(tr("Detected %1 functions").arg(functions.size()), 5000);
 }
 
 void MainWindow::showPointersDialog()
@@ -2914,6 +3053,8 @@ void MainWindow::init()
     connect(m_sectionsDock, &SectionsDockWidget::jumpToOffset, this, [this](qint64 offset) {
         hexEdit->setCursorPosition(offset * 2);
         hexEdit->ensureVisibleTop();
+        if (hexEdit->verticalScrollBar()->value() > 0)
+            hexEdit->verticalScrollBar()->setValue(hexEdit->verticalScrollBar()->value() - 1);
         hexEdit->setFocus();
     });
     connect(m_sectionsDock, &SectionsDockWidget::selectRangeRequested, this,
@@ -2934,6 +3075,9 @@ void MainWindow::init()
     connect(m_sectionsDock, &SectionsDockWidget::addSectionRequested, this, [this](int parentIdx) {
         addSectionFromSelection(parentIdx);
     });
+    connect(m_sectionsDock, &SectionsDockWidget::detectFunctionsRequested, this, [this]() {
+        detectFunctions();
+    });
     connect(m_sectionsDock, &SectionsDockWidget::disasmCpuChanged, this, [this](int /*sectionIdx*/, RomType cpu) {
         if (!hexEdit) return;
         // If the section specifies a CPU, use it; otherwise fall back to platform default
@@ -2950,6 +3094,12 @@ void MainWindow::init()
     // Auto-select the matching section in the tree as the cursor moves
     connect(hexEdit, &HexEditor::currentAddressChanged,
             m_sectionsDock, &SectionsDockWidget::highlightOffset);
+
+    // Start inline section rename on double-click of header row in hex editor
+    connect(hexEdit, &HexEditor::sectionHeaderDoubleClicked, this, [this](int sectionIndex) {
+        if (m_sectionsDock)
+            m_sectionsDock->startRenameSection(sectionIndex);
+    });
 
     // Keep SectionsDockWidget informed about available table names for the
     // "Display mode" submenu (sync on add / remove / rename).
@@ -5803,6 +5953,14 @@ void MainWindow::readSettings()
     hexEdit->setCursorFrameColor(settings.value("CursorFrameColor", QColor(Qt::black)).value<QColor>());
     hexEdit->setZeroByteFontColor(settings.value("ZeroByteFontColor", QColor(0xCC, 0xCC, 0xCC)).value<QColor>());
     hexEdit->setChangesColor(settings.value("ChangesColor", QColor(0x99, 0xff, 0x99, 0xff)).value<QColor>());
+    hexEdit->setSectionHeaderFontColor(settings.value("SectionHeaderFontColor", palette().color(QPalette::WindowText)).value<QColor>());
+    hexEdit->setSectionHeaderBackgroundColor(settings.value("SectionHeaderBgColor", QColor(0xD8, 0xD8, 0xD8, 0x90)).value<QColor>());
+    {
+        QFont sectionHeaderFont = settings.value("SectionHeaderFont", hexEdit->font()).value<QFont>();
+        if (!sectionHeaderFont.bold())
+            sectionHeaderFont.setBold(true);
+        hexEdit->setSectionHeaderFont(sectionHeaderFont);
+    }
 
     if (showAddressAreaAct)
         showAddressAreaAct->setChecked(hexEdit->addressArea());
@@ -6294,6 +6452,14 @@ void MainWindow::updateHexEditorSettings()
         editor->setCursorFrameColor(settings.value("CursorFrameColor", QColor(Qt::black)).value<QColor>());
         editor->setZeroByteFontColor(settings.value("ZeroByteFontColor", QColor(0xCC, 0xCC, 0xCC)).value<QColor>());
         editor->setChangesColor(settings.value("ChangesColor", QColor(0x99, 0xff, 0x99, 0xff)).value<QColor>());
+        editor->setSectionHeaderFontColor(settings.value("SectionHeaderFontColor", qApp->palette().color(QPalette::WindowText)).value<QColor>());
+        editor->setSectionHeaderBackgroundColor(settings.value("SectionHeaderBgColor", QColor(0xD8, 0xD8, 0xD8, 0x90)).value<QColor>());
+        {
+            QFont sectionHeaderFont = settings.value("SectionHeaderFont", editor->font()).value<QFont>();
+            if (!sectionHeaderFont.bold())
+                sectionHeaderFont.setBold(true);
+            editor->setSectionHeaderFont(sectionHeaderFont);
+        }
         editor->setScrollMapChangesBgColor(settings.value("ScrollMapPtrBgColor", QColor(0xd0, 0xd0, 0xd0)).value<QColor>());
         editor->setScrollMapTargetBgColor(settings.value("ScrollMapTargetBgColor", QColor(0xd0, 0xd0, 0xd0)).value<QColor>());
 
