@@ -58,6 +58,32 @@ public:
 };
 
 // ---------------------------------------------------------------------------
+// QTableWidgetItem subclass that sorts hex keys numerically
+// ---------------------------------------------------------------------------
+
+class HexSortItem : public QTableWidgetItem
+{
+public:
+    using QTableWidgetItem::QTableWidgetItem;
+
+    bool operator<(const QTableWidgetItem &other) const override
+    {
+        const QString a = text().trimmed().toUpper();
+        const QString b = other.text().trimmed().toUpper();
+        // Empty keys (placeholder row) sort last
+        if (a.isEmpty()) return false;
+        if (b.isEmpty()) return true;
+        // Compare as unsigned hex integers (up to 64-bit keys)
+        bool okA = false, okB = false;
+        const quint64 va = a.toULongLong(&okA, 16);
+        const quint64 vb = b.toULongLong(&okB, 16);
+        if (okA && okB) return va < vb;
+        // Fallback to string compare for very long keys
+        return a < b;
+    }
+};
+
+// ---------------------------------------------------------------------------
 // Undo command: stores before/after snapshots of all tables
 // ---------------------------------------------------------------------------
 
@@ -272,6 +298,8 @@ int TablesDockWidget::addTable(const QString &name, const TranslationTable *tabl
     grid->setSelectionMode(QAbstractItemView::ExtendedSelection);
     grid->setContextMenuPolicy(Qt::CustomContextMenu);
     grid->verticalHeader()->setDefaultSectionSize(22);
+    grid->setSortingEnabled(true);
+    grid->sortByColumn(0, Qt::AscendingOrder);
     connect(grid, &QTableWidget::cellChanged, this, &TablesDockWidget::onCellChanged);
     connect(grid, &QTableWidget::cellClicked, this, [this, grid](int row, int /*col*/) {
         if (isPlaceholderRow(grid, row))
@@ -641,14 +669,19 @@ void TablesDockWidget::onCellChanged(int row, int col)
 
 void TablesDockWidget::populateGrid(QTableWidget *grid, TranslationTable *table)
 {
+    grid->setSortingEnabled(false);
     grid->setRowCount(0);
-    if (!table) return;
+    if (!table) {
+        ensurePlaceholderRow(grid);
+        grid->setSortingEnabled(true);
+        return;
+    }
 
     auto *items = table->getItems();
     for (auto it = items->cbegin(); it != items->cend(); ++it) {
         const int row = grid->rowCount();
         grid->insertRow(row);
-        auto *hexItem = new QTableWidgetItem(
+        auto *hexItem = new HexSortItem(
             QString::number(static_cast<uint8_t>(it.key()), 16).toUpper().rightJustified(2, '0'));
         hexItem->setTextAlignment(Qt::AlignCenter);
         grid->setItem(row, 0, hexItem);
@@ -662,13 +695,14 @@ void TablesDockWidget::populateGrid(QTableWidget *grid, TranslationTable *table)
         QString hexKey;
         for (int i = 0; i < it.key().size(); ++i)
             hexKey += QString::number(static_cast<uint8_t>(it.key()[i]), 16).toUpper().rightJustified(2, '0');
-        auto *hexItem = new QTableWidgetItem(hexKey);
+        auto *hexItem = new HexSortItem(hexKey);
         hexItem->setTextAlignment(Qt::AlignCenter);
         grid->setItem(row, 0, hexItem);
         grid->setItem(row, 1, new QTableWidgetItem(it.value()));
     }
 
     ensurePlaceholderRow(grid);
+    grid->setSortingEnabled(true);
 }
 
 void TablesDockWidget::syncTableFromGrid(int tabIndex)
@@ -719,7 +753,7 @@ void TablesDockWidget::ensurePlaceholderRow(QTableWidget *grid)
     const int row = grid->rowCount();
     grid->insertRow(row);
 
-    auto *hexItem = new QTableWidgetItem(QString());
+    auto *hexItem = new HexSortItem(QString());
     hexItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
     hexItem->setTextAlignment(Qt::AlignCenter);
 
@@ -749,7 +783,7 @@ void TablesDockWidget::activatePlaceholderRow(QTableWidget *grid, int row)
 
     auto *hexItem = grid->item(row, 0);
     if (!hexItem) {
-        hexItem = new QTableWidgetItem;
+        hexItem = new HexSortItem;
         grid->setItem(row, 0, hexItem);
     }
     hexItem->setText(QString());
@@ -965,7 +999,7 @@ void TablesDockWidget::pasteRowsFromClipboard(QTableWidget *grid)
         }
 
         grid->insertRow(insertRow);
-        auto *hexItem = new QTableWidgetItem(rowData.hex);
+        auto *hexItem = new HexSortItem(rowData.hex);
         hexItem->setTextAlignment(Qt::AlignCenter);
         auto *valItem = new QTableWidgetItem(rowData.value);
         valItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled | Qt::ItemIsEditable);
@@ -1171,6 +1205,8 @@ void TablesDockWidget::applySnapshot(const QVector<TableTab> &snapshot, int acti
         grid->setSelectionMode(QAbstractItemView::ExtendedSelection);
         grid->setContextMenuPolicy(Qt::CustomContextMenu);
         grid->verticalHeader()->setDefaultSectionSize(22);
+        grid->setSortingEnabled(true);
+        grid->sortByColumn(0, Qt::AscendingOrder);
         connect(grid, &QTableWidget::cellChanged, this, &TablesDockWidget::onCellChanged);
         connect(grid, &QTableWidget::cellClicked, this, [this, grid](int row, int /*col*/) {
             if (isPlaceholderRow(grid, row))
