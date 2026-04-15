@@ -157,16 +157,22 @@ QColor SectionListModel::colorAtOffset(qint64 offset) const
 
 int SectionListModel::displayModeAtOffset(qint64 offset) const
 {
-    // Same 2-pass logic as colorAtOffset: prefer subsections.
-    for (const auto &s : m_sections) {
-        if (s.parentIndex >= 0 && offset >= s.startOffset && offset < s.endOffset)
-            return s.displayMode;
+    // Find the deepest (most nested) section containing the offset.
+    int bestMode = SectionDisplay_Default;
+    int bestDepth = -1;
+    for (int i = 0; i < m_sections.size(); ++i) {
+        const auto &s = m_sections[i];
+        if (offset < s.startOffset || offset >= s.endOffset)
+            continue;
+        int depth = 0;
+        for (int pi = s.parentIndex; pi >= 0 && pi < m_sections.size(); pi = m_sections[pi].parentIndex)
+            ++depth;
+        if (depth > bestDepth) {
+            bestDepth = depth;
+            bestMode = s.displayMode;
+        }
     }
-    for (const auto &s : m_sections) {
-        if (s.parentIndex < 0 && offset >= s.startOffset && offset < s.endOffset)
-            return s.displayMode;
-    }
-    return SectionDisplay_Default;
+    return bestMode;
 }
 
 QString SectionListModel::sectionNameAtStartOffset(qint64 offset) const
