@@ -11,7 +11,7 @@
 class HexEditor;
 class HexDocument;
 
-/// Per-tab state: everything that changes when the user switches between open files.
+// Per-tab state: everything that changes when the user switches between open files.
 class EditorSession
 {
 public:
@@ -27,12 +27,18 @@ public:
     bool isUntitled = true;
     qint64 curOffset = 0;
 
-    /// Non-owning pointer to the active translation table in TablesDockWidget.
+    // Non-owning pointer to the active translation table in TablesDockWidget.
     TranslationTable *table = nullptr;
 
-    /// Per-tab snapshot of the entire TablesDockWidget content (deep copy).
+    // Per-tab snapshot of the entire TablesDockWidget content (deep copy).
+    // Used for project save/load and initial session creation.
     QVector<TableTab> tableSnapshot;
     int tableActiveIndex = -1;
+
+    // Live table-dock widgets detached during tab switch (avoids widget
+    // recreation).  Populated by TablesDockWidget::detachTabs(), consumed
+    // by TablesDockWidget::attachTabs().
+    TablesDockWidget::LiveTabState liveTableState;
 
     QByteArray changeTrackingSnapshot;
 
