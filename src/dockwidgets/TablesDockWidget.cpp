@@ -1184,6 +1184,63 @@ void TablesDockWidget::pushUndoSnapshot(const QString &description)
     }, Qt::QueuedConnection);
 }
 
+// ---------------------------------------------------------------------------
+// Fast tab-switching: detach / attach live widgets
+// ---------------------------------------------------------------------------
+
+TablesDockWidget::LiveTabState TablesDockWidget::detachTabs()
+{
+    LiveTabState state;
+    state.activeIndex = m_tabs->currentIndex();
+
+    // Sync table data from grids before detaching
+    for (int i = 0; i < m_tables.size(); ++i)
+        syncTableFromGrid(i);
+
+    state.tables = std::move(m_tables);
+    m_tables.clear(); // ensure predictable empty state after move
+
+    // Remove tab widgets from QTabWidget without deleting them
+    state.wrappers.reserve(m_tabs->count());
+    while (m_tabs->count() > 0) {
+        QWidget *w = m_tabs->widget(0);
+        m_tabs->removeTab(0);
+        w->hide();
+        w->setParent(nullptr);          // un-parent so Qt won't auto-delete
+        state.wrappers.append(w);
+    }
+
+    updateButtonStates();
+    return state;
+}
+
+void TablesDockWidget::attachTabs(LiveTabState &&state)
+{
+    m_ignoreChanges = true;
+
+    // Drop any residual tabs (should be empty after a prior detach)
+    while (m_tabs->count() > 0)
+        m_tabs->removeTab(0);
+
+    m_tables = std::move(state.tables);
+
+    for (int i = 0; i < state.wrappers.size(); ++i) {
+        QWidget *w = state.wrappers[i];
+        w->setParent(this);
+        m_tabs->addTab(w, i < m_tables.size() ? m_tables[i].name : QString());
+    }
+    state.wrappers.clear();
+
+    m_ignoreChanges = false;
+
+    if (state.activeIndex >= 0 && state.activeIndex < m_tabs->count())
+        m_tabs->setCurrentIndex(state.activeIndex);
+
+    updateButtonStates();
+    emit tableContentChanged();
+    emit activeTableChanged(currentTable());
+}
+
 void TablesDockWidget::applySnapshot(const QVector<TableTab> &snapshot, int activeIndex)
 {
     m_ignoreChanges = true;

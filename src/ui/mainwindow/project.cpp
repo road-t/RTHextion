@@ -260,9 +260,21 @@ void MainWindow::openProjectFile(const QString &path)
         enforceBottomDockEqualWidth();
     }
 
-    // Keep the current tab session snapshot in sync with the just-loaded project.
-    // This prevents stale default values (like hidden tables dock) from being restored.
-    saveCurrentSession();
+    // Sync session state from the just-loaded project without detaching live tab
+    // widgets from the dock.  Calling saveCurrentSession() here would invoke
+    // detachTabs(), which strips every tab widget from the QTabWidget and makes
+    // the dock appear empty.  Instead we only update the fields that could be
+    // stale from the default-constructed session created at project open time.
+    if (m_currentSession)
+    {
+        m_currentSession->tableSnapshot    = m_tablesDock->takeSnapshot();
+        m_currentSession->tableActiveIndex = m_tablesDock->currentIndex();
+        m_currentSession->dockTablesVisible    = m_tablesDock   && m_tablesDock->isVisible();
+        m_currentSession->dockPointersVisible  = m_pointersDock && m_pointersDock->isVisible();
+        m_currentSession->dockChangesVisible   = m_changesDock  && m_changesDock->isVisible();
+        m_currentSession->dockSectionsVisible  = m_sectionsDock && m_sectionsDock->isVisible();
+        m_currentSession->dockVisibilityInitialized = true;
+    }
 }
 
 bool MainWindow::saveProject()

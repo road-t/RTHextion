@@ -92,6 +92,22 @@ public:
     /// Capture current state as a snapshot (deep copy).
     QVector<TableTab> takeSnapshot() const;
 
+    // -----------------------------------------------------------------------
+    // Fast tab-switching: detach/attach live widgets instead of destroy/create
+    // -----------------------------------------------------------------------
+    struct LiveTabState {
+        QVector<TableTab> tables;
+        QVector<QWidget*> wrappers;   ///< tab wrapper widgets (unparented)
+        int activeIndex = -1;
+    };
+
+    /// Remove all tabs from the QTabWidget without deleting widgets.
+    /// Returns a moveable state that can be passed to attachTabs() later.
+    LiveTabState detachTabs();
+
+    /// Reattach previously detached tab widgets.
+    void attachTabs(LiveTabState &&state);
+
     /// Save/restore grid column widths for all tabs.
     QByteArray saveColumnsState() const;
     void restoreColumnsState(const QByteArray &state);

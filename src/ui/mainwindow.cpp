@@ -1737,7 +1737,9 @@ void MainWindow::init()
             m_currentSession->dockTablesVisible = visible;
             m_currentSession->dockVisibilityInitialized = true;
         }
-        saveProjectDockVisibilityState();
+        
+        if (!m_restoringProjectUi)
+            saveProjectDockVisibilityState();
         updateDockAreaActions();
     });
     connect(m_pointersDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
@@ -1745,9 +1747,12 @@ void MainWindow::init()
             m_currentSession->dockPointersVisible = visible;
             m_currentSession->dockVisibilityInitialized = true;
         }
-        saveProjectDockVisibilityState();
+        
+        if (!m_restoringProjectUi)
+            saveProjectDockVisibilityState();
         updateDockAreaActions();
     });
+
     connect(m_changesDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
         if (m_currentSession) {
             m_currentSession->dockChangesVisible = visible;
@@ -1755,7 +1760,9 @@ void MainWindow::init()
         }
         if (visible && m_document)
             refreshChangesView();
-        saveProjectDockVisibilityState();
+        
+        if (!m_restoringProjectUi)
+            saveProjectDockVisibilityState();
         updateDockAreaActions();
     });
     connect(m_sectionsDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
@@ -1763,7 +1770,9 @@ void MainWindow::init()
             m_currentSession->dockSectionsVisible = visible;
             m_currentSession->dockVisibilityInitialized = true;
         }
-        saveProjectDockVisibilityState();
+        
+        if (!m_restoringProjectUi)
+            saveProjectDockVisibilityState();
         updateDockAreaActions();
     });
 
