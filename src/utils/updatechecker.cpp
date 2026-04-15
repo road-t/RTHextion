@@ -6,7 +6,7 @@
 #include <QNetworkRequest>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QSettings>
+#include "appsettings.h"
 #include <QDateTime>
 #include <QVersionNumber>
 
@@ -34,7 +34,7 @@ void UpdateChecker::check(bool silent)
 
 bool UpdateChecker::shouldAutoCheck()
 {
-    QSettings settings(AppInfo::Name, AppInfo::Name);
+    auto &settings = AppSettings::instance();
     QDateTime last = settings.value(kSettingsLastCheck).toDateTime();
     if (!last.isValid())
         return true;
@@ -43,7 +43,7 @@ bool UpdateChecker::shouldAutoCheck()
 
 void UpdateChecker::markChecked()
 {
-    QSettings settings(AppInfo::Name, AppInfo::Name);
+    auto &settings = AppSettings::instance();
     settings.setValue(kSettingsLastCheck, QDateTime::currentDateTimeUtc());
 }
 

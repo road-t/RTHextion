@@ -24,7 +24,7 @@
 #include <QComboBox>
 #include <QGroupBox>
 #include <QHBoxLayout>
-#include <QSettings>
+#include "appsettings.h"
 
 static constexpr const char *kPointersProfileRomTypeKey = "pointers/profile_rom_type";
 static constexpr const char *kPointersProfileOffsetKey = "pointers/profile_offset_hex";
@@ -112,13 +112,13 @@ PointersDialog::PointersDialog(HexEditor *hexEdit, QWidget *parent) :
         else
             _leProfileOffset->setText(QString::number(offset, 16).toUpper());
 
-        QSettings settings;
+        auto &settings = AppSettings::instance();
         settings.setValue(QLatin1String(kPointersProfileRomTypeKey), static_cast<int>(rt));
         settings.setValue(QLatin1String(kPointersProfileOffsetKey), _leProfileOffset->text().trimmed().toUpper());
     });
 
     connect(_leProfileOffset, &QLineEdit::editingFinished, this, [this]() {
-        QSettings settings;
+        auto &settings = AppSettings::instance();
         settings.setValue(QLatin1String(kPointersProfileOffsetKey), _leProfileOffset->text().trimmed().toUpper());
     });
 
@@ -127,7 +127,7 @@ PointersDialog::PointersDialog(HexEditor *hexEdit, QWidget *parent) :
     auto onPointerSizeToggled = [this](int size, bool checked) {
         if (!checked || !_profileInitialized)
             return;
-        QSettings s;
+        auto &s = AppSettings::instance();
         s.setValue(QLatin1String(kPointersPointerSizeKey), size);
         if (auto *mw = qobject_cast<MainWindow *>(this->parent()))
             mw->setCurrentPointerSize(size);
@@ -391,7 +391,7 @@ void PointersDialog::showEvent(QShowEvent *ev)
         if (mw)
             setRomProfile(mw->currentRomType(), mw->currentPointerOffset());
 
-        QSettings settings;
+        auto &settings = AppSettings::instance();
         const QVariant savedRomType = settings.value(QLatin1String(kPointersProfileRomTypeKey));
         const QString savedOffset = settings.value(QLatin1String(kPointersProfileOffsetKey)).toString().trimmed().toUpper();
 
@@ -550,7 +550,7 @@ void PointersDialog::on_bbControls_accepted()
                 pointerOffset = negative ? -absVal : absVal;
         }
 
-        QSettings settings;
+        auto &settings = AppSettings::instance();
         settings.setValue(QLatin1String(kPointersProfileOffsetKey), offText.toUpper());
         settings.setValue(QLatin1String(kPointersProfileRomTypeKey), _cbProfileRomType->currentData().toInt());
     }

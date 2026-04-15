@@ -1,6 +1,6 @@
 #include <QMessageBox>
 #include <QFileDialog>
-#include <QSettings>
+#include "appsettings.h"
 #include <QDir>
 #include <QFileInfo>
 #include <QEvent>
@@ -274,7 +274,7 @@ void DumpScriptDialog::on_pbCancel_clicked()
 
 void DumpScriptDialog::on_pbExport_clicked()
 {
-    QSettings settings;
+    auto &settings = AppSettings::instance();
     const QString defaultDir = settings.value(kLastDumpDirKey, QDir::homePath()).toString();
     QString fileName = QFileDialog::getSaveFileName(this,
                                                     tr("Export script"),

@@ -8,7 +8,7 @@
 using namespace MainWindowInternal;
 #include <QFileDialog>
 #include <QMessageBox>
-#include <QSettings>
+#include "appsettings.h"
 #include <QApplication>
 #include <QProgressDialog>
 #include <QLabel>
@@ -214,7 +214,7 @@ void MainWindow::openProjectFile(const QString &path)
     }
 
     // 8. Remember project as last opened
-    QSettings settings;
+    auto &settings = AppSettings::instance();
     settings.setValue(QStringLiteral("LastProjectFile"), path);
     addToRecentProjects(path);
     rememberDirectory(QStringLiteral("kLastProjectDirKey"), path);
@@ -446,7 +446,7 @@ bool MainWindow::saveProjectImpl(const QString &path)
     }
 
     {
-        QSettings settings;
+        auto &settings = AppSettings::instance();
         settings.setValue(QStringLiteral("LastProjectFile"), path);
     }
     addToRecentProjects(path);
@@ -534,7 +534,7 @@ void MainWindow::loadFile(const QString &fileName)
     // 1. Detect ROM type (if enabled). If detected → force ASCII, done.
     // 2. If ROM unknown, detect text encoding (if enabled). If non-ASCII found → apply it, done.
     // 3. Otherwise: if ResetEncodingOnClose is set → apply DefaultEncoding; else keep current.
-    QSettings settings;
+    auto &settings = AppSettings::instance();
     const bool detectRomTypeEnabled = settings.value("DetectEndianness", true).toBool();
     const bool detectEncodingEnabled = settings.value("DetectEncoding", true).toBool();
     const QString defaultEncoding = settings.value("DefaultEncoding", QStringLiteral("ASCII")).toString();
@@ -690,7 +690,7 @@ void MainWindow::loadFile(const QString &fileName, RomType suggestedRomType)
 
         hexEdit->setDisasmRomType(suggestedRomType);
 
-        QSettings settings;
+        auto &settings = AppSettings::instance();
         settings.setValue("RecentFile0RomType", static_cast<int>(suggestedRomType));
 
         if (m_sectionsDock) {

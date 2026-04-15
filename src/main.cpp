@@ -3,7 +3,7 @@
 #include <QIcon>
 #include <QLocale>
 #include <QScreen>
-#include <QSettings>
+#include "appsettings.h"
 #include <QFile>
 #include <QStringList>
 #include <QTimer>
@@ -19,7 +19,7 @@ namespace
     // Ensure all application settings have default values on first launch
     void initializeDefaultSettings()
     {
-        QSettings settings(AppInfo::Name, AppInfo::Name);
+        auto &settings = AppSettings::instance();
 
         // Initialize boolean settings
         if (!settings.contains("AddressArea"))
@@ -143,7 +143,7 @@ int main(int argc, char *argv[])
     // Initialize default settings on first launch
     initializeDefaultSettings();
 
-    QSettings settings(AppInfo::Name, AppInfo::Name);
+    auto &settings = AppSettings::instance();
     QString locale = settings.value("Language", QStringLiteral("en")).toString();
     const QString languageShort = locale.left(2);
 

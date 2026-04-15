@@ -2,7 +2,7 @@
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QPalette>
-#include <QSettings>
+#include "appsettings.h"
 #include <QGuiApplication>
 
 namespace {
@@ -220,7 +220,7 @@ EditorTheme EditorTheme::fromJson(const QJsonObject &o)
 
 void EditorTheme::applyToSettings() const
 {
-    QSettings s;
+    auto &s = AppSettings::instance();
     s.setValue(QStringLiteral("DarkTheme"), darkMode);
     s.setValue(QStringLiteral("WidgetFont"), hexFont);
     s.setValue(QStringLiteral("Highlighting"), true);
@@ -258,7 +258,7 @@ EditorTheme EditorTheme::fromCurrentSettings()
 {
     EditorTheme def = defaultLight();
     EditorTheme t;
-    QSettings s;
+    auto &s = AppSettings::instance();
     t.name = QStringLiteral("Current");
     t.darkMode = s.value(QStringLiteral("DarkTheme"), false).toBool();
     t.hexFont = s.value(QStringLiteral("WidgetFont"), def.hexFont).value<QFont>();
@@ -302,7 +302,7 @@ static const QLatin1String kUserThemesGroup("UserThemes");
 
 QStringList EditorTheme::userPresetNames()
 {
-    QSettings s;
+    auto &s = AppSettings::instance();
     s.beginGroup(kUserThemesGroup);
     QStringList names = s.childKeys();
     s.endGroup();
@@ -311,7 +311,7 @@ QStringList EditorTheme::userPresetNames()
 
 void EditorTheme::saveUserPreset(const EditorTheme &theme)
 {
-    QSettings s;
+    auto &s = AppSettings::instance();
     QJsonDocument doc(theme.toJson());
     s.setValue(kUserThemesGroup + QLatin1Char('/') + theme.name,
               QString::fromUtf8(doc.toJson(QJsonDocument::Compact)));
@@ -319,13 +319,13 @@ void EditorTheme::saveUserPreset(const EditorTheme &theme)
 
 void EditorTheme::deleteUserPreset(const QString &name)
 {
-    QSettings s;
+    auto &s = AppSettings::instance();
     s.remove(kUserThemesGroup + QLatin1Char('/') + name);
 }
 
 EditorTheme EditorTheme::loadUserPreset(const QString &name)
 {
-    QSettings s;
+    auto &s = AppSettings::instance();
     const QString json = s.value(kUserThemesGroup + QLatin1Char('/') + name).toString();
     QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8());
     if (doc.isNull())

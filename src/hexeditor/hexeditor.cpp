@@ -1,881 +1,5 @@
-#include <QtGlobal>
-#include <QApplication>
-#include <QClipboard>
-#include <QContextMenuEvent>
-#include <QKeyEvent>
-#include <QPainter>
-#include <QScrollBar>
-#include <QStyleOptionSlider>
-#include <QToolTip>
-#include <QHelpEvent>
-#include <QProgressDialog>
-#include <QTimer>
-#include <QSet>
-#include <QSettings>
-#include <QInputDialog>
-#include <QElapsedTimer>
-#include <QLineEdit>
-#include <QUndoCommand>
-#include <QStringDecoder>
-#include <QStringEncoder>
-
-#include "hexeditor.h"
-#include "hexscrollmap.h"
-#include "SectionListModel.h"
-#include "disassembler.h"
-#include "romdetect.h"
-#include <algorithm>
-#include <cmath>
-#include <cerrno>
-#include <QtConcurrent>
-#include <iconv.h>
-
-namespace
-{
-    const int kHexColumnExtraGapPx = 4;
-    const int kHexRowExtraGapPx = 4;
-    const int kAddressRightPaddingPx = 4;
-    const int kAsciiAreaLeftPaddingPx = 4;
-    const int kAsciiColumnGapSinglePx = 2; // spacing for one-cell glyphs
-    const int kAsciiColumnGapWidePx = 3;   // spacing for wide/multi-byte glyphs
-    const int kPointerByteSize = 4;
-    const int kScrollMapWidth = 12;   // width of the side-bar scroll map strip in pixels
-
-    // Returns true for encodings that are always one-byte-per-character
-    bool isSingleByteEncoding(const QString &enc)
-    {
-        return enc == QLatin1String("ASCII")
-            || enc == QLatin1String("ISO-8859-1")
-            || enc == QLatin1String("Windows-1252")
-            || enc == QLatin1String("KOI8-R")
-            || enc == QLatin1String("KOI8-U")
-            || enc == QLatin1String("Windows-1251")
-            || enc == QLatin1String("CP-866")
-            || enc == QLatin1String("Mac Cyrillic");
-    }
-
-    QVector<QByteArray> codecCandidates(const QString &enc)
-    {
-        if (enc == QLatin1String("UTF-16 LE"))    return { QByteArrayLiteral("UTF-16LE"), QByteArrayLiteral("UTF-16") };
-        if (enc == QLatin1String("UTF-16 BE"))    return { QByteArrayLiteral("UTF-16BE"), QByteArrayLiteral("UTF-16") };
-        if (enc == QLatin1String("UTF-32 LE"))    return { QByteArrayLiteral("UTF-32LE"), QByteArrayLiteral("UTF-32") };
-        if (enc == QLatin1String("UTF-32 BE"))    return { QByteArrayLiteral("UTF-32BE"), QByteArrayLiteral("UTF-32") };
-        if (enc == QLatin1String("Shift-JIS"))    return { QByteArrayLiteral("Shift-JIS"), QByteArrayLiteral("Shift_JIS"), QByteArrayLiteral("CP932"), QByteArrayLiteral("windows-31j") };
-        if (enc == QLatin1String("EUC-JP"))       return { QByteArrayLiteral("EUC-JP"), QByteArrayLiteral("EUCJP") };
-        if (enc == QLatin1String("ISO-2022-JP"))  return { QByteArrayLiteral("ISO-2022-JP") };
-        if (enc == QLatin1String("GB2312"))       return { QByteArrayLiteral("GB2312"), QByteArrayLiteral("GB_2312-80") };
-        if (enc == QLatin1String("GBK"))          return { QByteArrayLiteral("GBK"), QByteArrayLiteral("CP936") };
-        if (enc == QLatin1String("GB18030"))      return { QByteArrayLiteral("GB18030") };
-        if (enc == QLatin1String("EUC-KR"))       return { QByteArrayLiteral("EUC-KR"), QByteArrayLiteral("CP949") };
-        if (enc == QLatin1String("ISO-8859-1"))   return { QByteArrayLiteral("ISO-8859-1") };
-        if (enc == QLatin1String("ISO-8859-2"))   return { QByteArrayLiteral("ISO-8859-2") };
-        if (enc == QLatin1String("ISO-8859-3"))   return { QByteArrayLiteral("ISO-8859-3") };
-        if (enc == QLatin1String("ISO-8859-4"))   return { QByteArrayLiteral("ISO-8859-4") };
-        if (enc == QLatin1String("ISO-8859-5"))   return { QByteArrayLiteral("ISO-8859-5") };
-        if (enc == QLatin1String("ISO-8859-6"))   return { QByteArrayLiteral("ISO-8859-6") };
-        if (enc == QLatin1String("ISO-8859-7"))   return { QByteArrayLiteral("ISO-8859-7") };
-        if (enc == QLatin1String("ISO-8859-8"))   return { QByteArrayLiteral("ISO-8859-8") };
-        if (enc == QLatin1String("ISO-8859-9"))   return { QByteArrayLiteral("ISO-8859-9") };
-        if (enc == QLatin1String("ISO-8859-10"))  return { QByteArrayLiteral("ISO-8859-10") };
-        if (enc == QLatin1String("ISO-8859-11"))  return { QByteArrayLiteral("ISO-8859-11") };
-        if (enc == QLatin1String("ISO-8859-13"))  return { QByteArrayLiteral("ISO-8859-13") };
-        if (enc == QLatin1String("ISO-8859-14"))  return { QByteArrayLiteral("ISO-8859-14") };
-        if (enc == QLatin1String("ISO-8859-15"))  return { QByteArrayLiteral("ISO-8859-15") };
-        if (enc == QLatin1String("ISO-8859-16"))  return { QByteArrayLiteral("ISO-8859-16") };
-        if (enc == QLatin1String("Windows-1252")) return { QByteArrayLiteral("windows-1252"), QByteArrayLiteral("CP1252") };
-        if (enc == QLatin1String("Windows-1251")) return { QByteArrayLiteral("windows-1251"), QByteArrayLiteral("CP1251") };
-        if (enc == QLatin1String("KOI8-R"))       return { QByteArrayLiteral("KOI8-R") };
-        if (enc == QLatin1String("KOI8-U"))       return { QByteArrayLiteral("KOI8-U") };
-        if (enc == QLatin1String("Mac Cyrillic")) return { QByteArrayLiteral("x-mac-cyrillic"), QByteArrayLiteral("mac-cyrillic"), QByteArrayLiteral("maccyrillic") };
-        return { enc.toLatin1() };
-    }
-
-    QChar decodeSingleByte(uint8_t byte, const QString &encoding);
-
-    // iconv-based helpers for codecs not supported by Qt 6.2 QStringDecoder
-    const char *iconvCodecName(const QString &enc)
-    {
-        if (enc == QLatin1String("Shift-JIS"))    return "CP932";
-        if (enc == QLatin1String("EUC-JP"))       return "EUC-JP";
-        if (enc == QLatin1String("ISO-2022-JP"))  return "ISO-2022-JP";
-        if (enc == QLatin1String("GB2312"))       return "GB2312";
-        if (enc == QLatin1String("GBK"))          return "GBK";
-        if (enc == QLatin1String("GB18030"))      return "GB18030";
-        if (enc == QLatin1String("EUC-KR"))       return "EUC-KR";
-        if (enc == QLatin1String("UTF-8"))        return "UTF-8";
-        if (enc == QLatin1String("UTF-16 LE"))    return "UTF-16LE";
-        if (enc == QLatin1String("UTF-16 BE"))    return "UTF-16BE";
-        if (enc == QLatin1String("UTF-32 LE"))    return "UTF-32LE";
-        if (enc == QLatin1String("UTF-32 BE"))    return "UTF-32BE";
-        if (enc == QLatin1String("ISO-8859-1"))   return "ISO-8859-1";
-        if (enc == QLatin1String("ISO-8859-2"))   return "ISO-8859-2";
-        if (enc == QLatin1String("ISO-8859-5"))   return "ISO-8859-5";
-        if (enc == QLatin1String("Windows-1251")) return "CP1251";
-        if (enc == QLatin1String("Windows-1252")) return "CP1252";
-        if (enc == QLatin1String("KOI8-R"))       return "KOI8-R";
-        if (enc == QLatin1String("KOI8-U"))       return "KOI8-U";
-        if (enc == QLatin1String("CP-866"))        return "CP866";
-        if (enc == QLatin1String("Mac Cyrillic")) return "MAC-CYRILLIC";
-        return nullptr;
-    }
-
-    // Returns the byte sequence length at position `pos` in `data` for the given multi-byte
-    // encoding. Used to feed complete sequences to iconv rather than byte-by-byte, which is
-    // required because POSIX iconv EINVAL does NOT consume the incomplete lead byte.
-    int iconvSeqLen(const QByteArray &data, int pos, const QString &enc)
-    {
-        const int rem = data.size() - pos;
-        const unsigned char b = (unsigned char)data[pos];
-        if (enc == QLatin1String("Shift-JIS")) {
-            // Lead bytes: 0x81-0x9F or 0xE0-0xFC, trail bytes: 0x40-0x7E or 0x80-0xFC
-            if ((b >= 0x81 && b <= 0x9F) || (b >= 0xE0 && b <= 0xFC)) {
-                if (rem >= 2) {
-                    const unsigned char b1 = (unsigned char)data[pos + 1];
-                    if ((b1 >= 0x40 && b1 <= 0x7E) || (b1 >= 0x80 && b1 <= 0xFC))
-                        return 2;
-                }
-            }
-            return 1;
-        }
-        if (enc == QLatin1String("EUC-JP")) {
-            if (b < 0x80) return 1;
-            if (b == 0x8E) return (rem >= 2) ? 2 : 1; // SS2: half-width katakana
-            if (b == 0x8F) return (rem >= 3) ? 3 : 1; // SS3: JIS X 0212
-            if (b >= 0xA1 && b <= 0xFE) return (rem >= 2) ? 2 : 1;
-            return 1;
-        }
-        if (enc == QLatin1String("GB2312") || enc == QLatin1String("GBK")) {
-            if (b < 0x81) return 1;
-            return (rem >= 2) ? 2 : 1;
-        }
-        if (enc == QLatin1String("GB18030")) {
-            if (b < 0x81) return 1;
-            if (rem >= 2) {
-                const unsigned char b1 = (unsigned char)data[pos + 1];
-                if (b1 >= 0x30 && b1 <= 0x39) return (rem >= 4) ? 4 : 1; // 4-byte sequence
-                return 2; // 2-byte sequence
-            }
-            return 1;
-        }
-        if (enc == QLatin1String("EUC-KR")) {
-            if (b < 0x80) return 1;
-            if (b >= 0xA1 && b <= 0xFE) return (rem >= 2) ? 2 : 1;
-            return 1;
-        }
-        // ISO-2022-JP is stateful; iconv maintains internal shift state so feed 1 byte at a time
-        return 1;
-    }
-
-    QString decodeWithIconv(const QByteArray &data, const QString &encoding)
-    {
-        const char *fromCodec = iconvCodecName(encoding);
-        if (!fromCodec) {
-            // Try the raw encoding name
-            QByteArray encBytes = encoding.toLatin1();
-            iconv_t cd = iconv_open("UTF-8", encBytes.constData());
-            if (cd == (iconv_t)-1)
-                return QString();
-            size_t inLeft = data.size();
-            char *inBuf = const_cast<char*>(data.constData());
-            QByteArray outBuf(data.size() * 4 + 16, '\0');
-            size_t outLeft = outBuf.size();
-            char *outPtr = outBuf.data();
-            iconv(cd, &inBuf, &inLeft, &outPtr, &outLeft);
-            iconv_close(cd);
-            return QString::fromUtf8(outBuf.constData(), outBuf.size() - outLeft);
-        }
-        iconv_t cd = iconv_open("UTF-8", fromCodec);
-        if (cd == (iconv_t)-1)
-            return QString();
-        size_t inLeft = data.size();
-        char *inBuf = const_cast<char*>(data.constData());
-        QByteArray outBuf(data.size() * 4 + 16, '\0');
-        size_t outLeft = outBuf.size();
-        char *outPtr = outBuf.data();
-        iconv(cd, &inBuf, &inLeft, &outPtr, &outLeft);
-        iconv_close(cd);
-        return QString::fromUtf8(outBuf.constData(), outBuf.size() - outLeft);
-    }
-
-    QByteArray encodeWithIconv(const QString &text, const QString &encoding)
-    {
-        QByteArray utf8 = text.toUtf8();
-        const char *toCodec = iconvCodecName(encoding);
-        QByteArray encBytes;
-        if (!toCodec) {
-            encBytes = encoding.toLatin1();
-            toCodec = encBytes.constData();
-        }
-        iconv_t cd = iconv_open(toCodec, "UTF-8");
-        if (cd == (iconv_t)-1)
-            return text.toLatin1();
-        size_t inLeft = utf8.size();
-        char *inBuf = const_cast<char*>(utf8.constData());
-        QByteArray outBuf(utf8.size() * 2 + 16, '\0');
-        size_t outLeft = outBuf.size();
-        char *outPtr = outBuf.data();
-        iconv(cd, &inBuf, &inLeft, &outPtr, &outLeft);
-        iconv_close(cd);
-        outBuf.resize(outBuf.size() - outLeft);
-        return outBuf;
-    }
-
-    QString decodeTextWithEncoding(const QByteArray &data, const QString &encoding)
-    {
-        if (data.isEmpty())
-            return QString();
-
-        if (encoding == QLatin1String("ASCII"))
-            return QString::fromLatin1(data.constData(), data.size());
-
-        if (isSingleByteEncoding(encoding)) {
-            QString out;
-            out.reserve(data.size());
-            for (int i = 0; i < data.size(); ++i) {
-                const QChar ch = decodeSingleByte(static_cast<uint8_t>(static_cast<unsigned char>(data[i])), encoding);
-                out.append(ch.unicode() ? ch : QChar('.'));
-            }
-            return out;
-        }
-
-        for (const QByteArray &codecName : codecCandidates(encoding)) {
-            auto dec = QStringDecoder(codecName.constData());
-            if (dec.isValid())
-                return dec(data);
-        }
-        // Fallback to iconv for codecs not supported by QStringDecoder (CJK, etc.)
-        QString result = decodeWithIconv(data, encoding);
-        if (!result.isEmpty())
-            return result;
-        return QString::fromLatin1(data.constData(), data.size());
-    }
-
-    QByteArray encodeTextWithEncoding(const QString &text, const QString &encoding)
-    {
-        if (encoding == QLatin1String("ASCII"))
-            return text.toLatin1();
-
-        for (const QByteArray &codecName : codecCandidates(encoding)) {
-            auto enc = QStringEncoder(codecName.constData());
-            if (!enc.isValid())
-                continue;
-            const QByteArray out = enc(text);
-            if (!out.isEmpty() || text.isEmpty())
-                return out;
-        }
-        // Fallback to iconv for codecs not supported by QStringEncoder
-        if (!isSingleByteEncoding(encoding)) {
-            QByteArray result = encodeWithIconv(text, encoding);
-            if (!result.isEmpty() || text.isEmpty())
-                return result;
-        }
-        return text.toLatin1();
-    }
-
-    // ---- Static codec tables for single-byte encodings (0x80-0xFF → Unicode) ----
-    static const char16_t kWindows1251[128] = {
-        0x0402,0x0403,0x201A,0x0453,0x201E,0x2026,0x2020,0x2021,
-        0x20AC,0x2030,0x0409,0x2039,0x040A,0x040C,0x040B,0x040F,
-        0x0452,0x2018,0x2019,0x201C,0x201D,0x2022,0x2013,0x2014,
-        0x0000,0x2122,0x0459,0x203A,0x045A,0x045C,0x045B,0x045F,
-        0x00A0,0x040E,0x045E,0x0408,0x00A4,0x0490,0x00A6,0x00A7,
-        0x0401,0x00A9,0x0404,0x00AB,0x00AC,0x00AD,0x00AE,0x0407,
-        0x00B0,0x00B1,0x0406,0x0456,0x0491,0x00B5,0x00B6,0x00B7,
-        0x0451,0x2116,0x0454,0x00BB,0x0458,0x0405,0x0455,0x0457,
-        0x0410,0x0411,0x0412,0x0413,0x0414,0x0415,0x0416,0x0417,
-        0x0418,0x0419,0x041A,0x041B,0x041C,0x041D,0x041E,0x041F,
-        0x0420,0x0421,0x0422,0x0423,0x0424,0x0425,0x0426,0x0427,
-        0x0428,0x0429,0x042A,0x042B,0x042C,0x042D,0x042E,0x042F,
-        0x0430,0x0431,0x0432,0x0433,0x0434,0x0435,0x0436,0x0437,
-        0x0438,0x0439,0x043A,0x043B,0x043C,0x043D,0x043E,0x043F,
-        0x0440,0x0441,0x0442,0x0443,0x0444,0x0445,0x0446,0x0447,
-        0x0448,0x0449,0x044A,0x044B,0x044C,0x044D,0x044E,0x044F
-    };
-
-    static const char16_t kKOI8R[128] = {
-        0x2500,0x2502,0x250C,0x2510,0x2514,0x2518,0x251C,0x2524,
-        0x252C,0x2534,0x253C,0x2580,0x2584,0x2588,0x258C,0x2590,
-        0x2591,0x2592,0x2593,0x2320,0x25A0,0x2219,0x221A,0x2248,
-        0x2264,0x2265,0x00A0,0x2321,0x00B0,0x00B2,0x00B7,0x00F7,
-        0x2550,0x2551,0x2552,0x0451,0x2553,0x2554,0x2555,0x2556,
-        0x2557,0x2558,0x2559,0x255A,0x255B,0x255C,0x255D,0x255E,
-        0x255F,0x2560,0x2561,0x0401,0x2562,0x2563,0x2564,0x2565,
-        0x2566,0x2567,0x2568,0x2569,0x256A,0x256B,0x256C,0x00A9,
-        0x044E,0x0430,0x0431,0x0446,0x0434,0x0435,0x0444,0x0433,
-        0x0445,0x0438,0x0439,0x043A,0x043B,0x043C,0x043D,0x043E,
-        0x043F,0x044F,0x0440,0x0441,0x0442,0x0443,0x0436,0x0432,
-        0x044C,0x044B,0x0437,0x0448,0x044D,0x0449,0x0447,0x044A,
-        0x042E,0x0410,0x0411,0x0426,0x0414,0x0415,0x0424,0x0413,
-        0x0425,0x0418,0x0419,0x041A,0x041B,0x041C,0x041D,0x041E,
-        0x041F,0x042F,0x0420,0x0421,0x0422,0x0423,0x0416,0x0412,
-        0x042C,0x042B,0x0417,0x0428,0x042D,0x0429,0x0427,0x042A
-    };
-
-    static const char16_t kCP866[128] = {
-        0x0410,0x0411,0x0412,0x0413,0x0414,0x0415,0x0416,0x0417,
-        0x0418,0x0419,0x041A,0x041B,0x041C,0x041D,0x041E,0x041F,
-        0x0420,0x0421,0x0422,0x0423,0x0424,0x0425,0x0426,0x0427,
-        0x0428,0x0429,0x042A,0x042B,0x042C,0x042D,0x042E,0x042F,
-        0x0430,0x0431,0x0432,0x0433,0x0434,0x0435,0x0436,0x0437,
-        0x0438,0x0439,0x043A,0x043B,0x043C,0x043D,0x043E,0x043F,
-        0x2591,0x2592,0x2593,0x2502,0x2524,0x2561,0x2562,0x2556,
-        0x2555,0x2563,0x2551,0x2557,0x255D,0x255C,0x255B,0x2510,
-        0x2514,0x2534,0x252C,0x251C,0x2500,0x253C,0x255E,0x255F,
-        0x255A,0x2554,0x2569,0x2566,0x2560,0x2550,0x256C,0x2567,
-        0x2568,0x2564,0x2565,0x2559,0x2558,0x2552,0x2553,0x256B,
-        0x256A,0x2518,0x250C,0x2588,0x2584,0x258C,0x2590,0x2580,
-        0x0440,0x0441,0x0442,0x0443,0x0444,0x0445,0x0446,0x0447,
-        0x0448,0x0449,0x044A,0x044B,0x044C,0x044D,0x044E,0x044F,
-        0x0401,0x0451,0x0404,0x0454,0x0407,0x0457,0x040E,0x045E,
-        0x00B0,0x2219,0x00B7,0x221A,0x2116,0x00A4,0x25A0,0x00A0
-    };
-
-    // KOI8-U: same as KOI8-R but with 6 Ukrainian letters replacing box-drawing chars
-    static const char16_t kKOI8U[128] = {
-        0x2500,0x2502,0x250C,0x2510,0x2514,0x2518,0x251C,0x2524,
-        0x252C,0x2534,0x253C,0x2580,0x2584,0x2588,0x258C,0x2590,
-        0x2591,0x2592,0x2593,0x2320,0x25A0,0x2219,0x221A,0x2248,
-        0x2264,0x2265,0x00A0,0x2321,0x00B0,0x00B2,0x00B7,0x00F7,
-        // 0xA0-0xA7: KOI8-U replaces some box-drawing with Ukrainian letters
-        0x2550,0x2551,0x2552,0x0451,0x0491,0x2554,0x0456,0x0457,
-        0x2557,0x2558,0x2559,0x255A,0x255B,0x0490,0x0406,0x0407,
-        0x255F,0x2560,0x2561,0x0401,0x2562,0x2563,0x2564,0x2565,
-        0x2566,0x2567,0x2568,0x2569,0x256A,0x256B,0x256C,0x00A9,
-        0x044E,0x0430,0x0431,0x0446,0x0434,0x0435,0x0444,0x0433,
-        0x0445,0x0438,0x0439,0x043A,0x043B,0x043C,0x043D,0x043E,
-        0x043F,0x044F,0x0440,0x0441,0x0442,0x0443,0x0436,0x0432,
-        0x044C,0x044B,0x0437,0x0448,0x044D,0x0449,0x0447,0x044A,
-        0x042E,0x0410,0x0411,0x0426,0x0414,0x0415,0x0424,0x0413,
-        0x0425,0x0418,0x0419,0x041A,0x041B,0x041C,0x041D,0x041E,
-        0x041F,0x042F,0x0420,0x0421,0x0422,0x0423,0x0416,0x0412,
-        0x042C,0x042B,0x0417,0x0428,0x042D,0x0429,0x0427,0x042A
-    };
-
-    // Mac Cyrillic (x-mac-cyrillic / Apple Macintosh Cyrillic)
-    // Mapping verified against the canonical codec table.
-    static const char16_t kMacCyrillic[128] = {
-        0x0410,0x0411,0x0412,0x0413,0x0414,0x0415,0x0416,0x0417,
-        0x0418,0x0419,0x041A,0x041B,0x041C,0x041D,0x041E,0x041F,
-        0x0420,0x0421,0x0422,0x0423,0x0424,0x0425,0x0426,0x0427,
-        0x0428,0x0429,0x042A,0x042B,0x042C,0x042D,0x042E,0x042F,
-        0x2020,0x00B0,0x0490,0x00A3,0x00A7,0x2022,0x00B6,0x0406,
-        0x00AE,0x00A9,0x2122,0x0402,0x0452,0x2260,0x0403,0x0453,
-        0x221E,0x00B1,0x2264,0x2265,0x0456,0x00B5,0x0491,0x0408,
-        0x0404,0x0454,0x0407,0x0457,0x0409,0x0459,0x040A,0x045A,
-        0x0458,0x0405,0x00AC,0x221A,0x0192,0x2248,0x2206,0x00AB,
-        0x00BB,0x2026,0x00A0,0x040B,0x045B,0x040C,0x045C,0x0455,
-        0x2013,0x2014,0x201C,0x201D,0x2018,0x2019,0x00F7,0x201E,
-        0x040E,0x045E,0x040F,0x045F,0x2116,0x0401,0x0451,0x044F,
-        0x0430,0x0431,0x0432,0x0433,0x0434,0x0435,0x0436,0x0437,
-        0x0438,0x0439,0x043A,0x043B,0x043C,0x043D,0x043E,0x043F,
-        0x0440,0x0441,0x0442,0x0443,0x0444,0x0445,0x0446,0x0447,
-        0x0448,0x0449,0x044A,0x044B,0x044C,0x044D,0x044E,0x20AC
-    };
-
-    static const char16_t kWindows1252[128] = {
-        0x20AC,0x0081,0x201A,0x0192,0x201E,0x2026,0x2020,0x2021,
-        0x02C6,0x2030,0x0160,0x2039,0x0152,0x008D,0x017D,0x008F,
-        0x0090,0x2018,0x2019,0x201C,0x201D,0x2022,0x2013,0x2014,
-        0x02DC,0x2122,0x0161,0x203A,0x0153,0x009D,0x017E,0x0178,
-        0x00A0,0x00A1,0x00A2,0x00A3,0x00A4,0x00A5,0x00A6,0x00A7,
-        0x00A8,0x00A9,0x00AA,0x00AB,0x00AC,0x00AD,0x00AE,0x00AF,
-        0x00B0,0x00B1,0x00B2,0x00B3,0x00B4,0x00B5,0x00B6,0x00B7,
-        0x00B8,0x00B9,0x00BA,0x00BB,0x00BC,0x00BD,0x00BE,0x00BF,
-        0x00C0,0x00C1,0x00C2,0x00C3,0x00C4,0x00C5,0x00C6,0x00C7,
-        0x00C8,0x00C9,0x00CA,0x00CB,0x00CC,0x00CD,0x00CE,0x00CF,
-        0x00D0,0x00D1,0x00D2,0x00D3,0x00D4,0x00D5,0x00D6,0x00D7,
-        0x00D8,0x00D9,0x00DA,0x00DB,0x00DC,0x00DD,0x00DE,0x00DF,
-        0x00E0,0x00E1,0x00E2,0x00E3,0x00E4,0x00E5,0x00E6,0x00E7,
-        0x00E8,0x00E9,0x00EA,0x00EB,0x00EC,0x00ED,0x00EE,0x00EF,
-        0x00F0,0x00F1,0x00F2,0x00F3,0x00F4,0x00F5,0x00F6,0x00F7,
-        0x00F8,0x00F9,0x00FA,0x00FB,0x00FC,0x00FD,0x00FE,0x00FF
-    };
-
-    // Decode one byte using the static tables for legacy single-byte encodings
-    QChar decodeSingleByte(uint8_t byte, const QString &encoding)
-    {
-        if (byte < 0x80)
-            return QChar::fromLatin1((char)byte);
-        if (encoding == QLatin1String("ISO-8859-1"))
-            return QChar(byte); // Latin-1 identity
-        const char16_t *table = nullptr;
-        if      (encoding == QLatin1String("Windows-1251"))  table = kWindows1251;
-        else if (encoding == QLatin1String("KOI8-R"))        table = kKOI8R;
-        else if (encoding == QLatin1String("KOI8-U"))        table = kKOI8U;
-        else if (encoding == QLatin1String("CP-866"))        table = kCP866;
-        else if (encoding == QLatin1String("Mac Cyrillic"))  table = kMacCyrillic;
-        else if (encoding == QLatin1String("Windows-1252"))  table = kWindows1252;
-        if (table) {
-            char16_t cp = table[byte - 0x80];
-            return (cp != 0) ? QChar(cp) : QChar(0);
-        }
-        return QChar::fromLatin1((char)byte);
-    }
-
-    // Decode a byte buffer using the given encoding.
-    // Returns a vector the same length as 'data', where:
-    //   - Lead byte positions:  non-null QString (printable char, or empty "" for non-printable)
-    //   - Continuation bytes:   null QString (default-constructed, isNull()==true)
-    QVector<QString> decodeBufferWithEncoding(const QByteArray &data, const QString &encoding)
-    {
-        const int len = data.size();
-        QVector<QString> result(len); // all entries start as null QString
-
-        // --- Single-byte encodings: every byte is a lead byte ---
-        if (isSingleByteEncoding(encoding)) {
-            for (int i = 0; i < len; ++i) {
-                QChar ch = decodeSingleByte((uint8_t)(unsigned char)data[i], encoding);
-                result[i] = (ch.unicode() != 0 && ch.isPrint()) ? QString(ch) : QStringLiteral("");
-            }
-            return result;
-        }
-
-        // --- UTF-8: manual byte-structure parsing (no re-encoding) ---
-        if (encoding == QLatin1String("UTF-8")) {
-            int pos = 0;
-            while (pos < len) {
-                const uint8_t b = (uint8_t)(unsigned char)data[pos];
-                int seqLen = 1;
-                uint32_t cp = 0;
-
-                if (b < 0x80) {
-                    cp = b; seqLen = 1;
-                } else if ((b & 0xE0) == 0xC0 && b >= 0xC2) {
-                    cp = b & 0x1F; seqLen = 2;
-                } else if ((b & 0xF0) == 0xE0) {
-                    cp = b & 0x0F; seqLen = 3;
-                } else if ((b & 0xF8) == 0xF0 && b <= 0xF4) {
-                    cp = b & 0x07; seqLen = 4;
-                } else {
-                    result[pos] = QStringLiteral("");
-                    ++pos; continue;
-                }
-
-                bool valid = (pos + seqLen <= len);
-                if (valid) {
-                    for (int j = 1; j < seqLen; ++j) {
-                        uint8_t cb = (uint8_t)(unsigned char)data[pos + j];
-                        if ((cb & 0xC0) != 0x80) { valid = false; break; }
-                        cp = (cp << 6) | (cb & 0x3F);
-                    }
-                }
-                if (valid) {
-                    if (cp > 0x10FFFF) valid = false;
-                    if (cp >= 0xD800 && cp <= 0xDFFF) valid = false;
-                }
-
-                if (valid) {
-                    QString sym;
-                    if (cp <= 0xFFFF)
-                        sym = QString(QChar((char16_t)cp));
-                    else {
-                        QChar pair[2];
-                        pair[0] = QChar::highSurrogate(cp);
-                        pair[1] = QChar::lowSurrogate(cp);
-                        sym = QString(pair, 2);
-                    }
-                    result[pos] = (!sym.isEmpty() && sym[0].isPrint()) ? sym : QStringLiteral("");
-                    // continuation bytes stay null (default from QVector init)
-                    pos += seqLen;
-                } else {
-                    result[pos] = QStringLiteral("");
-                    ++pos;
-                }
-            }
-            return result;
-        }
-
-        // --- Other multi-byte encodings (Shift-JIS, GB2312, UTF-16, etc.) ---
-        // Try QStringDecoder first, then iconv as fallback
-        {
-            bool usedQtDecoder = false;
-            {
-                QByteArray selectedCodec;
-                bool validDecoder = false;
-                for (const QByteArray &codecName : codecCandidates(encoding)) {
-                    auto probe = QStringDecoder(codecName.constData());
-                    if (probe.isValid()) {
-                        selectedCodec = codecName;
-                        validDecoder = true;
-                        break;
-                    }
-                }
-
-                // ISO-2022-JP is handled by a dedicated per-token iconv decoder below;
-                // QStringDecoder misattributes characters to ESC-sequence bytes.
-                if (validDecoder && encoding != QLatin1String("ISO-2022-JP")) {
-                    usedQtDecoder = true;
-                    auto dec = QStringDecoder(selectedCodec.constData());
-                    int pendingStart = -1;
-                    for (int i = 0; i < len; ++i) {
-                        const QString out = dec(QByteArray(1, data[i]));
-                        if (out.isEmpty()) {
-                            if (pendingStart < 0)
-                                pendingStart = i;
-                            continue;
-                        }
-                        const int leadIndex = (pendingStart >= 0) ? pendingStart : i;
-                        pendingStart = -1;
-                        QString sym;
-                        for (int j = 0; j < out.size(); ++j) {
-                            const QChar c = out[j];
-                            if (c == QChar(0xFFFD)) continue;
-                            if (c.isHighSurrogate() && (j + 1) < out.size() && out[j + 1].isLowSurrogate()) {
-                                const QString pair = out.mid(j, 2);
-                                if (pair[0].isPrint()) { sym = pair; break; }
-                                ++j; continue;
-                            }
-                            if (c.isPrint()) { sym = QString(c); break; }
-                        }
-                        result[leadIndex] = sym.isEmpty() ? QStringLiteral("") : sym;
-                    }
-                    const QString flushOut = dec(QByteArray());
-                    if (!flushOut.isEmpty()) {
-                        const int leadIndex = (pendingStart >= 0) ? pendingStart : (len - 1);
-                        for (int j = 0; j < flushOut.size(); ++j) {
-                            const QChar c = flushOut[j];
-                            if (c == QChar(0xFFFD) || !c.isPrint()) continue;
-                            result[leadIndex] = QString(c);
-                            break;
-                        }
-                    }
-                }
-            }
-            // iconv fallback: two-pass decode for CJK and stateful encodings.
-            // Pass 1: decode entire buffer with iconv (robust: EILSEQ → U+FFFD, keep going).
-            // Pass 2: determine character boundaries, assign result entries.
-            // Avoids per-sequence iconv state issues and correctly handles ISO-2022-JP
-            // escape sequences (which must NOT reset the iconv shift-state on each byte).
-            if (!usedQtDecoder) {
-                const char *fromCodec = iconvCodecName(encoding);
-                QByteArray encBytes;
-                if (!fromCodec) {
-                    encBytes = encoding.toLatin1();
-                    fromCodec = encBytes.constData();
-                }
-
-                iconv_t cd = iconv_open("UTF-8", fromCodec);
-                if (cd == (iconv_t)-1) {
-                    // Encoding not supported: Latin-1 fallback
-                    for (int i = 0; i < len; ++i) {
-                        QChar ch = QChar::fromLatin1(data[i]);
-                        result[i] = ch.isPrint() ? QString(ch) : QStringLiteral("");
-                    }
-                } else {
-                    // --- Pass 1: robust full-buffer iconv decode ---
-                    QByteArray utf8Out;
-                    utf8Out.reserve(len * 3 + 32);
-                    const char *inPtr = data.constData();
-                    size_t inLeft = (size_t)len;
-                    char chunk[256];
-                    while (inLeft > 0) {
-                        char *outPtr2 = chunk;
-                        size_t outLeft2 = sizeof(chunk);
-                        size_t ret = iconv(cd, const_cast<char **>(&inPtr), &inLeft, &outPtr2, &outLeft2);
-                        utf8Out.append(chunk, (int)(sizeof(chunk) - outLeft2));
-                        if (ret != (size_t)-1) break;          // success: all consumed
-                        if (errno == E2BIG)  continue;         // output chunk full, loop again
-                        if (errno == EILSEQ) {
-                            utf8Out.append("\xEF\xBF\xBD", 3); // U+FFFD for invalid byte
-                            ++inPtr; --inLeft;
-                            iconv(cd, nullptr, nullptr, nullptr, nullptr); // reset shift state
-                            continue;
-                        }
-                        break; // EINVAL: incomplete sequence at end of buffer
-                    }
-                    // Flush any pending shift state (e.g. ISO-2022-JP end-of-file)
-                    {
-                        char *outPtr2 = chunk;
-                        size_t outLeft2 = sizeof(chunk);
-                        iconv(cd, nullptr, nullptr, &outPtr2, &outLeft2);
-                        utf8Out.append(chunk, (int)(sizeof(chunk) - outLeft2));
-                    }
-                    iconv_close(cd);
-                    const QString fullDecoded = QString::fromUtf8(utf8Out);
-
-                    // --- Pass 2: build byte → QChar-offset map ---
-                    // byteToQChar[i]:
-                    //   -2 = continuation byte  → result[i] stays null
-                    //   -1 = non-printable/ctrl  → result[i] = ""
-                    //   >=0 = QChar offset into fullDecoded for the lead character
-                    QVector<int> byteToQChar(len, -1);
-                    bool iso2022jpDirect = false; // true when ISO-2022-JP fills result[] directly
-
-                    if (encoding == QLatin1String("ISO-2022-JP")) {
-                        // Per-token iconv decode: feed tokens sequentially to a fresh
-                        // iconv handle that maintains the ISO-2022-JP shift state.
-                        // Avoids qoff-synchronisation issues caused by EILSEQ substitutions
-                        // and other Pass-1/Pass-2 mismatches in the fullDecoded approach.
-                        iso2022jpDirect = true;
-                        iconv_t cd2 = iconv_open("UTF-8", "ISO-2022-JP");
-                        if (cd2 != (iconv_t)-1) {
-                            bool inJIS = false;   // 2-byte JIS mode
-                            bool inKana = false;  // 1-byte kana mode (ESC ( I / SO)
-                            int pos = 0;
-
-                            // Feed `count` bytes at data+offset to cd2.
-                            // cd2 accumulates shift state across calls.
-                            // Returns decoded QString only when captureOutput is true.
-                            // errOut: if non-null, set to true when iconv returned an error.
-                            auto feedToken = [&](int offset, int count, bool captureOutput, bool *errOut = nullptr) -> QString {
-                                const char *p2 = data.constData() + offset;
-                                size_t left2 = (size_t)count;
-                                char obuf[32]; char *op = obuf; size_t ol = sizeof(obuf);
-                                size_t ret = iconv(cd2, const_cast<char **>(&p2), &left2, &op, &ol);
-                                if (errOut) *errOut = (ret == (size_t)-1);
-                                if (!captureOutput) return QString();
-                                int n2 = (int)(sizeof(obuf) - ol);
-                                return n2 > 0 ? QString::fromUtf8(obuf, n2) : QString();
-                            };
-
-                            auto assignChar = [&](int idx, const QString &dec) {
-                                if (dec.isEmpty() || dec[0] == QChar(0xFFFD)) {
-                                    result[idx] = QStringLiteral("");
-                                } else if (dec[0].isHighSurrogate() && dec.size() >= 2
-                                           && dec[1].isLowSurrogate()) {
-                                    result[idx] = dec[0].isPrint() ? dec.left(2) : QStringLiteral("");
-                                } else {
-                                    result[idx] = dec[0].isPrint() ? QString(dec[0]) : QStringLiteral("");
-                                }
-                            };
-
-                            while (pos < len) {
-                                const unsigned char b = (unsigned char)data[pos];
-
-                                if (b == 0x1B) {
-                                    // 4-byte: ESC $ ( D  (JIS X 0212)
-                                    if (pos + 3 < len
-                                        && (unsigned char)data[pos+1] == '$'
-                                        && (unsigned char)data[pos+2] == '('
-                                        && (unsigned char)data[pos+3] == 'D') {
-                                        feedToken(pos, 4, false);
-                                        result[pos]=result[pos+1]=result[pos+2]=result[pos+3]=QStringLiteral("");
-                                        inJIS = true; inKana = false; pos += 4; continue;
-                                    }
-                                    // 3-byte designations
-                                    if (pos + 2 < len) {
-                                        const unsigned char b1 = (unsigned char)data[pos+1];
-                                        const unsigned char b2 = (unsigned char)data[pos+2];
-                                        bool matched = true;
-                                        if      (b1 == '(' && (b2 == 'B' || b2 == 'J')) { inJIS=false; inKana=false; }
-                                        else if (b1 == '(' && b2 == 'I')                { inJIS=false; inKana=true;  }
-                                        else if (b1 == '$' && (b2 == 'B' || b2 == '@')) { inJIS=true;  inKana=false; }
-                                        else matched = false;
-                                        if (matched) {
-                                            feedToken(pos, 3, false);
-                                            result[pos]=result[pos+1]=result[pos+2]=QStringLiteral("");
-                                            pos += 3; continue;
-                                        }
-                                    }
-                                    // Unknown/incomplete ESC: consume 1 byte
-                                    feedToken(pos, 1, false);
-                                    result[pos] = QStringLiteral(""); ++pos; continue;
-                                }
-
-                                if (b == 0x0E) { feedToken(pos,1,false); inJIS=false; inKana=true;  result[pos]=QStringLiteral(""); ++pos; continue; }
-                                if (b == 0x0F) { feedToken(pos,1,false); inJIS=false; inKana=false; result[pos]=QStringLiteral(""); ++pos; continue; }
-
-                                if (inJIS && pos + 1 < len) {
-                                    bool err = false;
-                                    assignChar(pos, feedToken(pos, 2, true, &err));
-                                    if (err) {
-                                        // iconv rejected the pair and reset its shift state → sync ours
-                                        inJIS = false; inKana = false;
-                                    }
-                                    result[pos+1] = QString(); // null = continuation byte
-                                    pos += 2;
-                                } else {
-                                    // kana (single-byte) or ASCII
-                                    assignChar(pos, feedToken(pos, 1, true));
-                                    ++pos;
-                                }
-                            }
-                            iconv_close(cd2);
-                        } else {
-                            // iconv not available: mark all bytes as empty
-                            for (int i = 0; i < len; ++i)
-                                result[i] = QStringLiteral("");
-                        }
-                    } else {
-                        // Stateless CJK encodings (EUC-JP, Shift-JIS, GB*, EUC-KR …):
-                        // use iconvSeqLen for byte-boundary detection.
-                        int qoff = 0;
-                        int pos = 0;
-                        while (pos < len) {
-                            int sl = iconvSeqLen(data, pos, encoding);
-                            sl = qMin(sl, len - pos);
-                            byteToQChar[pos] = qoff;
-                            for (int j = 1; j < sl; ++j)
-                                byteToQChar[pos + j] = -2; // continuation bytes
-                            // Advance qoff by how many QChars this sequence decoded to
-                            if (qoff < fullDecoded.size() && fullDecoded[qoff].isHighSurrogate()
-                                && qoff + 1 < fullDecoded.size() && fullDecoded[qoff + 1].isLowSurrogate())
-                                qoff += 2;
-                            else
-                                ++qoff;
-                            pos += sl;
-                        }
-                    }
-
-                    if (!iso2022jpDirect) {
-                        // --- Assign result entries from fullDecoded ---
-                        for (int i = 0; i < len; ++i) {
-                            const int qcOff = byteToQChar[i];
-                            if (qcOff == -2) {
-                                // continuation: result[i] stays null (already null from QVector init)
-                            } else if (qcOff == -1) {
-                                result[i] = QStringLiteral(""); // non-printable control char
-                            } else if (qcOff >= 0 && qcOff < fullDecoded.size()) {
-                                const QChar c = fullDecoded[qcOff];
-                                if (c == QChar(0xFFFD)) {
-                                    result[i] = QStringLiteral(""); // substituted invalid byte
-                                } else if (c.isHighSurrogate() && qcOff + 1 < fullDecoded.size()
-                                           && fullDecoded[qcOff + 1].isLowSurrogate()) {
-                                    const QString sym = fullDecoded.mid(qcOff, 2);
-                                    result[i] = sym[0].isPrint() ? sym : QStringLiteral("");
-                                } else {
-                                    result[i] = c.isPrint() ? QString(c) : QStringLiteral("");
-                                }
-                            } else {
-                                result[i] = QStringLiteral(""); // beyond decoded output range
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        return result;
-    }
-
-    void decodeBufferWithTable(const QByteArray &data,
-                               const TranslationTable *tb,
-                               QVector<QString> &outChars,
-                               QVector<int> &outSpan)
-    {
-        const int len = data.size();
-        outChars = QVector<QString>(len);
-        outSpan = QVector<int>(len, 0);
-
-        if (!tb || len <= 0)
-            return;
-
-        int pos = 0;
-        while (pos < len)
-        {
-            int consumed = 0;
-            const QString sym = tb->encodeBytes(data, pos, consumed);
-            if (consumed <= 0)
-                consumed = 1;
-
-            outChars[pos] = sym;
-            outSpan[pos] = consumed;
-
-            for (int j = 1; j < consumed && (pos + j) < len; ++j)
-                outChars[pos + j] = QString(); // continuation byte
-
-            pos += consumed;
-        }
-    }
-
-    struct PointerState
-    {
-        qint64 pointerOffset = -1;
-        bool hasTarget = false;
-        qint64 targetOffset = -1;
-        int ptrSize = 4;
-    };
-
-    class PointerEditCommand : public QUndoCommand
-    {
-    public:
-        PointerEditCommand(PointerListModel *model,
-                           const QVector<PointerState> &before,
-                           const QVector<PointerState> &after,
-                           const QString &text,
-                           QUndoCommand *parent = nullptr)
-            : QUndoCommand(text, parent)
-            , _model(model)
-            , _before(before)
-            , _after(after)
-        {
-        }
-
-        void undo() override
-        {
-            apply(_before);
-        }
-
-        void redo() override
-        {
-            apply(_after);
-        }
-
-    private:
-        void apply(const QVector<PointerState> &states)
-        {
-            if (!_model)
-                return;
-
-            for (const PointerState &state : states)
-            {
-                if (state.hasTarget)
-                    _model->addPointer(state.pointerOffset, state.targetOffset, state.ptrSize);
-                else
-                    _model->dropPointer(state.pointerOffset);
-            }
-        }
-
-        PointerListModel *_model = nullptr;
-        QVector<PointerState> _before;
-        QVector<PointerState> _after;
-    };
-
-    PointerState capturePointerState(PointerListModel *model, qint64 pointerOffset)
-    {
-        PointerState state;
-        state.pointerOffset = pointerOffset;
-        if (!model)
-            return state;
-
-        const qint64 target = model->getOffset(pointerOffset);
-        if (target >= 0)
-        {
-            state.hasTarget = true;
-            state.targetOffset = target;
-            state.ptrSize = model->getPointerSize(pointerOffset);
-        }
-
-        return state;
-    }
-
-    static const int kLineBreakCmdId = 5678;
-
-    class LineBreakAddCommand : public QUndoCommand
-    {
-    public:
-        LineBreakAddCommand(HexEditor *editor, qint64 offset, QUndoCommand *parent = nullptr)
-            : QUndoCommand(parent), _editor(editor), _offset(offset) {}
-        int id() const override { return kLineBreakCmdId; }
-        void redo() override { _editor->addLineBreakDirect(_offset); }
-        void undo() override { _editor->removeLineBreakDirect(_offset); }
-    private:
-        HexEditor *_editor;
-        qint64 _offset;
-    };
-
-    class LineBreakRemoveCommand : public QUndoCommand
-    {
-    public:
-        LineBreakRemoveCommand(HexEditor *editor, qint64 offset, QUndoCommand *parent = nullptr)
-            : QUndoCommand(parent), _editor(editor), _offset(offset) {}
-        int id() const override { return kLineBreakCmdId; }
-        void redo() override { _editor->removeLineBreakDirect(_offset); }
-        void undo() override { _editor->addLineBreakDirect(_offset); }
-    private:
-        HexEditor *_editor;
-        qint64 _offset;
-    };
-}
+#include "internal.h"
+#include "encoding.h"
 
 // ********************************************************************** Constructor, destructor
 
@@ -1020,10 +144,12 @@ void HexEditor::setAddressArea(bool addressArea)
     viewport()->update();
 }
 
+
 bool HexEditor::addressArea()
 {
     return _addressArea;
 }
+
 
 void HexEditor::setAddressAreaColor(const QColor &color)
 {
@@ -1031,10 +157,12 @@ void HexEditor::setAddressAreaColor(const QColor &color)
     viewport()->update();
 }
 
+
 QColor HexEditor::addressAreaColor()
 {
     return _addressAreaColor;
 }
+
 
 void HexEditor::setAddressFontColor(const QColor &color)
 {
@@ -1042,10 +170,12 @@ void HexEditor::setAddressFontColor(const QColor &color)
     viewport()->update();
 }
 
+
 QColor HexEditor::addressFontColor()
 {
     return _addressFontColor;
 }
+
 
 void HexEditor::setAsciiAreaColor(const QColor &color)
 {
@@ -1053,10 +183,12 @@ void HexEditor::setAsciiAreaColor(const QColor &color)
     viewport()->update();
 }
 
+
 QColor HexEditor::asciiAreaColor()
 {
     return _asciiAreaColor;
 }
+
 
 void HexEditor::setAsciiFontColor(const QColor &color)
 {
@@ -1064,15 +196,18 @@ void HexEditor::setAsciiFontColor(const QColor &color)
     viewport()->update();
 }
 
+
 QColor HexEditor::asciiFontColor()
 {
     return _asciiFontColor;
 }
 
+
 QChar HexEditor::nonPrintableNoTableChar() const
 {
     return _nonPrintableNoTableChar;
 }
+
 
 void HexEditor::setNonPrintableNoTableChar(const QChar &ch)
 {
@@ -1082,10 +217,12 @@ void HexEditor::setNonPrintableNoTableChar(const QChar &ch)
     viewport()->update();
 }
 
+
 QChar HexEditor::notInTableChar() const
 {
     return _notInTableChar;
 }
+
 
 void HexEditor::setNotInTableChar(const QChar &ch)
 {
@@ -1095,10 +232,12 @@ void HexEditor::setNotInTableChar(const QChar &ch)
     viewport()->update();
 }
 
+
 QColor HexEditor::cursorCharColor()
 {
     return _cursorCharColor;
 }
+
 
 void HexEditor::setCursorCharColor(const QColor &color)
 {
@@ -1106,10 +245,12 @@ void HexEditor::setCursorCharColor(const QColor &color)
     viewport()->update();
 }
 
+
 QColor HexEditor::cursorFrameColor()
 {
     return _cursorFrameColor;
 }
+
 
 void HexEditor::setCursorFrameColor(const QColor &color)
 {
@@ -1117,21 +258,25 @@ void HexEditor::setCursorFrameColor(const QColor &color)
     viewport()->update();
 }
 
+
 void HexEditor::setHexFontColor(const QColor &color)
 {
     _hexFontColor = color;
     viewport()->update();
 }
 
+
 QColor HexEditor::hexFontColor()
 {
     return _hexFontColor;
 }
 
+
 QColor HexEditor::zeroByteFontColor()
 {
     return _zeroByteFontColor;
 }
+
 
 void HexEditor::setZeroByteFontColor(const QColor &color)
 {
@@ -1139,16 +284,19 @@ void HexEditor::setZeroByteFontColor(const QColor &color)
     viewport()->update();
 }
 
+
 QColor HexEditor::addressZeroByteFontColor()
 {
     return _addressZeroByteFontColor;
 }
+
 
 void HexEditor::setAddressZeroByteFontColor(const QColor &color)
 {
     _addressZeroByteFontColor = color;
     viewport()->update();
 }
+
 
 void HexEditor::setAddressOffset(qint64 addressOffset)
 {
@@ -1158,10 +306,12 @@ void HexEditor::setAddressOffset(qint64 addressOffset)
     viewport()->update();
 }
 
+
 qint64 HexEditor::addressOffset()
 {
     return _addressOffset;
 }
+
 
 void HexEditor::setAddressWidth(int addressWidth)
 {
@@ -1170,6 +320,7 @@ void HexEditor::setAddressWidth(int addressWidth)
     setCursorPosition(_cursorPosition);
     viewport()->update();
 }
+
 
 int HexEditor::addressWidth()
 {
@@ -1183,6 +334,7 @@ int HexEditor::addressWidth()
     }
     return qMax(n, _addressWidth);
 }
+
 
 void HexEditor::setAsciiArea(bool asciiArea)
 {
@@ -1201,10 +353,12 @@ void HexEditor::setAsciiArea(bool asciiArea)
     viewport()->update();
 }
 
+
 bool HexEditor::asciiArea()
 {
     return _asciiArea;
 }
+
 
 void HexEditor::setBytesPerLine(int count)
 {
@@ -1217,10 +371,12 @@ void HexEditor::setBytesPerLine(int count)
     viewport()->update();
 }
 
+
 int HexEditor::bytesPerLine()
 {
     return _bytesPerLine;
 }
+
 
 void HexEditor::setCursorPosition(qint64 position)
 {
@@ -1431,6 +587,7 @@ void HexEditor::setCursorPosition(qint64 position)
     emit currentAddressChanged(_bPosCurrent);
 }
 
+
 qint64 HexEditor::cursorPosition(QPoint pos)
 {
     // Calc cursor position depending on a graphical position
@@ -1570,10 +727,12 @@ qint64 HexEditor::cursorPosition(QPoint pos)
     return result;
 }
 
+
 qint64 HexEditor::cursorPosition()
 {
     return _cursorPosition;
 }
+
 
 void HexEditor::setData(const QByteArray &ba)
 {
@@ -1582,15 +741,18 @@ void HexEditor::setData(const QByteArray &ba)
     setData(_bData);
 }
 
+
 QByteArray HexEditor::data()
 {
     return _chunks->data(0, -1);
 }
 
+
 QByteArray HexEditor::getRawSelection()
 {
     return _chunks->data(getSelectionBegin(), getSelectionEnd() - getSelectionBegin());
 }
+
 
 QString HexEditor::selectedDisasmText() const
 {
@@ -1630,6 +792,7 @@ QString HexEditor::selectedDisasmText() const
     return lines.join(QLatin1Char('\n'));
 }
 
+
 Datas HexEditor::getValue(qint64 offset)
 {
     Datas value{};
@@ -1652,37 +815,12 @@ Datas HexEditor::getValue(qint64 offset)
     return value;
 }
 
+
 qint64 HexEditor::getCurrentOffset()
 {
     return _bPosCurrent;
 }
 
-qint64 HexEditor::pointerStartAt(qint64 bytePos, int /*pointerSize*/)
-{
-    if (bytePos < 0)
-        return -1;
-
-    // Search back up to the maximum possible pointer size (4 bytes)
-    const qint64 startMin = qMax(static_cast<qint64>(0), bytePos - 4 + 1);
-
-    for (qint64 candidate = bytePos; candidate >= startMin; --candidate)
-    {
-        if (_pointers.isPointer(candidate))
-        {
-            const int storedSize = _pointers.getPointerSize(candidate);
-            if (bytePos < candidate + storedSize)
-                return candidate;
-        }
-    }
-
-    return -1;
-}
-
-qint64 HexEditor::pointerTargetAt(qint64 bytePos, int pointerSize)
-{
-    const qint64 ptrStart = pointerStartAt(bytePos, pointerSize);
-    return (ptrStart >= 0) ? _pointers.getOffset(ptrStart) : -1;
-}
 
 void HexEditor::setHighlighting(bool highlighting)
 {
@@ -1690,10 +828,12 @@ void HexEditor::setHighlighting(bool highlighting)
     viewport()->update();
 }
 
+
 bool HexEditor::highlighting()
 {
     return _highlighting;
 }
+
 
 void HexEditor::setHighlightingColor(const QColor &color)
 {
@@ -1702,10 +842,12 @@ void HexEditor::setHighlightingColor(const QColor &color)
     viewport()->update();
 }
 
+
 QColor HexEditor::highlightingColor()
 {
     return _brushHighlighted.color();
 }
+
 
 void HexEditor::setShowChanges(bool mode)
 {
@@ -1713,10 +855,12 @@ void HexEditor::setShowChanges(bool mode)
     viewport()->update();
 }
 
+
 bool HexEditor::showChanges()
 {
     return _showChanges;
 }
+
 
 void HexEditor::setOriginalData(const QByteArray &data)
 {
@@ -1725,6 +869,7 @@ void HexEditor::setOriginalData(const QByteArray &data)
         readBuffers();
     viewport()->update();
 }
+
 
 void HexEditor::setShowOriginal(bool show)
 {
@@ -1735,15 +880,18 @@ void HexEditor::setShowOriginal(bool show)
     viewport()->update();
 }
 
+
 bool HexEditor::showOriginal() const
 {
     return _showOriginal;
 }
 
+
 bool HexEditor::hasOriginalData() const
 {
     return !_originalData.isEmpty();
 }
+
 
 void HexEditor::setChangesColor(const QColor &color)
 {
@@ -1754,10 +902,12 @@ void HexEditor::setChangesColor(const QColor &color)
     viewport()->update();
 }
 
+
 QColor HexEditor::changesColor()
 {
     return _changesColor;
 }
+
 
 void HexEditor::setChangedPositions(const QSet<qint64> &positions)
 {
@@ -1766,6 +916,7 @@ void HexEditor::setChangedPositions(const QSet<qint64> &positions)
     updateScrollMap();  // refresh the changes map strip
 }
 
+
 void HexEditor::clearChangedPositions()
 {
     _changedPositions.clear();
@@ -1773,6 +924,7 @@ void HexEditor::clearChangedPositions()
     viewport()->update();
     updateScrollMap();  // hide the changes map strip
 }
+
 
 void HexEditor::setChangedRange(qint64 start, qint64 end)
 {
@@ -1786,538 +938,19 @@ void HexEditor::setChangedRange(qint64 start, qint64 end)
     updateScrollMap();
 }
 
+
 void HexEditor::clearChangedRange()
 {
     _changedRangeStart = -1;
     _changedRangeEnd = -1;
 }
 
-void HexEditor::setShowPointers(bool show)
-{
-    _showPointers = show;
-    viewport()->update();
-}
-
-bool HexEditor::showPointers()
-{
-    return _showPointers;
-}
-
-// ── Disassembly view mode ──────────────────────────────────────
-
-bool HexEditor::showDisasm() const
-{
-    return _showDisasm;
-}
-
-void HexEditor::setShowDisasm(bool mode)
-{
-    if (_showDisasm == mode)
-        return;
-
-    _showDisasm = mode;
-
-    if (_showDisasm) {
-        // Preserve the project's/manual line breaks once, then switch to the
-        // full-file disassembly layout.
-        if (!_savedLineBreaksValid) {
-            _savedLineBreaks = _lineBreaks;
-            _savedLineBreaksValid = true;
-        }
-        rebuildDisasmLayout();
-    } else {
-        // Return to the project layout, then re-apply section-specific disasm
-        // wraps if any section still requests Disassembly mode.
-        _disasmCache.clear();
-        _disasmCacheStart = _disasmCacheEnd = -1;
-        if (_savedLineBreaksValid)
-            _lineBreaks = _savedLineBreaks;
-        rebuildSectionAwareLayout();
-    }
-
-    emit disasmModeChanged(_showDisasm);
-}
-
-void HexEditor::setDisasmRomType(RomType type)
-{
-    if (_disasmRomType == type)
-        return;
-    _disasmRomType = type;
-
-    if (!_disasm) {
-        _disasm = new Disassembler();
-    }
-    bool ok = _disasm->setRomType(type);
-    (void)ok;
-
-    if (_showDisasm)
-        rebuildDisasmLayout();
-    else if (hasSectionDisasmMode())
-        rebuildSectionAwareLayout();
-}
-
-void HexEditor::rebuildDisasmLayout()
-{
-    _disasmBoundaries.clear();
-    _disasmCache.clear();
-    _disasmCacheStart = _disasmCacheEnd = -1;
-
-    if (!_disasm || !Disassembler::isSupported(_disasmRomType)) {
-        _lineBreaks.clear();
-        adjust();
-        viewport()->update();
-        emit lineBreaksChanged();
-        return;
-    }
-
-    const QByteArray fileData = data();
-    if (fileData.isEmpty()) {
-        _lineBreaks.clear();
-        adjust();
-        viewport()->update();
-        emit lineBreaksChanged();
-        return;
-    }
-
-    // Lightweight boundary scan — only collects (offset, size), no strings
-    _disasmBoundaries = _disasm->scanBoundaries(fileData, 0, fileData.size());
-
-    // Build line breaks: each instruction ends at (fileOffset + size - 1)
-    QVector<qint64> breaks;
-    breaks.reserve(_disasmBoundaries.size());
-    for (const auto &b : _disasmBoundaries) {
-        const qint64 lastByte = b.offset + b.size - 1;
-        if (lastByte < fileData.size() - 1)
-            breaks.append(lastByte);
-    }
-
-    _lineBreaks = breaks;
-    adjust();
-    viewport()->update();
-    emit lineBreaksChanged();
-}
-
-void HexEditor::ensureDisasmBoundaries()
-{
-    if (!_disasm || !Disassembler::isSupported(_disasmRomType))
-        return;
-    if (!_disasmBoundaries.isEmpty())
-        return;
-
-    const QByteArray fileData = data();
-    if (fileData.isEmpty())
-        return;
-
-    _disasmBoundaries = _disasm->scanBoundaries(fileData, 0, fileData.size());
-    _disasmCache.clear();
-    _disasmCacheStart = _disasmCacheEnd = -1;
-}
-
-bool HexEditor::hasSectionDisasmMode() const
-{
-    if (!_sectionModel)
-        return false;
-    for (const auto &s : _sectionModel->sections()) {
-        if (s.displayMode == SectionDisplay_Disasm)
-            return true;
-    }
-    return false;
-}
-
-bool HexEditor::isDisasmAt(qint64 offset) const
-{
-    if (_showDisasm)
-        return true;
-    return _sectionModel
-        && _sectionModel->displayModeAtOffset(offset) == SectionDisplay_Disasm;
-}
-
-quint64 HexEditor::computeLayoutFingerprint() const
-{
-    if (!_sectionModel) return 0;
-    const int count = _sectionModel->count();
-    if (count == 0) return 0;
-    quint64 fp = quint64(count);
-    for (int i = 0; i < count; ++i) {
-        const auto &s = _sectionModel->at(i);
-        fp = fp * 131 + quint64(s.startOffset);
-        fp = fp * 131 + quint64(s.endOffset);
-        fp = fp * 131 + quint64(s.displayMode);
-    }
-    return fp;
-}
-
-void HexEditor::rebuildSectionAwareLayout()
-{
-    // Global disassembly already owns the entire layout.
-    if (_showDisasm) {
-        rebuildDisasmLayout();
-        return;
-    }
-
-    // Fast path: if sections + collapse state haven't changed, reuse cached layout.
-    const quint64 fp = computeLayoutFingerprint();
-    if (fp != 0 && fp == _layoutFingerprint && !_lineBreaks.isEmpty()) {
-        readBuffers();
-        viewport()->update();
-        return;
-    }
-
-    const QVector<qint64> baseBreaks = _savedLineBreaksValid ? _savedLineBreaks : _lineBreaks;
-
-    if (!hasSectionDisasmMode()) {
-        // Even without disasm sections we must apply section-header gaps
-        // and collapse logic to the base breaks.
-        QVector<qint64> breaks = baseBreaks;
-
-        // ── Ensure double breaks at every section start for header rows. ──
-        if (_sectionModel) {
-            QHash<qint64, int> breakFreq;
-            breakFreq.reserve(breaks.size());
-            for (qint64 b : std::as_const(breaks))
-                breakFreq[b]++;
-
-            for (int si = 0; si < _sectionModel->count(); ++si) {
-                const auto &sec = _sectionModel->at(si);
-                if (sec.startOffset == 0) {
-                    // One -1 break = one empty row for the section header.
-                    const int existing = breakFreq.value(-1, 0);
-                    for (int j = existing; j < 1; ++j) {
-                        breaks.append(-1);
-                        breakFreq[-1]++;
-                    }
-                } else {
-                    const qint64 pos = sec.startOffset - 1;
-                    const int existing = breakFreq.value(pos, 0);
-                    for (int j = existing; j < 2; ++j) {
-                        breaks.append(pos);
-                        breakFreq[pos]++;
-                    }
-                }
-            }
-        }
-
-        std::sort(breaks.begin(), breaks.end());
-
-        if (_lineBreaks != breaks) {
-            _lineBreaks = breaks;
-            adjust();
-            viewport()->update();
-            emit lineBreaksChanged();
-        } else {
-            readBuffers();
-            viewport()->update();
-        }
-        if (!_showDisasm) {
-            _savedLineBreaks.clear();
-            _savedLineBreaksValid = false;
-        }
-        _layoutFingerprint = fp;
-        return;
-    }
-
-    if (!_savedLineBreaksValid) {
-        _savedLineBreaks = _lineBreaks;
-        _savedLineBreaksValid = true;
-    }
-
-    ensureDisasmBoundaries();
-
-    const qint64 fileSize = _chunks->size();
-    QVector<qint64> points;
-    points.reserve((_sectionModel ? _sectionModel->count() : 0) * 2 + 2);
-    points.append(0);
-    points.append(fileSize);
-
-    if (_sectionModel) {
-        for (const auto &s : _sectionModel->sections()) {
-            const qint64 start = qBound<qint64>(0, s.startOffset, fileSize);
-            const qint64 end   = qBound<qint64>(0, s.endOffset, fileSize);
-            if (start < end) {
-                points.append(start);
-                points.append(end);
-            }
-        }
-    }
-
-    std::sort(points.begin(), points.end());
-    points.erase(std::unique(points.begin(), points.end()), points.end());
-
-    QVector<QPair<qint64, qint64>> disasmRanges;
-    for (int i = 0; i + 1 < points.size(); ++i) {
-        const qint64 start = points[i];
-        const qint64 end = points[i + 1];
-        if (start >= end)
-            continue;
-        if (_sectionModel && _sectionModel->displayModeAtOffset(start) == SectionDisplay_Disasm)
-            disasmRanges.append({start, end});
-    }
-
-    QVector<qint64> breaks;
-    breaks.reserve(baseBreaks.size() + _disasmBoundaries.size());
-
-    // Keep manual/user breaks only outside section-disasm ranges.
-    int rangeIdx = 0;
-    for (qint64 brk : baseBreaks) {
-        while (rangeIdx < disasmRanges.size() && brk >= disasmRanges[rangeIdx].second)
-            ++rangeIdx;
-        const bool insideDisasmRange = (rangeIdx < disasmRanges.size()
-                                     && brk >= disasmRanges[rangeIdx].first
-                                     && brk < disasmRanges[rangeIdx].second);
-        if (!insideDisasmRange)
-            breaks.append(brk);
-    }
-
-    // Add virtual line breaks so each disasm section behaves like global disasm.
-    int instrIdx = 0;
-    for (const auto &range : disasmRanges) {
-        const qint64 start = range.first;
-        const qint64 end   = range.second;
-        if (start > 0)
-            breaks.append(start - 1); // section starts on a fresh visual row
-
-        while (instrIdx < _disasmBoundaries.size()
-               && (_disasmBoundaries[instrIdx].offset + _disasmBoundaries[instrIdx].size) <= start)
-            ++instrIdx;
-
-        for (int i = instrIdx; i < _disasmBoundaries.size(); ++i) {
-            const auto &b = _disasmBoundaries[i];
-            const qint64 insnStart = b.offset;
-            const qint64 insnEnd = b.offset + b.size;
-            if (insnStart >= end)
-                break;
-
-            const qint64 clippedEnd = qMin(insnEnd, end);
-            const qint64 lastByte = clippedEnd - 1;
-            if (lastByte >= start && lastByte < fileSize - 1)
-                breaks.append(lastByte);
-        }
-
-        if (end > 0 && end < fileSize)
-            breaks.append(end - 1); // next non-disasm bytes also start on a fresh row
-    }
-
-    // ── Ensure double breaks at every section start for header rows. ──
-    // Use a frequency set so we don't do O(n) std::count per section.
-    if (_sectionModel) {
-        QHash<qint64, int> breakFreq;
-        breakFreq.reserve(breaks.size());
-        for (qint64 b : std::as_const(breaks))
-            breakFreq[b]++;
-
-        for (int si = 0; si < _sectionModel->count(); ++si) {
-            const auto &sec = _sectionModel->at(si);
-            if (sec.startOffset == 0) {
-                // One -1 break = one empty row for the section header.
-                const int existing = breakFreq.value(-1, 0);
-                for (int j = existing; j < 1; ++j) {
-                    breaks.append(-1);
-                    breakFreq[-1]++;
-                }
-            } else {
-                const qint64 pos = sec.startOffset - 1;
-                const int existing = breakFreq.value(pos, 0);
-                for (int j = existing; j < 2; ++j) {
-                    breaks.append(pos);
-                    breakFreq[pos]++;
-                }
-            }
-        }
-    }
-
-    std::sort(breaks.begin(), breaks.end());
-
-    if (_lineBreaks != breaks) {
-        _lineBreaks = breaks;
-        adjust();
-        viewport()->update();
-        emit lineBreaksChanged();
-    } else {
-        readBuffers();
-        viewport()->update();
-    }
-    _layoutFingerprint = fp;
-}
-
-int HexEditor::disasmBoundaryIndex(qint64 fileOffset) const
-{
-    if (_disasmBoundaries.isEmpty())
-        return -1;
-    int lo = 0, hi = _disasmBoundaries.size() - 1;
-    while (lo <= hi) {
-        int mid = lo + (hi - lo) / 2;
-        const auto &b = _disasmBoundaries[mid];
-        if (fileOffset < b.offset)
-            hi = mid - 1;
-        else if (fileOffset >= b.offset + b.size)
-            lo = mid + 1;
-        else
-            return mid;
-    }
-    return -1;
-}
-
-const DisasmInstruction *HexEditor::disasmInstructionAtOffset(qint64 fileOffset) const
-{
-    // Return from cache if available
-    if (fileOffset >= _disasmCacheStart && fileOffset < _disasmCacheEnd) {
-        for (const auto &instr : _disasmCache) {
-            if (fileOffset >= instr.fileOffset && fileOffset < instr.fileOffset + instr.size)
-                return &instr;
-        }
-    }
-
-    // Find the boundary index for this offset
-    const int idx = const_cast<HexEditor*>(this)->disasmBoundaryIndex(fileOffset);
-    if (idx < 0 || !_disasm)
-        return nullptr;
-
-    // Disassemble a window of ~256 instructions around the target
-    const int margin = 128;
-    const int startIdx = qMax(0, idx - margin);
-    const int endIdx = qMin(_disasmBoundaries.size() - 1, idx + margin);
-    const qint64 startOfs = _disasmBoundaries[startIdx].offset;
-    const auto &lastB = _disasmBoundaries[endIdx];
-    const qint64 endOfs = lastB.offset + lastB.size;
-    const int bytes = static_cast<int>(endOfs - startOfs);
-
-    // Disassemble against the real file offsets so Capstone formats
-    // PC-relative branch targets (BNE/BEQ/etc.) correctly in the operand text.
-    const QByteArray fileData = _chunks->data(0, _chunks->size());
-    _disasmCache = _disasm->disassemble(fileData, startOfs, bytes);
-    _disasmCacheStart = startOfs;
-    _disasmCacheEnd = endOfs;
-
-    // Search the freshly populated cache
-    for (const auto &instr : _disasmCache) {
-        if (fileOffset >= instr.fileOffset && fileOffset < instr.fileOffset + instr.size)
-            return &instr;
-    }
-    return nullptr;
-}
-
-QString HexEditor::disasmDisplayText(const DisasmInstruction *instr) const
-{
-    if (!instr)
-        return QString();
-
-    QString displayOps = instr->operands;
-    if (instr->isBranch && instr->branchTarget >= 0
-        && instr->branchTarget < _chunks->size() && _sectionModel) {
-        const QString label = _sectionModel->sectionNameAtStartOffset(instr->branchTarget);
-        if (!label.isEmpty())
-            displayOps = label;
-    }
-
-    if (displayOps.isEmpty())
-        return instr->mnemonic;
-    return instr->mnemonic + QStringLiteral(" ") + displayOps;
-}
-
-void HexEditor::setShowSections(bool show)
-{
-    _showSections = show;
-    viewport()->update();
-}
-
-bool HexEditor::showSections()
-{
-    return _showSections;
-}
-
-void HexEditor::setSectionModel(SectionListModel *model)
-{
-    if (_sectionModel)
-        disconnect(_sectionModel, nullptr, this, nullptr);
-
-    _sectionModel = model;
-
-    if (_sectionModel) {
-        connect(_sectionModel, &SectionListModel::sectionsChanged, this, [this]() {
-            _layoutFingerprint = 0;
-            rebuildSectionAwareLayout();
-        });
-    }
-
-    rebuildSectionAwareLayout();
-}
 
 void HexEditor::setAllTables(const QVector<TranslationTable*> &tables)
 {
     _allTables = tables;
 }
 
-void HexEditor::setPointersColor(const QColor &color)
-{
-    _brushPointers = QBrush(color);
-    _penPointers = QPen(_pointerFontColor);
-    viewport()->update();
-}
-
-QColor HexEditor::pointersColor()
-{
-    return _brushPointers.color();
-}
-
-void HexEditor::setPointedColor(const QColor &color)
-{
-    _brushPointed = QBrush(color);
-    _penPointed = QPen(_pointedFontColor);
-    if (_scrollMapTarget)
-        _scrollMapTarget->setColor(color);
-    viewport()->update();
-}
-
-QColor HexEditor::pointedColor()
-{
-    return _brushPointed.color();
-}
-
-void HexEditor::setPointedFontColor(const QColor &color)
-{
-    _pointedFontColor = color;
-    _penPointed = QPen(_pointedFontColor);
-    viewport()->update();
-}
-
-QColor HexEditor::pointedFontColor()
-{
-    return _pointedFontColor;
-}
-
-void HexEditor::setPointerFontColor(const QColor &color)
-{
-    _pointerFontColor = color;
-    _penPointers = QPen(_pointerFontColor);
-    viewport()->update();
-}
-
-QColor HexEditor::pointerFontColor()
-{
-    return _pointerFontColor;
-}
-
-void HexEditor::setPointerFrameColor(const QColor &color)
-{
-    _pointerFrameColor = color;
-    viewport()->update();
-}
-
-QColor HexEditor::pointerFrameColor()
-{
-    return _pointerFrameColor;
-}
-
-void HexEditor::setPointerFrameBackgroundColor(const QColor &color)
-{
-    _pointerFrameBackgroundColor = color;
-    viewport()->update();
-}
-
-QColor HexEditor::pointerFrameBackgroundColor()
-{
-    return _pointerFrameBackgroundColor;
-}
 
 void HexEditor::setMultibyteFrameColor(const QColor &color)
 {
@@ -2325,15 +958,18 @@ void HexEditor::setMultibyteFrameColor(const QColor &color)
     viewport()->update();
 }
 
+
 QColor HexEditor::multibyteFrameColor()
 {
     return _multibyteFrameColor;
 }
 
+
 QColor HexEditor::sectionHeaderFontColor() const
 {
     return _sectionHeaderFontColor;
 }
+
 
 void HexEditor::setSectionHeaderFontColor(const QColor &color)
 {
@@ -2341,10 +977,12 @@ void HexEditor::setSectionHeaderFontColor(const QColor &color)
     viewport()->update();
 }
 
+
 QColor HexEditor::sectionHeaderBackgroundColor() const
 {
     return _sectionHeaderBackgroundColor;
 }
+
 
 void HexEditor::setSectionHeaderBackgroundColor(const QColor &color)
 {
@@ -2352,10 +990,12 @@ void HexEditor::setSectionHeaderBackgroundColor(const QColor &color)
     viewport()->update();
 }
 
+
 QFont HexEditor::sectionHeaderFont() const
 {
     return _sectionHeaderFont;
 }
+
 
 void HexEditor::setSectionHeaderFont(const QFont &font)
 {
@@ -2363,10 +1003,12 @@ void HexEditor::setSectionHeaderFont(const QFont &font)
     viewport()->update();
 }
 
+
 bool HexEditor::showMultibyteFrame() const
 {
     return _showMultibyteFrame;
 }
+
 
 void HexEditor::setShowMultibyteFrame(bool show)
 {
@@ -2374,16 +1016,19 @@ void HexEditor::setShowMultibyteFrame(bool show)
     viewport()->update();
 }
 
+
 void HexEditor::setOverwriteMode(bool overwriteMode)
 {
     _overwriteMode = overwriteMode;
     emit overwriteModeChanged(overwriteMode);
 }
 
+
 bool HexEditor::overwriteMode()
 {
     return _overwriteMode;
 }
+
 
 void HexEditor::setSelectionColor(const QColor &color)
 {
@@ -2392,15 +1037,18 @@ void HexEditor::setSelectionColor(const QColor &color)
     viewport()->update();
 }
 
+
 QColor HexEditor::selectionColor()
 {
     return _brushSelection.color();
 }
 
+
 bool HexEditor::showHexGrid()
 {
     return _showHexGrid;
 }
+
 
 void HexEditor::setShowHexGrid(bool mode)
 {
@@ -2408,10 +1056,12 @@ void HexEditor::setShowHexGrid(bool mode)
     viewport()->update();
 }
 
+
 QColor HexEditor::hexAreaBackgroundColor()
 {
     return _hexAreaBackgroundColor;
 }
+
 
 void HexEditor::setHexAreaBackgroundColor(const QColor &color)
 {
@@ -2419,10 +1069,12 @@ void HexEditor::setHexAreaBackgroundColor(const QColor &color)
     viewport()->update();
 }
 
+
 QColor HexEditor::hexAreaGridColor()
 {
     return _hexAreaGridColor;
 }
+
 
 void HexEditor::setHexAreaGridColor(const QColor &color)
 {
@@ -2430,15 +1082,18 @@ void HexEditor::setHexAreaGridColor(const QColor &color)
     viewport()->update();
 }
 
+
 bool HexEditor::isReadOnly()
 {
     return _readOnly;
 }
 
+
 void HexEditor::setReadOnly(bool readOnly)
 {
     _readOnly = readOnly;
 }
+
 
 void HexEditor::setHexCaps(const bool isCaps)
 {
@@ -2449,10 +1104,12 @@ void HexEditor::setHexCaps(const bool isCaps)
     }
 }
 
+
 bool HexEditor::hexCaps()
 {
     return _hexCaps;
 }
+
 
 void HexEditor::setDynamicBytesPerLine(const bool isDynamic)
 {
@@ -2460,12 +1117,14 @@ void HexEditor::setDynamicBytesPerLine(const bool isDynamic)
     resizeEvent(NULL);
 }
 
+
 bool HexEditor::dynamicBytesPerLine()
 {
     return _dynamicBytesPerLine;
 }
 
 // ********************************************************************** Access to data of hexeditor
+
 bool HexEditor::setData(QIODevice &iODevice)
 {
     bool ok = _chunks->setIODevice(iODevice);
@@ -2477,15 +1136,18 @@ bool HexEditor::setData(QIODevice &iODevice)
     return ok;
 }
 
+
 QByteArray HexEditor::dataAt(qint64 pos, qint64 count)
 {
     return _chunks->data(pos, count);
 }
 
+
 qint64 HexEditor::dataSize() const
 {
     return _chunks->size();
 }
+
 
 bool HexEditor::write(QIODevice &iODevice, qint64 pos, qint64 count)
 {
@@ -2493,17 +1155,20 @@ bool HexEditor::write(QIODevice &iODevice, qint64 pos, qint64 count)
 }
 
 // ********************************************************************** Char handling
+
 void HexEditor::insert(qint64 index, char ch)
 {
     _undoStack->insert(index, ch);
     refresh();
 }
 
+
 void HexEditor::remove(qint64 index, qint64 len)
 {
     _undoStack->removeAt(index, len);
     refresh();
 }
+
 
 void HexEditor::replace(qint64 index, char ch)
 {
@@ -2512,11 +1177,13 @@ void HexEditor::replace(qint64 index, char ch)
 }
 
 // ********************************************************************** ByteArray handling
+
 void HexEditor::insert(qint64 pos, const QByteArray &ba)
 {
     _undoStack->insert(pos, ba);
     refresh();
 }
+
 
 void HexEditor::replace(qint64 pos, qint64 len, const QByteArray &ba)
 {
@@ -2525,6 +1192,7 @@ void HexEditor::replace(qint64 pos, qint64 len, const QByteArray &ba)
 }
 
 // ********************************************************************** Utility functions
+
 void HexEditor::ensureVisible()
 {
     const qint64 cursorByte = _cursorPosition / 2;
@@ -2545,6 +1213,7 @@ void HexEditor::ensureVisible()
     viewport()->update();
 }
 
+
 void HexEditor::ensureVisibleCentered()
 {
     const qint64 cursorByte = _cursorPosition / 2;
@@ -2557,6 +1226,7 @@ void HexEditor::ensureVisibleCentered()
     viewport()->update();
 }
 
+
 void HexEditor::ensureVisibleTop()
 {
     const qint64 cursorByte = _cursorPosition / 2;
@@ -2566,6 +1236,7 @@ void HexEditor::ensureVisibleTop()
     viewport()->update();
 }
 
+
 qint64 HexEditor::indexOf(const QByteArray &ba, qint64 from)
 {
     const qint64 pos = findNextIndex(ba, from);
@@ -2573,6 +1244,7 @@ qint64 HexEditor::indexOf(const QByteArray &ba, qint64 from)
         highlightMatch(pos, ba.length());
     return pos;
 }
+
 
 qint64 HexEditor::findNextIndex(const QByteArray &ba, qint64 from, bool relative)
 {
@@ -2615,6 +1287,7 @@ qint64 HexEditor::findNextIndex(const QByteArray &ba, qint64 from, bool relative
     return -1;
 }
 
+
 qint64 HexEditor::relativeSearch(const QByteArray &ba, qint64 from)
 {
     const qint64 pos = findNextIndex(ba, from, true);
@@ -2622,6 +1295,7 @@ qint64 HexEditor::relativeSearch(const QByteArray &ba, qint64 from)
         highlightMatch(pos, ba.length());
     return pos;
 }
+
 
 void HexEditor::jumpTo(qint64 offset, bool relative)
 {
@@ -2632,10 +1306,12 @@ void HexEditor::jumpTo(qint64 offset, bool relative)
     ensureVisible();
 }
 
+
 bool HexEditor::isModified()
 {
     return _modified;
 }
+
 
 void HexEditor::setModified(bool modified)
 {
@@ -2645,15 +1321,18 @@ void HexEditor::setModified(bool modified)
     _modified = modified;
 }
 
+
 bool HexEditor::canUndo()
 {
     return _undoStack->canUndo();
 }
 
+
 bool HexEditor::canRedo()
 {
     return _undoStack->canRedo();
 }
+
 
 void HexEditor::selectByteRange(qint64 start, qint64 end)
 {
@@ -2669,6 +1348,7 @@ void HexEditor::selectByteRange(qint64 start, qint64 end)
     setSelection(selectionEndPos);
 }
 
+
 void HexEditor::highlightMatch(qint64 pos, qint64 length)
 {
     if (pos < 0 || length <= 0)
@@ -2683,6 +1363,7 @@ void HexEditor::highlightMatch(qint64 pos, qint64 length)
     ensureVisible();
 }
 
+
 qint64 HexEditor::lastIndexOf(const QByteArray &ba, qint64 from)
 {
     const qint64 pos = findPreviousIndex(ba, from);
@@ -2690,6 +1371,7 @@ qint64 HexEditor::lastIndexOf(const QByteArray &ba, qint64 from)
         highlightMatch(pos, ba.length());
     return pos;
 }
+
 
 qint64 HexEditor::findPreviousIndex(const QByteArray &ba, qint64 from, bool relative)
 {
@@ -2731,6 +1413,7 @@ qint64 HexEditor::findPreviousIndex(const QByteArray &ba, qint64 from, bool rela
 
     return -1;
 }
+
 
 void HexEditor::redo()
 {
@@ -2774,11 +1457,13 @@ void HexEditor::redo()
     refresh();
 }
 
+
 QString HexEditor::selectionToReadableString()
 {
     QByteArray ba = _chunks->data(getSelectionBegin(), getSelectionEnd() - getSelectionBegin());
     return toReadable(ba);
 }
+
 
 QString HexEditor::selectedData()
 {
@@ -2786,29 +1471,13 @@ QString HexEditor::selectedData()
     return ba;
 }
 
-void HexEditor::setFont(const QFont &font)
-{
-    QFont theFont(font);
-    theFont.setStyleHint(QFont::Monospace);
-    QWidget::setFont(theFont);
-    QFontMetrics metrics = fontMetrics();
-    _pxCharWidth = metrics.horizontalAdvance(QLatin1Char('2'));
-    _pxCharHeight = metrics.height();
-    _pxGapAdr = _pxCharWidth / 2;
-    _pxGapAdrHex = _pxCharWidth * 2;
-    _pxGapHexAscii = 2 * _pxCharWidth;
-    _pxCursorWidth = _pxCharHeight / 7;
-    _pxSelectionSub = _pxCharHeight / 5;
-    invalidateAsciiAreaWidthCache();
-    updateAsciiAreaMaxWidth();
-    viewport()->update();
-}
 
 QString HexEditor::toReadableString()
 {
     QByteArray ba = _chunks->data();
     return toReadable(ba);
 }
+
 
 void HexEditor::undo()
 {
@@ -2857,10 +1526,12 @@ void HexEditor::undo()
     refresh();
 }
 
+
 TranslationTable *HexEditor::getTranslationTable()
 {
     return _tb;
 }
+
 
 void HexEditor::setTranslationTable(TranslationTable *tb)
 {
@@ -2886,15 +1557,18 @@ void HexEditor::setTranslationTable(TranslationTable *tb)
     viewport()->update();
 }
 
+
 void HexEditor::removeTranslationTable()
 {
     setTranslationTable(); // with no parameters removes translation table
 }
 
+
 QString HexEditor::currentEncoding() const
 {
     return _currentEncoding;
 }
+
 
 void HexEditor::setCurrentEncoding(const QString &encoding)
 {
@@ -2905,12 +1579,14 @@ void HexEditor::setCurrentEncoding(const QString &encoding)
     viewport()->update();
 }
 
+
 QString HexEditor::decodeTextForCurrentEncoding(const QByteArray &bytes) const
 {
     if (_tb)
         return _tb->encode(bytes, true);
     return decodeTextWithEncoding(bytes, _currentEncoding);
 }
+
 
 QByteArray HexEditor::encodeTextForCurrentEncoding(const QString &text) const
 {
@@ -2931,1904 +1607,12 @@ QVector<QString> HexEditor::decodeBufferForCurrentEncoding(const QByteArray &dat
 }
 
 // ********************************************************************** Handle events
-void HexEditor::keyPressEvent(QKeyEvent *event)
-{
-    // Pure modifier keys must not trigger ensureVisible()/refresh() because that
-    // can unexpectedly jump vertical scroll position.
-    if (event->key() == Qt::Key_Shift
-        || event->key() == Qt::Key_Control
-        || event->key() == Qt::Key_Alt
-        || event->key() == Qt::Key_Meta)
-    {
-        event->accept();
-        return;
-    }
 
-    // Virtual line break: Enter adds a break before the current byte
-    if (event->key() == Qt::Key_Return && event->modifiers() == Qt::NoModifier) {
-        qint64 brk = _cursorPosition / 2;
-        if (brk > 0) {
-            addLineBreak(brk - 1);
-        }
-        event->accept();
-        return;
-    }
-
-    // Pre-compute visual row info for navigation
-    const qint64 navByte = _cursorPosition / 2;
-    const qint64 navNibble = _cursorPosition % 2;
-    const qint64 navVisRow = visualRowForByte(navByte);
-    const qint64 navRowStart = byteOffsetForVisualRow(navVisRow);
-    const int navCol = static_cast<int>(navByte - navRowStart);
-
-    // Cursor movements
-    if (event->matches(QKeySequence::MoveToNextChar))
-    {
-        qint64 pos;
-        if (_showOriginal && !_editAreaIsAscii)
-            pos = (_cursorPosition / 2 + 1) * 2;  // byte-only: skip to next byte boundary
-        else if (_editAreaIsAscii)
-            pos = _cursorPosition + 2;
-        else
-            pos = _cursorPosition + 1;
-
-        setCursorPosition(pos);
-        resetSelection(pos);
-    }
-
-    if (event->matches(QKeySequence::MoveToPreviousChar))
-    {
-        qint64 pos;
-        if (_showOriginal && !_editAreaIsAscii)
-            pos = (_cursorPosition / 2 - 1) * 2;  // byte-only: skip to previous byte boundary
-        else if (_editAreaIsAscii)
-            pos = _cursorPosition - 2;
-        else
-            pos = _cursorPosition - 1;
-
-        setCursorPosition(pos);
-        resetSelection(pos);
-    }
-
-    if (event->matches(QKeySequence::MoveToEndOfLine))
-    {
-        qint64 rowBytes = bytesOnVisualRowAt(navRowStart);
-        qint64 pos = (navRowStart + rowBytes - 1) * 2 + 1;
-        setCursorPosition(pos);
-        resetSelection(_cursorPosition);
-    }
-
-    if (event->matches(QKeySequence::MoveToStartOfLine))
-    {
-        qint64 pos = navRowStart * 2;
-        setCursorPosition(pos);
-        resetSelection(_cursorPosition);
-    }
-
-    if (event->matches(QKeySequence::MoveToPreviousLine))
-    {
-        if (navVisRow > 0) {
-            qint64 prevRowStart = byteOffsetForVisualRow(navVisRow - 1);
-            int prevRowBytes = bytesOnVisualRowAt(prevRowStart);
-            qint64 newByte = prevRowStart + qMin(navCol, prevRowBytes - 1);
-            setCursorPosition(newByte * 2 + navNibble);
-        }
-        resetSelection(_cursorPosition);
-    }
-
-    if (event->matches(QKeySequence::MoveToNextLine))
-    {
-        qint64 nextRowStart = byteOffsetForVisualRow(navVisRow + 1);
-        if (nextRowStart < _chunks->size()) {
-            int nextRowBytes = bytesOnVisualRowAt(nextRowStart);
-            qint64 newByte = nextRowStart + qMin(navCol, qMax(0, nextRowBytes - 1));
-            setCursorPosition(newByte * 2 + navNibble);
-        }
-        resetSelection(_cursorPosition);
-    }
-
-    if (event->matches(QKeySequence::MoveToNextPage))
-    {
-        qint64 targetRow = qMin(navVisRow + _rowsShown - 1, totalVisualRows() - 1);
-        qint64 targetRowStart = byteOffsetForVisualRow(targetRow);
-        int targetRowBytes = bytesOnVisualRowAt(targetRowStart);
-        qint64 newByte = targetRowStart + qMin(navCol, qMax(0, targetRowBytes - 1));
-        setCursorPosition(newByte * 2 + navNibble);
-        resetSelection(_cursorPosition);
-    }
-
-    if (event->matches(QKeySequence::MoveToPreviousPage))
-    {
-        qint64 targetRow = qMax<qint64>(0, navVisRow - _rowsShown + 1);
-        qint64 targetRowStart = byteOffsetForVisualRow(targetRow);
-        int targetRowBytes = bytesOnVisualRowAt(targetRowStart);
-        qint64 newByte = targetRowStart + qMin(navCol, qMax(0, targetRowBytes - 1));
-        setCursorPosition(newByte * 2 + navNibble);
-        resetSelection(_cursorPosition);
-    }
-
-    if (event->matches(QKeySequence::MoveToEndOfDocument))
-    {
-        setCursorPosition(_chunks->size() * 2);
-        resetSelection(_cursorPosition);
-    }
-
-    if (event->matches(QKeySequence::MoveToStartOfDocument))
-    {
-        setCursorPosition(0);
-        resetSelection(_cursorPosition);
-    }
-
-    // Select commands
-    if (event->matches(QKeySequence::SelectAll))
-    {
-        resetSelection(0);
-        setSelection(2 * _chunks->size() + 1);
-    }
-
-    if (event->matches(QKeySequence::SelectNextChar))
-    {
-        qint64 pos = _cursorPosition + 1;
-        if (_editAreaIsAscii)
-            pos += 1;
-        else
-            pos = (_cursorPosition | 1) + 1; // snap to next byte boundary
-        setCursorPosition(pos);
-        setSelection(pos);
-    }
-
-    if (event->matches(QKeySequence::SelectPreviousChar))
-    {
-        qint64 pos = _cursorPosition - 1;
-        if (_editAreaIsAscii)
-            pos -= 1;
-        else
-            pos = (_cursorPosition & ~1) - 2; // snap to previous byte boundary
-        setSelection(pos);
-        setCursorPosition(pos);
-    }
-
-    if (event->matches(QKeySequence::SelectEndOfLine))
-    {
-        qint64 rowBytes = bytesOnVisualRowAt(navRowStart);
-        qint64 pos = (navRowStart + rowBytes - 1) * 2 + 1;
-        setCursorPosition(pos);
-        setSelection(pos);
-    }
-
-    if (event->matches(QKeySequence::SelectStartOfLine))
-    {
-        qint64 pos = navRowStart * 2;
-        setCursorPosition(pos);
-        setSelection(pos);
-    }
-
-    if (event->matches(QKeySequence::SelectPreviousLine))
-    {
-        if (navVisRow > 0) {
-            qint64 prevRowStart = byteOffsetForVisualRow(navVisRow - 1);
-            int prevRowBytes = bytesOnVisualRowAt(prevRowStart);
-            qint64 newByte = prevRowStart + qMin(navCol, prevRowBytes - 1);
-            qint64 pos = newByte * 2 + navNibble;
-            setCursorPosition(pos);
-            setSelection(pos);
-        }
-    }
-
-    if (event->matches(QKeySequence::SelectNextLine))
-    {
-        qint64 nextRowStart = byteOffsetForVisualRow(navVisRow + 1);
-        if (nextRowStart < _chunks->size()) {
-            int nextRowBytes = bytesOnVisualRowAt(nextRowStart);
-            qint64 newByte = nextRowStart + qMin(navCol, qMax(0, nextRowBytes - 1));
-            qint64 pos = newByte * 2 + navNibble;
-            setCursorPosition(pos);
-            setSelection(pos);
-        }
-    }
-
-    if (event->matches(QKeySequence::SelectNextPage))
-    {
-        qint64 targetRow = qMin(navVisRow + _rowsShown - 1, totalVisualRows() - 1);
-        qint64 targetRowStart = byteOffsetForVisualRow(targetRow);
-        int targetRowBytes = bytesOnVisualRowAt(targetRowStart);
-        qint64 newByte = targetRowStart + qMin(navCol, qMax(0, targetRowBytes - 1));
-        qint64 pos = newByte * 2 + navNibble;
-        setCursorPosition(pos);
-        setSelection(pos);
-    }
-
-    if (event->matches(QKeySequence::SelectPreviousPage))
-    {
-        qint64 targetRow = qMax<qint64>(0, navVisRow - _rowsShown + 1);
-        qint64 targetRowStart = byteOffsetForVisualRow(targetRow);
-        int targetRowBytes = bytesOnVisualRowAt(targetRowStart);
-        qint64 newByte = targetRowStart + qMin(navCol, qMax(0, targetRowBytes - 1));
-        qint64 pos = newByte * 2 + navNibble;
-        setCursorPosition(pos);
-        setSelection(pos);
-    }
-
-    if (event->matches(QKeySequence::SelectEndOfDocument))
-    {
-        qint64 pos = _chunks->size() * 2;
-        setCursorPosition(pos);
-        setSelection(pos);
-    }
-
-    if (event->matches(QKeySequence::SelectStartOfDocument))
-    {
-        qint64 pos = 0;
-        setCursorPosition(pos);
-        setSelection(pos);
-    }
-
-    // Edit Commands
-    if (!_readOnly && !_showOriginal)
-    {
-        // Helper: block data modification when cursor or selection touches a disasm section.
-        const auto editBlockedByDisasm = [this]() {
-            if (isDisasmAt(_bPosCurrent))
-                return true;
-            if (hasSelection()
-                && (isDisasmAt(getSelectionBegin()) || isDisasmAt(getSelectionEnd() - 1)))
-                return true;
-            return false;
-        };
-
-        /* Cut */
-        if (event->matches(QKeySequence::Cut))
-        {
-            const qint64 selBegin = getSelectionBegin();
-            const qint64 selEnd = getSelectionEnd();
-            const QByteArray raw = _chunks->data(selBegin, selEnd - selBegin);
-
-            if (_editAreaIsAscii)
-            {
-                QApplication::clipboard()->setText(decodeTextForCurrentEncoding(raw));
-            }
-            else
-            {
-                QApplication::clipboard()->setText(QString::fromLatin1(raw.toHex(' ')).toUpper());
-            }
-
-            // In REPLACE mode, cut only copies without deleting
-            if (!_overwriteMode && !editBlockedByDisasm())
-            {
-                remove(selBegin, selEnd - selBegin);
-                setCursorPosition(2 * selBegin);
-                resetSelection(2 * selBegin);
-            }
-        }
-        else
-
-            /* Paste */
-            if (event->matches(QKeySequence::Paste))
-            {
-                if (editBlockedByDisasm()) { /* disasm — no paste */ }
-                else {
-                QClipboard *clipboard = QApplication::clipboard();
-                QByteArray ba;
-                if (_editAreaIsAscii)
-                {
-                    ba = encodeTextForCurrentEncoding(clipboard->text());
-                }
-                else
-                {
-                    const QString stripped = clipboard->text()
-                                                .remove(' ').remove('\t').remove('\n').remove('\r');
-                    ba = QByteArray::fromHex(stripped.toLatin1());
-                }
-
-                const qint64 selBegin = getSelectionBegin();
-                const qint64 selEnd = getSelectionEnd();
-                const bool hasSelection = (selBegin != selEnd);
-
-                if (_overwriteMode)
-                {
-                    if (hasSelection)
-                    {
-                        // REPLACE mode with selection: truncate paste to selection size, paste at selection beginning
-                        const qint64 selLen = selEnd - selBegin;
-                        ba = ba.left(static_cast<int>(selLen));
-                        replace(selBegin, ba.size(), ba);
-                        setCursorPosition(2 * (selBegin + ba.size()));
-                    }
-                    else
-                    {
-                        // REPLACE mode without selection: paste at cursor position
-                        ba = ba.left(static_cast<int>(std::min<qint64>(ba.size(), (_chunks->size() - _bPosCurrent))));
-                        replace(_bPosCurrent, ba.size(), ba);
-                        setCursorPosition(_cursorPosition + 2 * ba.size());
-                    }
-                }
-                else
-                {
-                    // INSERT mode
-                    if (hasSelection)
-                    {
-                        // INSERT mode with selection: delete entire selection, then insert paste at selection beginning
-                        const qint64 selLen = selEnd - selBegin;
-                        remove(selBegin, static_cast<int>(selLen));
-                        insert(selBegin, ba);
-                        setCursorPosition(2 * (selBegin + ba.size()));
-                    }
-                    else
-                    {
-                        // INSERT mode without selection: insert at cursor position
-                        insert(_bPosCurrent, ba);
-                        setCursorPosition(_cursorPosition + 2 * ba.size());
-                    }
-                }
-                resetSelection(getSelectionBegin());
-                } // !editBlockedByDisasm
-            }
-            else
-
-                /* Delete char */
-                if (event->matches(QKeySequence::Delete))
-                {
-                    if (!editBlockedByDisasm()) {
-                    if (getSelectionEnd() - getSelectionBegin() > 1)
-                    {
-                        _bPosCurrent = getSelectionBegin();
-                        if (_overwriteMode)
-                        {
-                            QByteArray ba = QByteArray(getSelectionEnd() - getSelectionBegin(), char(0));
-                            replace(_bPosCurrent, ba.size(), ba);
-                        }
-                        else
-                        {
-                            remove(_bPosCurrent, getSelectionEnd() - getSelectionBegin());
-                        }
-                    }
-                    else
-                    {
-                        if (_overwriteMode)
-                            replace(_bPosCurrent, char(0));
-                        else
-                            remove(_bPosCurrent, 1);
-                    }
-                    setCursorPosition(2 * _bPosCurrent);
-                    resetSelection(2 * _bPosCurrent);
-                    } // !editBlockedByDisasm
-                }
-                else
-
-                    /* Backspace */
-                    if ((event->key() == Qt::Key_Backspace) && (event->modifiers() == Qt::NoModifier))
-                    {
-                        // First check for a virtual line break to remove
-                        bool removedBreak = false;
-                        const QVector<qint64> currentBreaks = lineBreaks();
-                        if (!currentBreaks.isEmpty()) {
-                            qint64 brkOffset = _bPosCurrent - 1;
-                            if (brkOffset >= 0) {
-                                auto it = std::lower_bound(currentBreaks.constBegin(), currentBreaks.constEnd(), brkOffset);
-                                if (it != currentBreaks.constEnd() && *it == brkOffset) {
-                                    removeLineBreak(brkOffset);
-                                    removedBreak = true;
-                                }
-                            }
-                        }
-
-                        if (!removedBreak && !editBlockedByDisasm()) {
-                        if (!_overwriteMode)
-                        {
-                            // In INSERT mode backspace only removes line breaks (handled above).
-                            // No data deletion — do nothing.
-                        }
-                        else
-                        if (getSelectionEnd() - getSelectionBegin() > 1)
-                        {
-                            _bPosCurrent = getSelectionBegin();
-                            setCursorPosition(2 * _bPosCurrent);
-
-                            {
-                                QByteArray ba = QByteArray(getSelectionEnd() - getSelectionBegin(), char(0));
-                                replace(_bPosCurrent, ba.size(), ba);
-                            }
-                            resetSelection(2 * _bPosCurrent);
-                        }
-                        else
-                        {
-                            bool behindLastByte = false;
-                            if ((_cursorPosition / 2) == _chunks->size())
-                                behindLastByte = true;
-
-                            _bPosCurrent -= 1;
-                            replace(_bPosCurrent, char(0));
-
-                            if (!behindLastByte)
-                                _bPosCurrent -= 1;
-
-                            setCursorPosition(2 * _bPosCurrent);
-                            resetSelection(2 * _bPosCurrent);
-                        }
-                        } // !removedBreak
-                    }
-                    else
-
-                        if (event->matches(QKeySequence::Undo)) // UNDO
-                    {
-                        undo();
-                    }
-                    else if (event->matches(QKeySequence::Redo)) // REDO
-                    {
-                        redo();
-                    }
-                    else if (event->text() != "")
-                    {
-                        /* Hex and ascii input */
-                        auto key = _editAreaIsAscii ? event->text().at(0) : event->text().at(0).toLower().toLatin1();
-
-                        // Filter hex input
-                        if ((((key >= '0' && key <= '9') || (key >= 'a' && key <= 'f')) && _editAreaIsAscii == false) || (key >= ' ' && _editAreaIsAscii))
-                        {
-                            if (editBlockedByDisasm()) { /* disasm — no typing */ }
-                            else if (hasSelection())
-                            {
-                                if (_overwriteMode)
-                                {
-                                    qint64 len = getSelectionEnd() - getSelectionBegin();
-                                    replace(getSelectionBegin(), (int)len, QByteArray((int)len, char(0)));
-                                }
-                                else
-                                {
-                                    remove(getSelectionBegin(), getSelectionEnd() - getSelectionBegin());
-                                    _bPosCurrent = getSelectionBegin();
-                                }
-
-                                setCursorPosition(2 * _bPosCurrent);
-                                resetSelection(2 * _bPosCurrent);
-                            }
-
-                            // If insert mode, then insert a byte
-                            if (!_overwriteMode && !(_cursorPosition % 2))
-                                insert(_bPosCurrent, char(0));
-
-                            // Change content
-                            if (_chunks->size() > 0)
-                            {
-                                if (!_editAreaIsAscii)
-                                {
-                                    QByteArray hexValue = _chunks->data(_bPosCurrent, 1).toHex();
-
-                                    if ((_cursorPosition % 2) == 0)
-                                        hexValue[0] = key.toLatin1();
-                                    else
-                                        hexValue[1] = key.toLatin1();
-
-                                    char ch = QByteArray().fromHex(hexValue)[0];
-                                    replace(_bPosCurrent, ch);
-                                    setCursorPosition(_cursorPosition + 1);
-                                }
-                                else
-                                {
-                                    // ASCII edit mode: try multi-byte TBL lookup first
-                                    QByteArray bytesToWrite;
-                                    if (_tb)
-                                    {
-                                        bytesToWrite = _tb->decodeToBytes(QString(key));
-                                        if (bytesToWrite.isEmpty())
-                                        {
-                                            // Not in any table entry — keep as raw byte
-                                            bytesToWrite = QByteArray(1, key.toLatin1());
-                                        }
-                                    }
-                                    else
-                                    {
-                                        // Use encoding-aware conversion so non-ASCII characters
-                                        // (e.g. Cyrillic typed via keyboard IME) are stored correctly.
-                                        bytesToWrite = encodeTextForCurrentEncoding(QString(key));
-                                        if (bytesToWrite.isEmpty())
-                                            bytesToWrite = QByteArray(1, key.toLatin1());
-                                    }
-
-                                    const int bytesLen = bytesToWrite.size();
-
-                                    // In insert mode, the outer block already inserted 1 null byte.
-                                    // For multi-byte entries we need bytesLen total, so insert bytesLen-1 more.
-                                    if (!_overwriteMode && !(_cursorPosition % 2) && bytesLen > 1)
-                                        insert(_bPosCurrent + 1, QByteArray(bytesLen - 1, char(0)));
-
-                                    if (bytesLen == 1)
-                                        replace(_bPosCurrent, bytesToWrite[0]);
-                                    else
-                                        replace(_bPosCurrent, bytesLen, bytesToWrite);
-
-                                    setCursorPosition(_cursorPosition + 2 * bytesLen);
-                                }
-
-                                resetSelection(_cursorPosition);
-                            }
-                        }
-                    }
-    }
-
-    /* Copy */
-    if (event->matches(QKeySequence::Copy))
-    {
-        const qint64 selBegin = getSelectionBegin();
-        const qint64 selEnd = getSelectionEnd();
-        if (selEnd <= selBegin) return;
-        const QByteArray raw = _chunks->data(selBegin, selEnd - selBegin);
-        const qint64 selLast = qMax<qint64>(selBegin, selEnd - 1);
-
-        const bool copyDisasm = _showDisasm
-            || (_sectionModel && (_sectionModel->displayModeAtOffset(selBegin) == SectionDisplay_Disasm
-                || _sectionModel->displayModeAtOffset(selLast) == SectionDisplay_Disasm));
-
-        if (copyDisasm) {
-            const QString disasmText = selectedDisasmText();
-            if (!disasmText.isEmpty()) {
-                QApplication::clipboard()->setText(disasmText);
-                return;
-            }
-            QApplication::clipboard()->setText(decodeTextForCurrentEncoding(raw));
-        } else if (_editAreaIsAscii) {
-            QApplication::clipboard()->setText(decodeTextForCurrentEncoding(raw));
-        } else {
-            QApplication::clipboard()->setText(QString::fromLatin1(raw.toHex(' ')).toUpper());
-        }
-    }
-
-    // Switch between insert/overwrite mode
-    if ((event->key() == Qt::Key_Insert) && (event->modifiers() == Qt::NoModifier))
-    {
-        setOverwriteMode(!overwriteMode());
-        setCursorPosition(_cursorPosition);
-    }
-
-    // switch from hex to ascii edit
-    if (event->key() == Qt::Key_Tab && !_editAreaIsAscii)
-    {
-        _editAreaIsAscii = true;
-        setCursorPosition(_cursorPosition);
-    }
-
-    // switch from ascii to hex edit
-    if (event->key() == Qt::Key_Backtab && _editAreaIsAscii)
-    {
-        _editAreaIsAscii = false;
-        setCursorPosition(_cursorPosition);
-    }
-
-    refresh();
-    QAbstractScrollArea::keyPressEvent(event);
-}
-
-void HexEditor::mouseMoveEvent(QMouseEvent *event)
-{
-    _blink = false;
-    viewport()->update();
-
-    // Handle address area boundary drag (resize by 1 byte per step)
-    if (_addrDragging && _addressArea)
-    {
-        const int pixelDelta = event->x() - _addrDragStartX;
-        const int pixelsPerByte = 2 * _pxCharWidth;  // 2 hex digits per byte
-        const int byteDelta = pixelDelta / pixelsPerByte;
-        if (byteDelta != 0)
-        {
-            const int currentBytes = _addressWidth / 2;
-            const int newBytes = qBound(1, currentBytes + byteDelta, 8);
-            const int newWidth = newBytes * 2;  // hex digits
-            if (newWidth != _addressWidth)
-            {
-                _addrDragStartX += byteDelta * pixelsPerByte;
-                _addressWidth = newWidth;
-                if (_dynamicBytesPerLine)
-                    resizeEvent(nullptr);
-                else
-                    adjust();
-                viewport()->update();
-            }
-        }
-        viewport()->setCursor(Qt::SizeHorCursor);
-        return;
-    }
-
-    // Handle separator dragging (only when autosize is OFF and ASCII area visible)
-    if (_separatorDragging && !_dynamicBytesPerLine && _asciiArea)
-    {
-        int pixelDelta = event->x() - _separatorDragStartX;
-        
-        // Convert pixel delta to bytes per line delta.
-        // Each byte takes 3 characters in hex area (2 hex digits + 1 space),
-        // plus extra gaps between columns.
-        int pixelsPerByte = 3 * _pxCharWidth + kHexColumnExtraGapPx;
-        
-        // Subtract the gap for the last column to get realistic byte changes
-        pixelsPerByte = 3 * _pxCharWidth + kHexColumnExtraGapPx - kHexColumnExtraGapPx / _bytesPerLine;
-        
-        // Use 3 chars width + gap as the primary measure
-        int byteDelta = pixelDelta / (3 * _pxCharWidth);
-        
-        // Calculate new bytes per line
-        int newBytesPerLine = _bytesPerLine + byteDelta;
-        
-        // Clamp to reasonable range: 4-64 bytes per line
-        if (newBytesPerLine < 4)
-            newBytesPerLine = 4;
-        else if (newBytesPerLine > 64)
-            newBytesPerLine = 64;
-        
-        if (newBytesPerLine != _bytesPerLine)
-        {
-            _separatorDragStartX = event->x();
-            setBytesPerLine(newBytesPerLine);
-        }
-        
-        viewport()->setCursor(Qt::SizeHorCursor);
-        return;
-    }
-
-    // Determine cursor based on autosize mode and hover position
-    {
-        const int pxOfsX_mv = horizontalScrollBar()->value();
-        bool cursorSet = false;
-
-        // Address/hex boundary: click collapses/expands address area
-        if (_addressArea)
-        {
-            const int addrSepX = _pxPosHexX - _pxGapAdrHex - pxOfsX_mv;
-            if (std::abs(event->x() - addrSepX) < 8)
-            {
-                viewport()->setCursor(Qt::SizeHorCursor);
-                cursorSet = true;
-            }
-        }
-
-        if (!cursorSet)
-        {
-            if (_dynamicBytesPerLine)
-            {
-                viewport()->setCursor(Qt::ArrowCursor);
-            }
-            else if (_asciiArea)
-            {
-                const int separatorScreenX = _pxPosAsciiX - (_pxGapHexAscii / 2) - pxOfsX_mv;
-                if (std::abs(event->x() - separatorScreenX) < 8) {
-                    viewport()->setCursor(Qt::SizeHorCursor);
-                } else {
-                    // Hand cursor over branch instructions in disasm area
-                    bool handSet = false;
-                    const int posX = event->x() + pxOfsX_mv;
-                    if (posX >= _pxPosAsciiX) {
-                        const qint64 nPos = cursorPosition(event->pos());
-                        if (nPos >= 0) {
-                            const qint64 byteOfs = nPos / 2;
-                            const bool isDisasm = _showDisasm
-                                || (_sectionModel && _sectionModel->displayModeAtOffset(byteOfs) == SectionDisplay_Disasm);
-                            if (isDisasm) {
-                                const DisasmInstruction *instr = disasmInstructionAtOffset(byteOfs);
-                                if (instr && instr->isBranch && instr->branchTarget >= 0
-                                    && instr->branchTarget < _chunks->size()) {
-                                    viewport()->setCursor(Qt::PointingHandCursor);
-                                    handSet = true;
-                                }
-                            }
-                        }
-                    }
-                    if (!handSet)
-                        viewport()->setCursor(Qt::ArrowCursor);
-                }
-            }
-            else
-            {
-                viewport()->setCursor(Qt::ArrowCursor);
-            }
-        }
-    }
-
-    // Only update selection if mouse button is pressed (not on pure hover)
-    if (event->buttons() != Qt::NoButton)
-    {
-        qint64 actPos = cursorPosition(event->pos());
-
-        if (actPos >= 0)
-        {
-            setCursorPosition(actPos);
-            setSelection(actPos);
-        }
-    }
-}
-
-bool HexEditor::viewportEvent(QEvent *event)
-{
-    if (event->type() == QEvent::ToolTip && _showPointers)
-    {
-        QHelpEvent *helpEvent = static_cast<QHelpEvent *>(event);
-        const qint64 nibblePos = cursorPosition(helpEvent->pos());
-        const qint64 bytePos = nibblePos / 2;
-
-        if (bytePos >= 0)
-        {
-            const qint64 ptrStart = pointerStartAt(bytePos, kPointerByteSize);
-            if (ptrStart >= 0)
-            {
-                QToolTip::showText(helpEvent->globalPos(), _pointers.getOffsetText(ptrStart), viewport());
-                return true;
-            }
-            else if (_pointers.hasOffset(bytePos))
-            {
-                const auto ptrs = _pointers.getPointers(bytePos);
-                const QString tip = (ptrs.size() == 1)
-                    ? QStringLiteral("0x") + QStringLiteral("%1").arg(ptrs[0], 8, 16, QChar('0')).toUpper()
-                    : tr("%1 pointers").arg(ptrs.size());
-                QToolTip::showText(helpEvent->globalPos(), tip, viewport());
-                return true;
-            }
-        }
-        QToolTip::hideText();
-        event->ignore();
-        return true;
-    }
-    return QAbstractScrollArea::viewportEvent(event);
-}
-
-void HexEditor::mousePressEvent(QMouseEvent *event)
-{
-    _blink = false;
-    viewport()->update();
-
-    // Address/hex boundary: start drag to resize address area by 1 byte per step
-    if (_addressArea && event->button() == Qt::LeftButton)
-    {
-        const int pxOfsX = horizontalScrollBar()->value();
-        const int addrSepX = _pxPosHexX - _pxGapAdrHex - pxOfsX;
-        if (std::abs(event->x() - addrSepX) < 8)
-        {
-            _addrDragging = true;
-            _addrDragStartX = event->x();
-            viewport()->setCursor(Qt::SizeHorCursor);
-            return;
-        }
-    }
-
-    // Check if separator drag is starting (only if not in dynamic/autosize mode)
-    if (!_dynamicBytesPerLine && _asciiArea)
-    {
-        int pxOfsX = horizontalScrollBar()->value();
-        int separatorScreenX = _pxPosAsciiX - (_pxGapHexAscii / 2) - pxOfsX;
-        
-        // If click is within 8 pixels of separator, start drag
-        if (std::abs(event->x() - separatorScreenX) < 8)
-        {
-            _separatorDragging = true;
-            _separatorDragStartX = event->x();
-            viewport()->setCursor(Qt::SizeHorCursor);
-            return;
-        }
-    }
-
-    qint64 cPos = cursorPosition(event->pos());
-
-    // Empty buffer bootstrap: first click in editable area creates one byte
-    // so overwrite-mode typing can immediately replace it.
-    if (cPos >= 0 && _chunks->size() == 0 && !_readOnly && event->button() == Qt::LeftButton)
-    {
-        insert(0, char(0));
-        cPos = 0;
-    }
-
-    if (cPos >= 0)
-    {
-        if (event->button() == Qt::RightButton)
-        {
-            // On right-click: only update cursor position, do NOT reset or
-            // change the selection so it is preserved for the context menu.
-            setCursorPosition(cPos);
-        }
-        else
-        {
-            if (event->modifiers() != Qt::ShiftModifier)
-                resetSelection(cPos);
-
-            setCursorPosition(cPos);
-            setSelection(cPos);
-
-            if (_showPointers)
-            {
-                const qint64 ptrStart = pointerStartAt(_bPosCurrent, kPointerByteSize);
-
-                if (ptrStart >= 0)
-                {
-                    QToolTip::showText(mapToGlobal(event->pos()), _pointers.getOffsetText(ptrStart));
-                }
-                else if (_pointers.hasOffset(_bPosCurrent))
-                {
-                    auto ptrs = _pointers.getPointers(_bPosCurrent);
-
-                    if (ptrs.size() == 1)
-                    {
-                        QToolTip::showText(mapToGlobal(event->pos()), QString("0x%1").arg(ptrs[0], 8, 16, QChar('0')));
-                    }
-                    else
-                    {
-                        QToolTip::showText(mapToGlobal(event->pos()), tr("%1 pointers").arg(ptrs.size()));
-                    }
-                }
-            }
-        }
-    }
-}
-
-void HexEditor::mouseReleaseEvent(QMouseEvent *event)
-{
-    // End address area drag
-    if (_addrDragging)
-    {
-        _addrDragging = false;
-        viewport()->setCursor(Qt::ArrowCursor);
-        // Persist the new address width to QSettings
-        QSettings s;
-        s.setValue(QStringLiteral("AddressAreaWidth"), _addressWidth);
-        event->accept();
-        return;
-    }
-
-    // End separator dragging
-    if (_separatorDragging)
-    {
-        _separatorDragging = false;
-        viewport()->setCursor(Qt::ArrowCursor);
-        event->accept();
-        return;
-    }
-    
-    QAbstractScrollArea::mouseReleaseEvent(event);
-}
-
-void HexEditor::mouseDoubleClickEvent(QMouseEvent *event)
-{
-    // ── Section header rename: detect click on empty header row ──
-    if (_sectionModel) {
-        const int rowStridePx = _pxCharHeight + kHexRowExtraGapPx;
-        const int posY = static_cast<int>(event->position().y()) - 3;
-        const int row = posY / rowStridePx;
-        if (row >= 0 && row < _visualRowStartBytes.size()) {
-            const int bytesThisRow = (row + 1 < _visualRowStartBytes.size())
-                ? static_cast<int>(_visualRowStartBytes[row + 1] - _visualRowStartBytes[row])
-                : _bytesPerLine;
-            if (bytesThisRow <= 0) {
-                const qint64 absOfs = _visualRowStartBytes[row];
-                // Only react on the last consecutive empty row (the one
-                // that visually shows the section name), not on blank
-                // separator rows above it.
-                bool nextRowIsData = true;
-                if (row + 2 < _visualRowStartBytes.size()) {
-                    nextRowIsData = (_visualRowStartBytes[row + 2]
-                                     - _visualRowStartBytes[row + 1]) > 0;
-                }
-                if (nextRowIsData) {
-                    const int secIdx = _sectionModel->sectionIndexAtStartOffset(absOfs);
-                    if (secIdx >= 0) {
-                        // Edit directly from the main hex area on double-click.
-                        bool ok = false;
-                        const QString oldName = _sectionModel->at(secIdx).name;
-                        const QString newName = QInputDialog::getText(
-                            this,
-                            tr("Rename section"),
-                            tr("Section name:"),
-                            QLineEdit::Normal,
-                            oldName,
-                            &ok);
-                        if (ok) {
-                            const QString trimmed = newName.trimmed();
-                            if (!trimmed.isEmpty() && trimmed != oldName)
-                                _sectionModel->renameSection(secIdx, trimmed);
-                        }
-                        return;
-                    }
-                }
-            }
-        }
-    }
-
-    if (_showPointers)
-    {
-        // Highest priority: if something points TO the current offset, jump to that pointer source
-        if (_pointers.hasOffset(_bPosCurrent))
-        {
-            _editAreaIsAscii = false;
-
-            auto ptrs = _pointers.getPointers(_bPosCurrent);
-
-            if (ptrs.size() == 1)
-            {
-                setCursorPosition(ptrs[0] * 2);
-                ensureVisible();
-            }
-            else
-            {
-                // TODO: display context menu/listbox with pointers list
-            }
-            return;
-        }
-        // Otherwise, if the current byte is part of a pointer, follow it to the data target
-        else
-        {
-            const qint64 ptrStart = pointerStartAt(_bPosCurrent, kPointerByteSize);
-            if (ptrStart >= 0)
-            {
-                _editAreaIsAscii = true;
-                setCursorPosition(_pointers.getOffset(ptrStart) * 2);
-                ensureVisible();
-                return;
-            }
-        }
-    }
-
-    // ── Follow branch target in disassembly rows ──
-    {
-        const bool isDisasm = _showDisasm
-            || (_sectionModel && _sectionModel->displayModeAtOffset(_bPosCurrent) == SectionDisplay_Disasm);
-        if (isDisasm) {
-            const DisasmInstruction *instr = disasmInstructionAtOffset(_bPosCurrent);
-            if (instr && instr->isBranch && instr->branchTarget >= 0
-                && instr->branchTarget < _chunks->size())
-            {
-                setCursorPosition(instr->branchTarget * 2);
-                // Show one row above the target so the section header is visible
-                ensureVisibleTop();
-                if (verticalScrollBar()->value() > 0)
-                    verticalScrollBar()->setValue(verticalScrollBar()->value() - 1);
-                return;
-            }
-        }
-    }
-}
-
-void HexEditor::contextMenuEvent(QContextMenuEvent *event)
-{
-    emit contextMenuRequested(event->globalPos(), _bPosCurrent);
-}
-
-void HexEditor::paintEvent(QPaintEvent *event)
-{
-    QPainter painter(viewport());
-    auto pxOfsX = horizontalScrollBar()->value();
-
-    if (event->rect() != _asciiCursorRect && event->rect() != _hexCursorRect)
-    {
-        const int rowStridePx = _pxCharHeight + kHexRowExtraGapPx;
-        int pxPosStartY = _pxCharHeight;
-
-        // draw some patterns if needed
-        painter.fillRect(event->rect(), viewport()->palette().color(QPalette::Base));
-
-        // Fill hex area with background color
-        if (_asciiArea)
-        {
-            // Stop at the separator line (half-gap before ASCII area)
-            const int hexAreaWidth = _pxPosAsciiX - _pxPosHexX - (_pxGapHexAscii / 2);
-            painter.fillRect(QRect(_pxPosHexX - pxOfsX, event->rect().top(), hexAreaWidth, height()), _hexAreaBackgroundColor);
-        }
-        else
-        {
-            // No ASCII area: hex background extends to the right edge of the viewport
-            painter.fillRect(QRect(_pxPosHexX - pxOfsX, event->rect().top(), viewport()->width(), height()), _hexAreaBackgroundColor);
-        }
-
-        painter.setPen(viewport()->palette().color(QPalette::WindowText));
-
-        // paint address area
-        if (_addressArea)
-        {
-            painter.fillRect(QRect(-pxOfsX, event->rect().top(), _pxPosHexX - _pxGapAdrHex, height()), _addressAreaColor);
-
-            {
-                QString address;
-                auto rowsCount = 0;
-                for (int i = 0; i < _visualRowStartBytes.size(); ++i) {
-                    if (_visualRowStartBytes[i] < _bPosFirst + _dataShown.size())
-                        rowsCount = i;
-                    else break;
-                }
-
-                const QFont originalFont = painter.font();
-                QFont boldFont = originalFont;
-                boldFont.setBold(true);
-                painter.setFont(boldFont);
-
-                // Mask to lower _addrDigits hex digits so wide addresses wrap gracefully
-                const int maskBitsCount = _addrDigits * 4;
-                const quint64 addrMask = (maskBitsCount >= 64) ? ~quint64(0)
-                                                                : ((quint64(1) << maskBitsCount) - 1);
-
-                for (int row = 0, pxPosY = _pxCharHeight; row <= rowsCount; row++, pxPosY += rowStridePx)
-                {
-                    // Skip empty rows (duplicate line breaks produce rows with same start byte)
-                    if (row + 1 < _visualRowStartBytes.size()
-                        && _visualRowStartBytes[row] == _visualRowStartBytes[row + 1])
-                        continue;
-
-                    const qint64 rawAddr = _visualRowStartBytes[row] + _addressOffset;
-                    const quint64 maskedAddr = static_cast<quint64>(rawAddr) & addrMask;
-                    address = QString("%1").arg(maskedAddr, _addrDigits, 16, QChar('0'));
-                    if (_hexCaps) address = address.toUpper();
-
-                    if (_addressZeroByteFontColor.isValid() && _addressZeroByteFontColor != _addressFontColor)
-                    {
-                        // Find first non-zero digit to limit coloring to leading zeros only
-                        int firstNonZero = 0;
-                        while (firstNonZero < address.size() - 1 && address[firstNonZero] == QLatin1Char('0'))
-                            ++firstNonZero;
-
-                        int xPx = _pxPosAdrX - pxOfsX;
-                        for (int d = 0; d < address.size(); ++d)
-                        {
-                            const bool isLeadingZero = (d < firstNonZero);
-                            painter.setPen(QPen(isLeadingZero ? _addressZeroByteFontColor : _addressFontColor));
-                            painter.drawText(xPx, pxPosY, address.mid(d, 1));
-                            xPx += _pxCharWidth;
-                        }
-                    }
-                    else
-                    {
-                        painter.setPen(QPen(_addressFontColor));
-                        painter.drawText(_pxPosAdrX - pxOfsX, pxPosY, address);
-                    }
-                }
-
-                painter.setFont(originalFont);
-            }
-        }
-
-        // paint hex and ascii area
-        painter.setBackgroundMode(Qt::TransparentMode);
-
-        if (_asciiArea)
-        {
-            // ASCII area starts flush with the separator line (no gap between hex and ascii backgrounds)
-            const int asciiAreaStartX = _pxPosAsciiX - (_pxGapHexAscii / 2);
-            painter.fillRect(QRect(asciiAreaStartX - pxOfsX, event->rect().top(), width(), height()), _asciiAreaColor);
-
-            // Draw the separator line on top of the ASCII background
-            painter.setPen(Qt::gray);
-            painter.drawLine(asciiAreaStartX - pxOfsX, event->rect().top(), asciiAreaStartX - pxOfsX, height());
-
-            ensureAsciiAreaWidthCache();
-        }
-
-        const int hexStridePx = 3 * _pxCharWidth + kHexColumnExtraGapPx;
-
-        // Build display caches once for the whole viewport (handles cross-row sequences)
-        ensureTableDisplayCache();
-        ensureEncodingDisplayCache();
-        const bool useTbDisplayCache = !_tbDisplayChars.isEmpty();
-        const bool useEncodingDecoder = !_encodingChars.isEmpty();
-        const int cursorSectionMode = _sectionModel
-            ? _sectionModel->displayModeAtOffset(_bPosCurrent)
-            : SectionDisplay_Default;
-        const bool cursorForcesRaw = (cursorSectionMode == SectionDisplay_Raw);
-        const QFontMetrics paintFm = QFontMetrics(font());
-        const auto slotGapPx = [this](int baseWidth) {
-            return (baseWidth > _pxCharWidth) ? kAsciiColumnGapWidePx : kAsciiColumnGapSinglePx;
-        };
-
-        // Pre-compute which buffer group the cursor belongs to (for multi-byte cursor highlight)
-        const qint64 cursorBufIdxGlobal = _cursorPosition / 2 - _bPosFirst;
-        qint64 cursorLeadBufIdx = cursorBufIdxGlobal;
-        int cursorMultiByteSpan = 1;
-        if (!cursorForcesRaw && useTbDisplayCache && cursorBufIdxGlobal >= 0 && cursorBufIdxGlobal < _tbDisplayChars.size()) {
-            qint64 li = cursorBufIdxGlobal;
-            while (li > 0 && li < _tbDisplayChars.size() && _tbDisplayChars[(int)li].isNull())
-                --li;
-            if (li >= 0 && li < _tbDisplaySpan.size() && _tbDisplaySpan[(int)li] > 1) {
-                cursorLeadBufIdx = li;
-                cursorMultiByteSpan = _tbDisplaySpan[(int)li];
-            }
-        } else if (useEncodingDecoder && cursorBufIdxGlobal >= 0 && cursorBufIdxGlobal < _encodingChars.size()) {
-            qint64 li = cursorBufIdxGlobal;
-            while (li > 0 && li < _encodingChars.size() && _encodingChars[(int)li].isNull())
-                --li;
-            if (li >= 0 && li < _encodingSpan.size() && _encodingSpan[(int)li] > 1) {
-                cursorLeadBufIdx = li;
-                cursorMultiByteSpan = _encodingSpan[(int)li];
-            }
-        }
-
-        for (int row = 0; row < _rowsShown; row++)
-        {
-            QByteArray hex;
-            int pxPosY = pxPosStartY + row * rowStridePx;
-            int pxPosX = _pxPosHexX - pxOfsX;
-            int pxPosAsciiX2 = _pxPosAsciiX + kAsciiAreaLeftPaddingPx - pxOfsX;
-            qint64 bPosLine = _visualRowStartBytes[row] - _bPosFirst;
-            int bytesThisRow = (row + 1 < _visualRowStartBytes.size())
-                ? static_cast<int>(_visualRowStartBytes[row + 1] - _visualRowStartBytes[row])
-                : _bytesPerLine;
-            bytesThisRow = qMin(bytesThisRow, static_cast<int>(_dataShown.size() - bPosLine));
-            if (bPosLine < 0) continue;
-            if (bytesThisRow <= 0) {
-                // ── Section header row: draw the name only on the LAST
-                //    consecutive empty row so earlier rows stay blank. ──
-                if (_sectionModel) {
-                    const qint64 absOfs = _visualRowStartBytes[row];
-                    // Check whether the next row is a data row (bytesThisRow > 0).
-                    // If so, the current row is the last empty row before data —
-                    // that's where we draw the section header.
-                    bool nextRowIsData = true;
-                    if (row + 2 < _visualRowStartBytes.size()) {
-                        nextRowIsData = (_visualRowStartBytes[row + 2]
-                                         - _visualRowStartBytes[row + 1]) > 0;
-                    }
-                    if (nextRowIsData) {
-                        const int secIdx = _sectionModel->sectionIndexAtStartOffset(absOfs);
-                        const QString secName = (secIdx >= 0) ? _sectionModel->at(secIdx).name
-                                                              : _sectionModel->sectionNameAtStartOffset(absOfs);
-                        if (!secName.isEmpty()) {
-                            const int textX = _pxPosHexX - pxOfsX;
-                            const QRect textRect(textX, pxPosY - _pxCharHeight + _pxSelectionSub + 2,
-                                                 viewport()->width() - textX, _pxCharHeight);
-
-                            if (_sectionHeaderBackgroundColor.isValid())
-                                painter.fillRect(textRect, _sectionHeaderBackgroundColor);
-
-                            const QFont prevFont = painter.font();
-                            const QPen prevPen = painter.pen();
-                            painter.setFont(_sectionHeaderFont);
-                            painter.setPen(_sectionHeaderFontColor.isValid()
-                                               ? _sectionHeaderFontColor
-                                               : palette().color(QPalette::Text));
-
-                            painter.drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter,
-                                             secName + QStringLiteral(":"));
-                            painter.setFont(prevFont);
-                            painter.setPen(prevPen);
-                        }
-                    }
-                }
-                continue;
-            }
-
-            const qint64 rowStart = bPosLine;
-            const qint64 rowEnd = qMin(bPosLine + bytesThisRow, (qint64)_dataShown.size());
-            const int rowSectionMode = _sectionModel
-                ? _sectionModel->displayModeAtOffset(_bPosFirst + bPosLine)
-                : SectionDisplay_Default;
-            const bool rowForcesRaw = (rowSectionMode == SectionDisplay_Raw);
-            const bool useTbMultiByte = useTbDisplayCache && !rowForcesRaw;
-            const bool rowUsesDisasm = (rowSectionMode == SectionDisplay_Disasm)
-                || (rowSectionMode == SectionDisplay_Default && _showDisasm);
-
-            // can be slow here
-            for (int colIdx = 0; ((bPosLine + colIdx) < _dataShown.size() && (colIdx < bytesThisRow)); colIdx++)
-            {
-                QColor c = viewport()->palette().color(QPalette::Base);
-
-                // Section background (lowest priority — drawn first, overridden by everything)
-                if (_showSections && _sectionModel) {
-                    const qint64 posBaSection = _bPosFirst + bPosLine + colIdx;
-                    const QColor sc = _sectionModel->colorAtOffset(posBaSection);
-                    if (sc.isValid())
-                        c = sc;
-                }
-
-                const char rawByte = _dataShown.at(bPosLine + colIdx);
-                const bool isZeroByte = (rawByte == 0);
-                painter.setPen(QPen((isZeroByte && !rowUsesDisasm) ? _zeroByteFontColor : _hexFontColor));
-
-                qint64 posBa = _bPosFirst + bPosLine + colIdx;
-                const qint64 pointerStart = (_showPointers && !rowUsesDisasm)
-                    ? pointerStartAt(posBa, kPointerByteSize)
-                    : -1;
-                const bool isPointerByte = pointerStart >= 0;
-                const int actualPtrSize = isPointerByte ? _pointers.getPointerSize(pointerStart) : kPointerByteSize;
-                const bool isPointedByte = _showPointers && _pointers.hasOffset(posBa);
-                const bool isSelectedByte = (getSelectionEnd() - getSelectionBegin() > 1)
-                                         && (getSelectionBegin() <= posBa) && (getSelectionEnd() > posBa);
-                const bool isHighlightedByte = _highlighting && _markedShown.at((int)(posBa - _bPosFirst));
-                const bool isChangedByte = _showChanges && (_changedPositions.contains(posBa) 
-                    || (posBa >= _changedRangeStart && posBa < _changedRangeEnd));
-
-                if (isSelectedByte)
-                {
-                    c = _brushSelection.color();
-                    painter.setPen(_penSelection);
-                }
-                else
-                {
-                    if (isHighlightedByte)
-                    {
-                        c = _brushHighlighted.color();
-                        painter.setPen(_penHighlighted);
-                    }
-                    else if (isChangedByte)
-                    {
-                        c = _brushChanges.color();
-                        painter.setPen(_penChanges);
-                    }
-                }
-
-                // POINTERS
-                if (_showPointers && !rowUsesDisasm)
-                {
-                    // cursor image for pointed data
-                    if (isPointedByte)
-                    {
-                        static const QImage ptrIcon(QStringLiteral(":/images/pointer.png"));
-
-                        if (!isSelectedByte && !isHighlightedByte && !isChangedByte)
-                            c = _brushPointed.color();
-
-                        if (!isSelectedByte)
-                            painter.setPen(_penPointed);
-
-                        painter.drawImage(pxPosX - _pxCharWidth - 2, pxPosY - (_pxCharHeight / 2), ptrIcon, 0, 0, 10, 10);
-                    }
-
-                    if (isPointerByte && !isSelectedByte && !isHighlightedByte && !isChangedByte && !isPointedByte)
-                        painter.setPen(_penPointers);
-                    
-                    if (isPointerByte)
-                    {
-                        // Draw pointer frame only at the first byte of the pointer on each row
-                        // The frame is clipped to the current line so it doesn't bleed into ASCII area
-                        const int colInLine = colIdx;
-
-                        // We draw a partial frame segment on every row that the pointer occupies
-                        // Determine how many bytes of this pointer are on the current row starting from colIdx
-                        const int ptrEndByteExcl = static_cast<int>((pointerStart - _bPosFirst) + actualPtrSize);
-
-                        if (posBa == pointerStart || colInLine == 0)
-                        {
-                            // First pointer byte on this row — draw frame segment
-                            const int bytesOnThisRow = qMin(ptrEndByteExcl - static_cast<int>(bPosLine + colIdx), bytesThisRow - colInLine);
-
-                            if (bytesOnThisRow > 0)
-                            {
-                                QPen pen;
-                                pen.setColor(_pointerFrameColor);
-                                pen.setWidth(1);
-                                painter.setPen(pen);
-
-                                auto frame = QRect(pxPosX - 6, pxPosY - _pxCharHeight + _pxSelectionSub + 1,
-                                                    (3 * bytesOnThisRow) * _pxCharWidth + (bytesOnThisRow - 1) * kHexColumnExtraGapPx,
-                                                    _pxCharHeight - _pxSelectionSub + 4);
-
-                                painter.drawRect(frame);
-                                painter.fillRect(frame, _pointerFrameBackgroundColor);
-
-                                if (_asciiArea)
-                                {
-                                    const int asciiStartX = pxPosAsciiX2;
-                                    int asciiFrameWidth = 0;
-                                    for (int k = 0; k < bytesOnThisRow; ++k)
-                                    {
-                                        const qint64 rowBytePos = bPosLine + colIdx + k;
-                                        if (rowBytePos >= _dataShown.size())
-                                            break;
-
-                                        const uint8_t rowByte = static_cast<uint8_t>(_dataShown.at(rowBytePos));
-                                        const int baseW = (_tb && !_tbSymbolWidthPxCache.isEmpty())
-                                            ? _tbSymbolWidthPxCache[rowByte]
-                                            : _pxCharWidth;
-                                        const int slotW = baseW + slotGapPx(baseW);
-                                        asciiFrameWidth += slotW;
-                                    }
-
-                                    if (asciiFrameWidth > 0)
-                                    {
-                                        auto asciiFrame = QRect(asciiStartX - 4,
-                                                                pxPosY - _pxCharHeight + _pxSelectionSub + 2,
-                                                                asciiFrameWidth + 2,
-                                                                _pxCharHeight - _pxSelectionSub + 4);
-                                        painter.drawRect(asciiFrame);
-                                        painter.fillRect(asciiFrame, _pointerFrameBackgroundColor);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Pointer arrow for pointed bytes in disasm mode (function entry points)
-                if (_showPointers && rowUsesDisasm && isPointedByte)
-                {
-                    static const QImage ptrIcon(QStringLiteral(":/images/pointer.png"));
-
-                    if (!isSelectedByte && !isHighlightedByte && !isChangedByte)
-                        c = _brushPointed.color();
-
-                    if (!isSelectedByte)
-                        painter.setPen(_penPointed);
-
-                    painter.drawImage(pxPosX - _pxCharWidth - 2, pxPosY - (_pxCharHeight / 2), ptrIcon, 0, 0, 10, 10);
-                }
-
-                // render hex value
-                auto r = QRect(pxPosX - 1, pxPosY - _pxCharHeight + _pxSelectionSub, 2 * _pxCharWidth + 2, _pxCharHeight + 1);
-
-                // Only fill background if there's actual highlighting/selection (not just base color)
-                if (c != viewport()->palette().color(QPalette::Base))
-                    painter.fillRect(r, c);
-
-                // Overlay cursor-char highlight: single-byte cursor fills here; multi-byte handled below.
-                const bool isCursorByte = (bPosLine + colIdx) == (_cursorPosition / 2 - _bPosFirst);
-                const qint64 byteInBuf = bPosLine + colIdx;
-                const bool isCursorGroupByte = (byteInBuf >= cursorLeadBufIdx)
-                                            && (byteInBuf < cursorLeadBufIdx + cursorMultiByteSpan);
-
-                if (cursorMultiByteSpan == 1 && isCursorByte && _cursorCharColor.alpha() > 0 && !_showOriginal)
-                    painter.fillRect(r, _cursorCharColor);
-
-                hex = _hexDataShown.mid((bPosLine + colIdx) * 2, 2);
-
-                // In hex area: draw the active nibble of the cursor byte in bold
-                if (isCursorByte && !_editAreaIsAscii && !_showOriginal)
-                {
-                    const int activeNibble = _cursorPosition % 2; // 0 = high, 1 = low
-                    const QString ch0 = (hexCaps() ? hex.toUpper() : hex).mid(0, 1);
-                    const QString ch1 = (hexCaps() ? hex.toUpper() : hex).mid(1, 1);
-
-                    QFont boldFont = painter.font();
-                    boldFont.setBold(true);
-                    QFont normalFont = painter.font();
-
-                    if (activeNibble == 0)
-                    {
-                        painter.setFont(boldFont);
-                        painter.drawText(pxPosX, pxPosY, ch0);
-                        painter.setFont(normalFont);
-                        painter.drawText(pxPosX + _pxCharWidth, pxPosY, ch1);
-                    }
-                    else
-                    {
-                        painter.drawText(pxPosX, pxPosY, ch0);
-                        painter.setFont(boldFont);
-                        painter.drawText(pxPosX + _pxCharWidth, pxPosY, ch1);
-                        painter.setFont(normalFont);
-                    }
-                }
-                else
-                {
-                    painter.drawText(pxPosX, pxPosY, hexCaps() ? hex.toUpper() : hex);
-                }
-                // Multi-byte TBL entry frame in hex area; draw per-row segment so wrapped entries are framed too.
-                if (useTbMultiByte && _showMultibyteFrame)
-                {
-                    const qint64 globalIdx = bPosLine + colIdx;
-                    if (globalIdx < _tbDisplayChars.size())
-                    {
-                        qint64 leadIdx = globalIdx;
-                        while (leadIdx > 0
-                               && leadIdx < _tbDisplayChars.size()
-                               && _tbDisplayChars[(int)leadIdx].isNull())
-                            --leadIdx;
-
-                        if (leadIdx >= 0 && leadIdx < _tbDisplaySpan.size())
-                        {
-                            const int span = _tbDisplaySpan[(int)leadIdx];
-                            if (span > 1)
-                            {
-                                const qint64 entryEnd = leadIdx + span;
-                                const qint64 segmentStart = qMax(leadIdx, rowStart);
-                                const qint64 segmentEnd = qMin(entryEnd, rowEnd);
-                                const int bytesOnThisRow = (int)qMax<qint64>(0, segmentEnd - segmentStart);
-                                if (bytesOnThisRow > 0 && globalIdx == segmentStart)
-                                {
-                                    const int fW = (bytesOnThisRow - 1) * hexStridePx + 2 * _pxCharWidth + 2;
-                                    const int x = pxPosX - 1;
-                                    const int y = pxPosY - _pxCharHeight + _pxSelectionSub;
-                                    const int h = _pxCharHeight + 1;
-
-                                    const bool drawLeft = (segmentStart == leadIdx);
-                                    const bool drawRight = (segmentEnd == entryEnd);
-
-                                    QPen fPen(_multibyteFrameColor, 1, Qt::DashLine);
-                                    const QPen savedPen = painter.pen();
-                                    painter.setPen(fPen);
-                                    painter.drawLine(x, y, x + fW - 1, y);
-                                    painter.drawLine(x, y + h, x + fW - 1, y + h);
-                                    if (drawLeft)
-                                        painter.drawLine(x, y, x, y + h);
-                                    if (drawRight)
-                                        painter.drawLine(x + fW - 1, y, x + fW - 1, y + h);
-                                    painter.setPen(savedPen);
-                                }
-                            }
-                        }
-                    }
-                }
-                // Multi-byte encoding frame in hex area (analogous to TBL multi-byte frame)
-                else if (useEncodingDecoder && _showMultibyteFrame)
-                {
-                    const qint64 globalIdx = bPosLine + colIdx;
-                    if (globalIdx < _encodingChars.size())
-                    {
-                        qint64 leadIdx = globalIdx;
-                        while (leadIdx > 0
-                               && leadIdx < _encodingChars.size()
-                               && _encodingChars[(int)leadIdx].isNull())
-                            --leadIdx;
-
-                        if (leadIdx >= 0 && leadIdx < _encodingSpan.size())
-                        {
-                            const int span = _encodingSpan[(int)leadIdx];
-                            if (span > 1)
-                            {
-                                const qint64 entryEnd = leadIdx + span;
-                                const qint64 segmentStart = qMax(leadIdx, rowStart);
-                                const qint64 segmentEnd = qMin(entryEnd, rowEnd);
-                                const int bytesOnThisRow = (int)qMax<qint64>(0, segmentEnd - segmentStart);
-                                if (bytesOnThisRow > 0 && globalIdx == segmentStart)
-                                {
-                                    const int fW = (bytesOnThisRow - 1) * hexStridePx + 2 * _pxCharWidth + 2;
-                                    const int x = pxPosX - 1;
-                                    const int y = pxPosY - _pxCharHeight + _pxSelectionSub;
-                                    const int h = _pxCharHeight + 1;
-
-                                    const bool drawLeft = (segmentStart == leadIdx);
-                                    const bool drawRight = (segmentEnd == entryEnd);
-
-                                    QPen fPen(_multibyteFrameColor, 1, Qt::DashLine);
-                                    const QPen savedPen = painter.pen();
-                                    painter.setPen(fPen);
-                                    painter.drawLine(x, y, x + fW - 1, y);
-                                    painter.drawLine(x, y + h, x + fW - 1, y + h);
-                                    if (drawLeft)
-                                        painter.drawLine(x, y, x, y + h);
-                                    if (drawRight)
-                                        painter.drawLine(x + fW - 1, y, x + fW - 1, y + h);
-                                    painter.setPen(savedPen);
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Disassembly instruction frame in hex area — disabled.
-                // Disasm rows already have mnemonic text in the ASCII area;
-                // the dashed frame adds visual noise without benefit.
-                // Multi-byte table/encoding frames are handled separately above.
-
-                // Multi-byte cursor group: unconditional fill + frame for this row segment.
-                // Uses per-byte walkback identical to the TBL/encoding frame blocks above.
-                // Runs regardless of _showMultibyteFrame so the cursor is always visible.
-                if (cursorMultiByteSpan > 1)
-                {
-                    const qint64 globalIdx = bPosLine + colIdx;
-                    qint64 leadIdx = cursorLeadBufIdx; // already pre-computed
-                    const int entryEnd = (int)(leadIdx + cursorMultiByteSpan);
-                    if (globalIdx >= leadIdx && globalIdx < entryEnd)
-                    {
-                        const qint64 segmentStart = qMax(leadIdx, rowStart);
-                        const qint64 segmentEnd   = qMin((qint64)entryEnd, rowEnd);
-                        const int bytesOnThisRow   = (int)qMax<qint64>(0, segmentEnd - segmentStart);
-                        if (bytesOnThisRow > 0 && globalIdx == segmentStart)
-                        {
-                            const int fW = (bytesOnThisRow - 1) * hexStridePx + 2 * _pxCharWidth + 2;
-                            const int fx = pxPosX - 1;
-                            const int fy = pxPosY - _pxCharHeight + _pxSelectionSub;
-                            const int fh = _pxCharHeight + 1;
-                            const bool drawLeft  = (segmentStart == leadIdx);
-                            const bool drawRight = (segmentEnd == (qint64)entryEnd);
-
-                            // Wide fill covering all segment bytes on this row
-                            if (_cursorCharColor.alpha() > 0 && !_showOriginal)
-                            {
-                                painter.fillRect(QRect(fx, fy, fW, fh), _cursorCharColor);
-                                // Redraw the hex text of all bytes in the segment (fill covered them)
-                                for (int k = 0; k < bytesOnThisRow; ++k)
-                                {
-                                    const qint64 kBufIdx = segmentStart + k;
-                                    const QByteArray kHex = _hexDataShown.mid((int)kBufIdx * 2, 2);
-                                    const int kX = pxPosX + k * hexStridePx;
-                                    if ((kBufIdx + _bPosFirst) == (qint64)_bPosCurrent && !_editAreaIsAscii)
-                                    {
-                                        const int activeNibble = _cursorPosition % 2;
-                                        const QString ch0 = hexCaps() ? kHex.mid(0,1).toUpper() : QString(kHex.mid(0,1));
-                                        const QString ch1 = hexCaps() ? kHex.mid(1,1).toUpper() : QString(kHex.mid(1,1));
-                                        QFont boldFont = painter.font(); boldFont.setBold(true);
-                                        const QFont normalFont = painter.font();
-                                        if (activeNibble == 0) {
-                                            painter.setFont(boldFont); painter.drawText(kX, pxPosY, ch0);
-                                            painter.setFont(normalFont); painter.drawText(kX + _pxCharWidth, pxPosY, ch1);
-                                        } else {
-                                            painter.drawText(kX, pxPosY, ch0);
-                                            painter.setFont(boldFont); painter.drawText(kX + _pxCharWidth, pxPosY, ch1);
-                                            painter.setFont(normalFont);
-                                        }
-                                    }
-                                    else
-                                    {
-                                        painter.drawText(kX, pxPosY, hexCaps() ? kHex.toUpper() : QString(kHex));
-                                    }
-                                }
-                            }
-                            // Draw cursor-color solid frame around this segment (pen width 2 to match single-byte cursor)
-                            if (!_readOnly)
-                            {
-                                const QPen savedPen = painter.pen();
-                                painter.setPen(QPen(_cursorFrameColor, 2, Qt::SolidLine));
-                                painter.drawLine(fx, fy, fx + fW - 1, fy);
-                                painter.drawLine(fx, fy + fh, fx + fW - 1, fy + fh);
-                                if (drawLeft)  painter.drawLine(fx, fy, fx, fy + fh);
-                                if (drawRight) painter.drawLine(fx + fW - 1, fy, fx + fW - 1, fy + fh);
-                                painter.setPen(savedPen);
-                            }
-                        }
-                    }
-                }
-
-                pxPosX += hexStridePx;
-
-                // render ascii value
-                if (_asciiArea)
-                {
-                    if (c == viewport()->palette().color(QPalette::Base))
-                        c = _asciiAreaColor;
-
-                    // ── Determine effective display mode ──
-                    // Per-section override: if the section has a non-Default mode, use it.
-                    // Otherwise fall back to the global mode.
-                    int secMode = SectionDisplay_Default;
-                    if (_sectionModel)
-                        secMode = _sectionModel->displayModeAtOffset(_bPosFirst + bPosLine);
-
-                    const bool effectiveRaw = (secMode == SectionDisplay_Raw);
-                    const bool effectiveDisasm = (secMode == SectionDisplay_Disasm)
-                        || (secMode == SectionDisplay_Default && _showDisasm);
-                    // Per-section table: 1-based index into _allTables
-                    TranslationTable *secTable = nullptr;
-                    if (secMode > 0 && secMode <= _allTables.size())
-                        secTable = _allTables[secMode - 1];
-
-                    if (effectiveDisasm)
-                    {
-                    // ── Disassembly view mode: show mnemonic + operands per row ──
-                        const int symWidthPx = _pxCharWidth;
-                        r.setRect(pxPosAsciiX2 - 1, pxPosY - _pxCharHeight + _pxSelectionSub + 2,
-                                  qMax(1, symWidthPx), _pxCharHeight);
-
-                        if (colIdx == 0) {
-                            // Draw instruction mnemonic + operands once for the whole row
-                            const qint64 rowFileOffset = _bPosFirst + bPosLine;
-                            const DisasmInstruction *instr = disasmInstructionAtOffset(rowFileOffset);
-                            if (instr) {
-                                const qint64 selBegin = getSelectionBegin();
-                                const qint64 selEnd   = getSelectionEnd();
-                                const bool hasSel = (selEnd - selBegin) > 0;
-
-                                const qint64 instrStart  = instr->fileOffset;
-                                const qint64 instrEnd    = instrStart + instr->size;
-
-                                // Any byte of the instruction selected → highlight whole row
-                                const bool instrSel = hasSel && selBegin < instrEnd && selEnd > instrStart;
-
-                                const int baseY = pxPosY - _pxCharHeight + _pxSelectionSub + 2;
-                                int textX = pxPosAsciiX2 - 1;
-
-                                // ── Draw mnemonic ──
-                                const int mnW = paintFm.horizontalAdvance(instr->mnemonic);
-                                QRect mnRect(textX, baseY, mnW, _pxCharHeight);
-                                if (instrSel) {
-                                    painter.fillRect(mnRect, _brushSelection.color());
-                                    painter.setPen(_penSelection);
-                                } else {
-                                    if (c != _asciiAreaColor)
-                                        painter.fillRect(mnRect, c);
-                                    painter.setPen(QPen(instr->isBranch
-                                        ? palette().color(QPalette::Link) : _asciiFontColor));
-                                }
-                                painter.drawText(mnRect, Qt::AlignLeft | Qt::AlignVCenter, instr->mnemonic);
-                                textX += mnW;
-
-                                // ── Draw space + operands ──
-                                if (!instr->operands.isEmpty()) {
-                                    const int spW = paintFm.horizontalAdvance(QLatin1Char(' '));
-                                    QRect spRect(textX, baseY, spW, _pxCharHeight);
-                                    if (instrSel) {
-                                        painter.fillRect(spRect, _brushSelection.color());
-                                    } else if (c != _asciiAreaColor) {
-                                        painter.fillRect(spRect, c);
-                                    }
-                                    painter.setPen(instrSel ? _penSelection : QPen(_asciiFontColor));
-                                    painter.drawText(spRect, Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral(" "));
-                                    textX += spW;
-
-                                    // Show section name for branch/call targets when available.
-                                    QString displayOps = instr->operands;
-                                    const bool clickableBranch = instr->isBranch
-                                        && instr->branchTarget >= 0
-                                        && instr->branchTarget < _chunks->size();
-                                    bool usingSectionLabel = false;
-                                    if (clickableBranch && _sectionModel) {
-                                        const QString label = _sectionModel->sectionNameAtStartOffset(instr->branchTarget);
-                                        if (!label.isEmpty()) {
-                                            displayOps = label;
-                                            usingSectionLabel = true;
-                                        }
-                                    }
-
-                                    const int opW = paintFm.horizontalAdvance(displayOps);
-                                    QRect opRect(textX, baseY, opW, _pxCharHeight);
-                                    if (instrSel) {
-                                        painter.fillRect(opRect, _brushSelection.color());
-                                        painter.setPen(_penSelection);
-                                    } else {
-                                        if (c != _asciiAreaColor)
-                                            painter.fillRect(opRect, c);
-                                        if (usingSectionLabel)
-                                            painter.fillRect(opRect, _brushPointers.color());
-                                        painter.setPen(QPen(instr->isBranch
-                                            ? palette().color(QPalette::Link) : _asciiFontColor));
-                                    }
-                                    if (clickableBranch && !instrSel) {
-                                        QFont uf = painter.font();
-                                        uf.setUnderline(true);
-                                        painter.setFont(uf);
-                                    }
-                                    painter.drawText(opRect, Qt::AlignLeft | Qt::AlignVCenter, displayOps);
-                                    if (clickableBranch && !instrSel) {
-                                        QFont uf = painter.font();
-                                        uf.setUnderline(false);
-                                        painter.setFont(uf);
-                                    }
-                                }
-                            }
-                        }
-
-                        if ((bPosLine + colIdx) == cursorLeadBufIdx)
-                            _asciiCursorRect = QRect(r.x() - 1, r.y() - 2, _pxCharWidth + 2, r.height() + 2);
-
-                        pxPosAsciiX2 += symWidthPx;
-                    }
-                    else if (secTable)
-                    {
-                    // ── Per-section table rendering (single-byte lookup) ──
-                    const QString sym = secTable->encodeSymbol(rawByte);
-                    const QString displaySym = sym.isEmpty()
-                        ? QString(_notInTableChar) : sym;
-                    const int baseSymWidthPx = qMax(_pxCharWidth, paintFm.horizontalAdvance(displaySym));
-                    const int symWidthPx = baseSymWidthPx + slotGapPx(baseSymWidthPx);
-                    r.setRect(pxPosAsciiX2 - 1, pxPosY - _pxCharHeight + _pxSelectionSub + 2,
-                              qMax(1, symWidthPx), _pxCharHeight);
-                    if (c != _asciiAreaColor)
-                        painter.fillRect(r, c);
-                    if (isSelectedByte)
-                        painter.setPen(_penSelection);
-                    else if (isHighlightedByte)
-                        painter.setPen(_penHighlighted);
-                    else {
-                        const bool isUnmappedZero = isZeroByte && sym.isEmpty();
-                        painter.setPen(QPen(isUnmappedZero ? _zeroByteFontColor : _asciiFontColor));
-                    }
-                    painter.drawText(r, Qt::AlignLeft | Qt::AlignVCenter, displaySym);
-                    if ((bPosLine + colIdx) == cursorLeadBufIdx)
-                        _asciiCursorRect = QRect(r.x() - 1, r.y() - 2, baseSymWidthPx + 2, r.height() + 2);
-                    pxPosAsciiX2 += symWidthPx;
-                    }
-                    else
-                    {
-                    // ── Normal ASCII rendering ──
-
-                    QChar ch = QChar::fromLatin1(rawByte);
-
-                    QString sym;
-                    TranslationTable *activeTable = effectiveRaw ? nullptr : _tb;
-                    const bool activeTbMultiByte = (activeTable != nullptr) && useTbMultiByte;
-                    const bool activeEncodingDecoder = useEncodingDecoder && (effectiveRaw || activeTable == nullptr);
-
-                    // For multi-byte table mode: continuation bytes are null entries in cache.
-                    const int encBufIdx = (int)(bPosLine + colIdx);
-                    const bool isTbContinuation = activeTbMultiByte
-                        && encBufIdx < _tbDisplayChars.size()
-                        && _tbDisplayChars[encBufIdx].isNull();
-
-                    // For encoding mode: look up from the buffer-level cache
-                    const bool isEncodingContinuation = activeEncodingDecoder
-                        && encBufIdx < _encodingChars.size()
-                        && _encodingChars[encBufIdx].isNull();
-                    const bool isContinuationByte = isTbContinuation || isEncodingContinuation;
-
-                    if (activeTable) {
-                        if (activeTbMultiByte && encBufIdx < _tbDisplayChars.size()) {
-                            sym = _tbDisplayChars[encBufIdx];
-                        } else {
-                            sym = activeTable->encodeSymbol(rawByte);
-                        }
-                    } else if (activeEncodingDecoder && encBufIdx < _encodingChars.size()) {
-                        sym = _encodingChars[encBufIdx];
-                    } else {
-                        sym = ch;
-                    }
-
-                    if (activeTable)
-                    {
-                        if (!sym.size() && !isTbContinuation)
-                            sym = QString(_notInTableChar); // □ for unmapped single-byte
-                        // TBL continuation: leave sym null — zero-width slot, no drawing
-                    }
-                    else if (!isContinuationByte)
-                    {
-                        if (sym.isEmpty() || (sym.size() == 1 && !sym[0].isPrint()))
-                            sym = QString(_nonPrintableNoTableChar);
-                    }
-                    // Encoding/TBL continuation: sym is null/empty and isContinuationByte=true → zero-width, no draw
-
-                    const uint8_t byteValue = static_cast<uint8_t>(rawByte);
-
-                    // Slot width: continuation=0; multi-byte TBL uses actual advance; single-byte TBL uses cache;
-                    // encoding uses actual advance; otherwise fixed
-                    int baseSymWidthPx;
-                    if (isContinuationByte)
-                        baseSymWidthPx = 0;
-                    else if (activeTbMultiByte && !sym.isEmpty())
-                        baseSymWidthPx = qMax(_pxCharWidth, paintFm.horizontalAdvance(sym));
-                    else if (activeTable && !_tbSymbolWidthPxCache.isEmpty())
-                        baseSymWidthPx = _tbSymbolWidthPxCache[byteValue];
-                    else if (activeEncodingDecoder && !sym.isEmpty())
-                        baseSymWidthPx = qMax(_pxCharWidth, paintFm.horizontalAdvance(sym));
-                    else
-                        baseSymWidthPx = _pxCharWidth;
-                    const int symWidthPx = isContinuationByte ? 0 : (baseSymWidthPx + slotGapPx(baseSymWidthPx));
-
-                    r.setRect(pxPosAsciiX2 - 1, pxPosY - _pxCharHeight + _pxSelectionSub + 2,
-                              qMax(1, symWidthPx), _pxCharHeight);
-
-                    if (!isContinuationByte) {
-                        if (c != _asciiAreaColor)
-                            painter.fillRect(r, c);
-
-                        if (isCursorGroupByte && _cursorCharColor.alpha() > 0)
-                            painter.fillRect(QRect(r.x(), r.y() - 2, baseSymWidthPx, r.height() + 2), _cursorCharColor);
-
-                        if (isSelectedByte)
-                            painter.setPen(_penSelection);
-                        else if (isHighlightedByte)
-                            painter.setPen(_penHighlighted);
-                        else if (isPointedByte)
-                            painter.setPen(_penPointed);
-                        else if (isPointerByte)
-                            painter.setPen(_penPointers);
-                        else {
-                            const bool isUnmappedZero = isZeroByte && !useTbMultiByte
-                                && (!_tb || sym == QString(_notInTableChar));
-                            painter.setPen(QPen(isUnmappedZero ? _zeroByteFontColor : _asciiFontColor));
-                        }
-                        painter.drawText(r, Qt::AlignLeft | Qt::AlignVCenter, sym);
-                    }
-
-                    if (!isContinuationByte && (bPosLine + colIdx) == cursorLeadBufIdx)
-                        _asciiCursorRect = QRect(r.x() - 1, r.y() - 2, baseSymWidthPx + 2, r.height() + 2);
-
-                    pxPosAsciiX2 += symWidthPx;
-                    } // end else (normal ASCII rendering)
-                }
-            }
-        }
-
-        painter.setBackgroundMode(Qt::TransparentMode);
-        painter.setPen(viewport()->palette().color(QPalette::WindowText));
-    }
-
-    // Draw hex area grid (vertical lines every 4 bytes)
-    if (_showHexGrid && event->rect() != _asciiCursorRect && event->rect() != _hexCursorRect)
-    {
-        painter.setPen(QPen(_hexAreaGridColor, 1));
-
-        const int rowStridePx = _pxCharHeight + kHexRowExtraGapPx;
-        int pxPosStartY = _pxCharHeight;
-        int pxPosEndY = pxPosStartY + (_rowsShown + 1) * rowStridePx;
-
-        // Draw vertical grid lines every 4 bytes (between groups)
-        const int hexStridePx = 3 * _pxCharWidth + kHexColumnExtraGapPx;
-        for (int col = 4; col < _bytesPerLine; col += 4)
-        {
-            int pxPosX = _pxPosHexX + col * hexStridePx - ((_pxCharWidth + kHexColumnExtraGapPx) / 2) - pxOfsX;
-            painter.drawLine(pxPosX, pxPosStartY - _pxCharHeight, pxPosX, pxPosEndY);
-        }
-    }
-
-    // _cursorPosition counts in 2, _bPosFirst counts in 1
-    int hexPositionInShowData = _cursorPosition - 2 * _bPosFirst;
-
-    // due to scrolling the cursor can go out of the currently displayed data
-    if ((hexPositionInShowData >= 0) && (hexPositionInShowData < _hexDataShown.size()))
-    {
-        // paint cursor
-        if (_readOnly)
-        {
-            QColor color = viewport()->palette().dark().color();
-            painter.fillRect(QRect(_pxCursorX - pxOfsX, _pxCursorY - _pxCharHeight + _pxSelectionSub, _pxCharWidth, _pxCharHeight), color);
-        }
-        else
-        {
-            QPen pen;
-            pen.setColor(_cursorFrameColor);
-            pen.setWidth(2);
-            painter.setPen(pen);
-
-            // For multi-byte cursor, the in-loop block already draws the per-row frame segments
-            // (with correct open sides at row-wrap points). Only use drawRect for single-byte cursor.
-            if (_cursorMultiByteSpan <= 1)
-                painter.drawRect(_hexCursorRect);
-
-            // draw cursor rect in ASCII area (skip for disasm — mnemonic text, not per-byte)
-            if (_asciiArea && !isDisasmAt(_bPosCurrent))
-                painter.drawRect(_asciiCursorRect);
-
-            painter.setPen(QPen(_hexFontColor));
-        }
-    }
-
-    // emit event, if size has changed
-    if (_lastEventSize != _chunks->size())
-    {
-        _lastEventSize = _chunks->size();
-        emit currentSizeChanged(_lastEventSize);
-    }
-
-    // Visual indicator: draw an amber border around the viewport when showing original content
-    if (_showOriginal)
-    {
-        const QRect vr = QRect(0, 0, viewport()->width(), viewport()->height());
-        painter.setPen(QPen(QColor(220, 140, 0), 3, Qt::SolidLine));
-        painter.drawRect(vr.adjusted(1, 1, -2, -2));
-    }
-
-}
-
-void HexEditor::resizeEvent(QResizeEvent *)
-{
-    if (_dynamicBytesPerLine)
-    {
-        int selectedBpl = 4;
-        const int viewportWidthPx = viewport()->width();
-
-        for (int candidateBpl = 64; candidateBpl >= 4; candidateBpl -= 4)
-        {
-            const int addrDigits = _addressArea ? addressWidth() : 0;
-            const int pxPosHexX = _addressArea
-                                      ? (_pxGapAdr + addrDigits * _pxCharWidth + _pxGapAdrHex + kAddressRightPaddingPx)
-                                      : _pxGapAdrHex;
-            const int candidateHexCharsInLine = candidateBpl * 3 - 1;
-            const int pxHexEndX = pxPosHexX + candidateHexCharsInLine * _pxCharWidth + (candidateBpl - 1) * kHexColumnExtraGapPx;
-            const int pxPosAsciiX = pxHexEndX + _pxGapHexAscii;
-            const int asciiWidthPx = _asciiArea ? static_cast<int>(computeAsciiAreaMaxWidthForBytesPerLine(candidateBpl)) : 0;
-            const int requiredWidthPx = _asciiArea ? (pxPosAsciiX + kAsciiAreaLeftPaddingPx + asciiWidthPx) : pxHexEndX;
-
-            if (requiredWidthPx <= viewportWidthPx)
-            {
-                selectedBpl = candidateBpl;
-                break;
-            }
-        }
-
-        if (selectedBpl != _bytesPerLine)
-            setBytesPerLine(selectedBpl);
-        else
-            updateAsciiAreaMaxWidth();
-    }
-
-    adjust();
-}
-
-bool HexEditor::focusNextPrevChild(bool next)
-{
-    if (_addressArea)
-    {
-        if ((next && _editAreaIsAscii) || (!next && !_editAreaIsAscii))
-            return QWidget::focusNextPrevChild(next);
-        else
-            return false;
-    }
-    else
-    {
-        return QWidget::focusNextPrevChild(next);
-    }
-}
-
-// ********************************************************************** Handle selections
 bool HexEditor::hasSelection()
 {
     return _bSelectionEnd - _bSelectionBegin > 1;
 }
+
 
 void HexEditor::resetSelection()
 {
@@ -4837,6 +1621,7 @@ void HexEditor::resetSelection()
 
     emit selectionChanged(_bSelectionBegin, _bSelectionEnd);
 }
+
 
 void HexEditor::resetSelection(qint64 pos)
 {
@@ -4852,6 +1637,7 @@ void HexEditor::resetSelection(qint64 pos)
 
     emit selectionChanged(_bSelectionBegin, _bSelectionEnd);
 }
+
 
 void HexEditor::setSelection(qint64 pos)
 {
@@ -4879,10 +1665,12 @@ void HexEditor::setSelection(qint64 pos)
     emit selectionChanged(_bSelectionBegin, _bSelectionEnd);
 }
 
+
 qint64 HexEditor::getSelectionBegin() const
 {
     return _bSelectionBegin;
 }
+
 
 qint64 HexEditor::getSelectionEnd() const
 {
@@ -4890,1181 +1678,3 @@ qint64 HexEditor::getSelectionEnd() const
 }
 
 // ********************************************************************** Private utility functions
-void HexEditor::init()
-{
-    _undoStack->clear();
-    _lineBreakCmdCount = 0;
-    _cleanUndoIndex = 0;
-    setAddressOffset(0);
-    resetSelection(0);
-    setCursorPosition(0);
-    verticalScrollBar()->setValue(0);
-
-    _baseModified = false;
-    _modified = false;
-}
-
-// ── Virtual line breaks ────────────────────────────────────────
-
-QVector<qint64> HexEditor::lineBreaks() const
-{
-    return _savedLineBreaksValid ? _savedLineBreaks : _lineBreaks;
-}
-
-void HexEditor::setLineBreaks(const QVector<qint64> &breaks)
-{
-    if (_savedLineBreaksValid) {
-        _savedLineBreaks = breaks;
-        std::sort(_savedLineBreaks.begin(), _savedLineBreaks.end());
-        if (_showDisasm)
-            emit lineBreaksChanged();
-        else
-            rebuildSectionAwareLayout();
-        return;
-    }
-
-    _lineBreaks = breaks;
-    std::sort(_lineBreaks.begin(), _lineBreaks.end());
-    adjust();
-    viewport()->update();
-    emit lineBreaksChanged();
-}
-
-void HexEditor::addLineBreakDirect(qint64 offset)
-{
-    QVector<qint64> &target = _savedLineBreaksValid ? _savedLineBreaks : _lineBreaks;
-    auto it = std::upper_bound(target.begin(), target.end(), offset);
-    target.insert(it, offset);
-    if (_savedLineBreaksValid) {
-        if (_showDisasm)
-            emit lineBreaksChanged();
-        else
-            rebuildSectionAwareLayout();
-        return;
-    }
-    adjust();
-    viewport()->update();
-    emit lineBreaksChanged();
-}
-
-void HexEditor::removeLineBreakDirect(qint64 offset)
-{
-    QVector<qint64> &target = _savedLineBreaksValid ? _savedLineBreaks : _lineBreaks;
-    auto it = std::lower_bound(target.begin(), target.end(), offset);
-    if (it != target.end() && *it == offset) {
-        target.erase(it);
-        if (_savedLineBreaksValid) {
-            if (_showDisasm)
-                emit lineBreaksChanged();
-            else
-                rebuildSectionAwareLayout();
-            return;
-        }
-        adjust();
-        viewport()->update();
-        emit lineBreaksChanged();
-    }
-}
-
-void HexEditor::addLineBreak(qint64 offset)
-{
-    ++_lineBreakCmdCount;  // pre-update before indexChanged fires
-    _lineBreakChangeInProgress = true;
-    _undoStack->push(new LineBreakAddCommand(this, offset));
-    _lineBreakChangeInProgress = false;
-}
-
-void HexEditor::removeLineBreak(qint64 offset)
-{
-    const QVector<qint64> currentBreaks = lineBreaks();
-    auto it = std::lower_bound(currentBreaks.constBegin(), currentBreaks.constEnd(), offset);
-    if (it != currentBreaks.constEnd() && *it == offset) {
-        ++_lineBreakCmdCount;  // pre-update before indexChanged fires
-        _lineBreakChangeInProgress = true;
-        _undoStack->push(new LineBreakRemoveCommand(this, offset));
-        _lineBreakChangeInProgress = false;
-    }
-}
-
-void HexEditor::toggleLineBreak(qint64 offset)
-{
-    QVector<qint64> &target = _savedLineBreaksValid ? _savedLineBreaks : _lineBreaks;
-    auto it = std::lower_bound(target.begin(), target.end(), offset);
-    if (it != target.end() && *it == offset)
-        target.erase(it);
-    else
-        target.insert(it, offset);
-
-    if (_savedLineBreaksValid) {
-        if (_showDisasm)
-            emit lineBreaksChanged();
-        else
-            rebuildSectionAwareLayout();
-        return;
-    }
-
-    adjust();
-    viewport()->update();
-    emit lineBreaksChanged();
-}
-
-void HexEditor::clearLineBreaks()
-{
-    QVector<qint64> &target = _savedLineBreaksValid ? _savedLineBreaks : _lineBreaks;
-    if (!target.isEmpty()) {
-        target.clear();
-        if (_savedLineBreaksValid) {
-            if (_showDisasm)
-                emit lineBreaksChanged();
-            else
-                rebuildSectionAwareLayout();
-            return;
-        }
-        adjust();
-        viewport()->update();
-        emit lineBreaksChanged();
-    }
-}
-
-void HexEditor::clearLineBreaksInRange(qint64 from, qint64 to)
-{
-    QVector<qint64> &target = _savedLineBreaksValid ? _savedLineBreaks : _lineBreaks;
-    auto lo = std::lower_bound(target.begin(), target.end(), from);
-    auto hi = std::upper_bound(lo, target.end(), to);
-    if (lo == hi)
-        return;
-    target.erase(lo, hi);
-    if (_savedLineBreaksValid) {
-        if (_showDisasm)
-            emit lineBreaksChanged();
-        else
-            rebuildSectionAwareLayout();
-        return;
-    }
-    adjust();
-    viewport()->update();
-    emit lineBreaksChanged();
-}
-
-qint64 HexEditor::totalVisualRows() const
-{
-    const qint64 fileSize = _chunks->size();
-    if (fileSize == 0) return 0;
-    if (_lineBreaks.isEmpty())
-        return (fileSize + _bytesPerLine - 1) / _bytesPerLine;
-
-    qint64 total = 0;
-    qint64 segStart = 0;
-    for (qint64 brk : _lineBreaks) {
-        if (brk >= fileSize) continue;
-        if (brk < 0) {
-            total += 1;
-            continue;
-        }
-        if (brk < segStart) {
-            total += 1;
-            continue;
-        }
-        qint64 segSize = brk - segStart + 1;
-        total += (segSize + _bytesPerLine - 1) / _bytesPerLine;
-        segStart = brk + 1;
-    }
-    if (segStart < fileSize) {
-        qint64 segSize = fileSize - segStart;
-        total += (segSize + _bytesPerLine - 1) / _bytesPerLine;
-    }
-    return total;
-}
-
-qint64 HexEditor::byteOffsetForVisualRow(qint64 visualRow) const
-{
-    const qint64 fileSize = _chunks->size();
-    if (_lineBreaks.isEmpty())
-        return qMin(visualRow * _bytesPerLine, fileSize);
-
-    qint64 rowsSoFar = 0;
-    qint64 segStart = 0;
-    for (qint64 brk : _lineBreaks) {
-        if (brk >= fileSize) continue;
-        if (brk < 0) {
-            if (rowsSoFar == visualRow)
-                return 0;
-            rowsSoFar += 1;
-            continue;
-        }
-        if (brk < segStart) {
-            if (rowsSoFar == visualRow)
-                return segStart;
-            rowsSoFar += 1;
-            continue;
-        }
-        qint64 segSize = brk - segStart + 1;
-        qint64 segRows = (segSize + _bytesPerLine - 1) / _bytesPerLine;
-        if (rowsSoFar + segRows > visualRow)
-            return segStart + (visualRow - rowsSoFar) * _bytesPerLine;
-        rowsSoFar += segRows;
-        segStart = brk + 1;
-    }
-    return qMin(segStart + (visualRow - rowsSoFar) * _bytesPerLine, fileSize);
-}
-
-QVector<qint64> HexEditor::byteOffsetsForVisualRows(qint64 startRow, int count) const
-{
-    QVector<qint64> result(count);
-    const qint64 fileSize = _chunks->size();
-
-    if (_lineBreaks.isEmpty()) {
-        for (int i = 0; i < count; ++i)
-            result[i] = qMin((startRow + i) * _bytesPerLine, fileSize);
-        return result;
-    }
-
-    int ri = 0; // index into result
-    qint64 rowsSoFar = 0;
-    qint64 segStart = 0;
-    const qint64 endRow = startRow + count;
-
-    for (qint64 brk : _lineBreaks) {
-        if (ri >= count) break;
-        if (brk >= fileSize) continue;
-        if (brk < 0) {
-            if (rowsSoFar >= startRow && rowsSoFar < endRow)
-                result[ri++] = 0;
-            rowsSoFar += 1;
-            continue;
-        }
-        if (brk < segStart) {
-            if (rowsSoFar >= startRow && rowsSoFar < endRow)
-                result[ri++] = segStart;
-            rowsSoFar += 1;
-            continue;
-        }
-        qint64 segSize = brk - segStart + 1;
-        qint64 segRows = (segSize + _bytesPerLine - 1) / _bytesPerLine;
-        // Emit rows that fall within [startRow, endRow) from this segment
-        if (rowsSoFar + segRows > startRow) {
-            qint64 localFirst = qMax<qint64>(0, startRow - rowsSoFar);
-            qint64 localLast = qMin(segRows, endRow - rowsSoFar);
-            for (qint64 lr = localFirst; lr < localLast && ri < count; ++lr) {
-                result[ri++] = segStart + lr * _bytesPerLine;
-            }
-        }
-        rowsSoFar += segRows;
-        segStart = brk + 1;
-    }
-    // Trailing segment after last break
-    if (ri < count && segStart < fileSize) {
-        qint64 segSize = fileSize - segStart;
-        qint64 segRows = (segSize + _bytesPerLine - 1) / _bytesPerLine;
-        if (rowsSoFar + segRows > startRow) {
-            qint64 localFirst = qMax<qint64>(0, startRow - rowsSoFar);
-            qint64 localLast = qMin(segRows, endRow - rowsSoFar);
-            for (qint64 lr = localFirst; lr < localLast && ri < count; ++lr) {
-                result[ri++] = qMin(segStart + lr * _bytesPerLine, fileSize);
-            }
-        }
-    }
-    // Fill any remaining slots with fileSize
-    for (; ri < count; ++ri)
-        result[ri] = fileSize;
-    return result;
-}
-
-qint64 HexEditor::visualRowForByte(qint64 bytePos) const
-{
-    const qint64 fileSize = _chunks->size();
-    if (_lineBreaks.isEmpty())
-        return bytePos / _bytesPerLine;
-
-    qint64 rowsSoFar = 0;
-    qint64 segStart = 0;
-    for (qint64 brk : _lineBreaks) {
-        if (brk >= fileSize) continue;
-        if (brk < 0) {
-            rowsSoFar += 1;
-            continue;
-        }
-        if (brk < segStart) {
-            rowsSoFar += 1;
-            continue;
-        }
-        if (bytePos <= brk)
-            return rowsSoFar + (bytePos - segStart) / _bytesPerLine;
-        qint64 segSize = brk - segStart + 1;
-        rowsSoFar += (segSize + _bytesPerLine - 1) / _bytesPerLine;
-        segStart = brk + 1;
-    }
-    return rowsSoFar + (bytePos - segStart) / _bytesPerLine;
-}
-
-qint64 HexEditor::firstByteOfVisualRowContaining(qint64 bytePos) const
-{
-    return byteOffsetForVisualRow(visualRowForByte(bytePos));
-}
-
-int HexEditor::bytesOnVisualRowAt(qint64 byteOffset) const
-{
-    const qint64 fileSize = _chunks->size();
-    if (byteOffset >= fileSize) return 0;
-    int maxBytes = static_cast<int>(qMin<qint64>(_bytesPerLine, fileSize - byteOffset));
-
-    auto it = std::lower_bound(_lineBreaks.constBegin(), _lineBreaks.constEnd(), byteOffset);
-    if (it != _lineBreaks.constEnd() && *it < byteOffset + maxBytes)
-        return static_cast<int>(*it - byteOffset + 1);
-
-    return maxBytes;
-}
-
-int HexEditor::visibleRowForByte(qint64 bytePos) const
-{
-    if (_visualRowStartBytes.size() < 2) return 0;
-    for (int i = 0; i < _visualRowStartBytes.size() - 1; ++i) {
-        if (bytePos >= _visualRowStartBytes[i] && bytePos < _visualRowStartBytes[i + 1])
-            return i;
-    }
-    return _visualRowStartBytes.size() - 2;
-}
-
-void HexEditor::adjust()
-{
-    // recalc Graphics
-    if (_addressArea)
-    {
-        _addrDigits = addressWidth();
-        _pxPosHexX = _pxGapAdr + _addrDigits * _pxCharWidth + _pxGapAdrHex + kAddressRightPaddingPx;
-    }
-    else
-        _pxPosHexX = _pxGapAdrHex;
-
-    _pxPosAdrX = _pxGapAdr;
-    _pxPosAsciiX = _pxPosHexX + _hexCharsInLine * _pxCharWidth + (_bytesPerLine - 1) * kHexColumnExtraGapPx + _pxGapHexAscii;
-
-    // set horizontalScrollBar()
-    int pxWidth;
-    if (_asciiArea)
-        pxWidth = _pxPosAsciiX + kAsciiAreaLeftPaddingPx + static_cast<int>(_asciiAreaMaxWidth);
-    else
-        pxWidth = _pxPosAsciiX - _pxGapHexAscii; // no gap wasted when ASCII area is hidden
-
-    horizontalScrollBar()->setRange(0, pxWidth - viewport()->width());
-    horizontalScrollBar()->setPageStep(viewport()->width());
-
-    // set verticalScrollbar()
-    const int rowStridePx = _pxCharHeight + kHexRowExtraGapPx;
-    _rowsShown = ((viewport()->height() - 4) / rowStridePx);
-
-    const qint64 lineCount = totalVisualRows();
-
-    verticalScrollBar()->setRange(0, qMax<qint64>(0, lineCount - _rowsShown));
-    verticalScrollBar()->setPageStep(_rowsShown);
-
-    auto value = verticalScrollBar()->value();
-
-    // Precompute absolute byte offsets for each visible row in a single pass
-    _visualRowStartBytes = byteOffsetsForVisualRows(value, _rowsShown + 1);
-    _bPosFirst = _visualRowStartBytes.isEmpty() ? 0 : _visualRowStartBytes[0];
-
-    _bPosLast = _visualRowStartBytes[_rowsShown] - 1;
-    if (_bPosLast >= _chunks->size())
-        _bPosLast = _chunks->size() - 1;
-    if (_bPosLast < _bPosFirst)
-        _bPosLast = _bPosFirst;
-
-    readBuffers();
-    setCursorPosition(_cursorPosition);
-
-    // Reposition scroll map strips to the right margin reserved by setViewportMargins().
-    // Always use viewport geometry — scrollbar geometry is unreliable on macOS
-    // overlay scrollbars (often zero/transient).
-    {
-        const QRect vp = viewport()->geometry();
-        if (vp.isValid() && vp.height() > 0)
-        {
-            int x = vp.right() + 1;
-            if (_scrollMapChanges && _scrollMapChanges->isVisible())
-            {
-                _scrollMapChanges->setGeometry(x, vp.top(), kScrollMapWidth, vp.height());
-                x += kScrollMapWidth;
-            }
-            if (_scrollMapTarget && _scrollMapTarget->isVisible())
-            {
-                _scrollMapTarget->setGeometry(x, vp.top(), kScrollMapWidth, vp.height());
-            }
-        }
-    }
-}
-
-void HexEditor::dataChangedPrivate(int)
-{
-    const int logicalUndoIndex = _undoStack->index() - _lineBreakCmdCount;
-    _modified = _baseModified || (logicalUndoIndex != _cleanUndoIndex);
-
-    if (_nonDataChangeInProgress) {
-        // Pointer/section commands don't alter hex data — skip layout rebuild
-        // and stale dataChangedAt emission.  The undo()/redo() caller handles
-        // cursor + refresh.
-        emit dataChanged();
-        emit undoAvailable(_undoStack->canUndo());
-        emit redoAvailable(_undoStack->canRedo());
-        return;
-    }
-
-    invalidateAsciiAreaWidthCache();
-    updateAsciiAreaMaxWidth();
-
-    if (_lineBreakChangeInProgress) {
-        // add/remove line-break already updated layout directly
-    } else if (_showDisasm) {
-        // Global disasm: full rescan needed.
-        _disasmBoundaries.clear();
-        _disasmCache.clear();
-        _disasmCacheStart = _disasmCacheEnd = -1;
-        rebuildDisasmLayout();
-    } else if (hasSectionDisasmMode()) {
-        // Only rescan disasm boundaries when the edit falls inside a
-        // section displayed as disassembly; otherwise the instruction
-        // layout is unchanged and the normal adjust() path is enough.
-        const qint64 changedPos = _chunks->pos();
-        const bool inDisasmSection = _sectionModel
-            && _sectionModel->displayModeAtOffset(changedPos) == SectionDisplay_Disasm;
-        if (inDisasmSection) {
-            _disasmBoundaries.clear();
-            _disasmCache.clear();
-            _disasmCacheStart = _disasmCacheEnd = -1;
-            rebuildSectionAwareLayout();
-        } else {
-            _disasmCache.clear();
-            _disasmCacheStart = _disasmCacheEnd = -1;
-            adjust();
-        }
-    } else {
-        adjust();
-    }
-
-    emit dataChanged();
-    emit dataChangedAt(_chunks->pos());
-
-    emit undoAvailable(_undoStack->canUndo());
-    emit redoAvailable(_undoStack->canRedo());
-}
-
-void HexEditor::refresh()
-{
-    // If cursor is within the already-visible range, ensureVisible() won't
-    // change scrollbar values and adjust()/readBuffers() won't be called.
-    // In that case, skip the redundant readBuffers().
-    const qint64 oldFirst = _bPosFirst;
-    const qint64 oldLast  = _bPosLast;
-
-    ensureVisible();
-
-    // If ensureVisible changed the scroll position, adjust() was triggered
-    // which already called readBuffers(). Only re-read if nothing changed.
-    if (_bPosFirst == oldFirst && _bPosLast == oldLast)
-    {
-        // Buffers are still valid — no need to re-read from IO.
-        // Just schedule a repaint.
-        viewport()->update();
-    }
-}
-
-uint32_t HexEditor::computeAsciiAreaMaxWidthForBytesPerLine(int bytesPerLine)
-{
-    if (!_asciiArea || bytesPerLine <= 0)
-        return 0;
-
-    // When a table is loaded use its max symbol width, otherwise one char per byte.
-    const int slotWidthPx = (_tb && _tbMaxSymbolWidthPx > 0)
-        ? (_tbMaxSymbolWidthPx + ((_tbMaxSymbolWidthPx > _pxCharWidth) ? kAsciiColumnGapWidePx : kAsciiColumnGapSinglePx))
-        : (_pxCharWidth + kAsciiColumnGapSinglePx);
-
-    return static_cast<uint32_t>(bytesPerLine * slotWidthPx);
-}
-
-void HexEditor::updateAsciiAreaMaxWidth()
-{
-    if (_tb)
-        ensureAsciiAreaWidthCache();
-
-    _asciiAreaMaxWidth = computeAsciiAreaMaxWidthForBytesPerLine(_bytesPerLine);
-}
-
-void HexEditor::restoreTopVisibleByte(qint64 topByte)
-{
-    if (_bytesPerLine <= 0)
-        return;
-
-    const int topLine = static_cast<int>(qMax<qint64>(0, topByte) / _bytesPerLine);
-    verticalScrollBar()->setValue(topLine);
-    adjust();
-}
-
-void HexEditor::invalidateAsciiAreaWidthCache()
-{
-    _asciiAreaWidthCacheValid = false;
-    _tbMaxSymbolWidthPx = 0;
-    _asciiAreaWidthCacheTable = nullptr;
-    _asciiAreaWidthCacheDataSize = -1;
-    _asciiAreaWidthCacheCharWidth = 0;
-}
-
-void HexEditor::ensureAsciiAreaWidthCache()
-{
-    if (!_tb)
-        return;
-
-    if (_asciiAreaWidthCacheValid && _asciiAreaWidthCacheTable == _tb && _asciiAreaWidthCacheCharWidth == _pxCharWidth)
-    {
-        return;
-    }
-
-    _tbSymbolWidthPxCache = QVector<int>(256, _pxCharWidth);
-    _asciiAreaMaxWidthByBpl = QVector<uint32_t>(65, 0);
-    _tbMaxSymbolWidthPx = _pxCharWidth;
-
-    const QFontMetrics fm(font());
-
-    // Compute actual rendered width for each possible byte value using the table
-    for (int value = 0; value <= 0xFF; ++value)
-    {
-        char rawByte = static_cast<char>(value);
-        QString sym;
-        
-        if (_tb)
-        {
-            sym = _tb->encodeSymbol(rawByte);
-            // Replace "not in table" placeholder with actual placeholder char
-            if (!sym.size())
-                sym = QString(_notInTableChar);
-        }
-        else
-        {
-            QChar ch = QChar::fromLatin1(rawByte);
-            sym = ch;
-            // Replace non-printable chars with placeholder
-            if (sym.size() == 1 && !sym[0].isPrint())
-                sym = QString(_nonPrintableNoTableChar);
-        }
-        
-        // Measure actual font width rather than just counting characters
-        int widthPx = qMax(_pxCharWidth, fm.horizontalAdvance(sym));
-        _tbSymbolWidthPxCache[value] = widthPx;
-        if (widthPx > _tbMaxSymbolWidthPx)
-            _tbMaxSymbolWidthPx = widthPx;
-    }
-
-    for (int bpl = 4; bpl <= 64; bpl += 4) {
-        const int gap = (_tbMaxSymbolWidthPx > _pxCharWidth) ? kAsciiColumnGapWidePx : kAsciiColumnGapSinglePx;
-        _asciiAreaMaxWidthByBpl[bpl] = static_cast<uint32_t>(bpl * (_tbMaxSymbolWidthPx + gap));
-    }
-
-    // Also scan multi-byte entries to get the true maximum symbol width (e.g. kanji)
-    if (_tb->hasMultiByteEntries())
-    {
-        for (const QString &val : _tb->getMultiByteItems())
-        {
-            const int widthPx = qMax(_pxCharWidth, fm.horizontalAdvance(val));
-            if (widthPx > _tbMaxSymbolWidthPx)
-                _tbMaxSymbolWidthPx = widthPx;
-        }
-        // Recompute per-bpl widths with updated max
-        for (int bpl = 4; bpl <= 64; bpl += 4) {
-            const int gap = (_tbMaxSymbolWidthPx > _pxCharWidth) ? kAsciiColumnGapWidePx : kAsciiColumnGapSinglePx;
-            _asciiAreaMaxWidthByBpl[bpl] = static_cast<uint32_t>(bpl * (_tbMaxSymbolWidthPx + gap));
-        }
-    }
-
-    _asciiAreaWidthCacheTable = _tb;
-    _asciiAreaWidthCacheDataSize = -1;
-    _asciiAreaWidthCacheCharWidth = _pxCharWidth;
-    _asciiAreaWidthCacheValid = true;
-}
-
-void HexEditor::readBuffers()
-{
-    if (_showOriginal && !_originalData.isEmpty()) {
-        const qint64 count = _bPosLast - _bPosFirst + _bytesPerLine + 1;
-        const qint64 origSize = static_cast<qint64>(_originalData.size());
-        const qint64 safeFrom = qMin(_bPosFirst, origSize);
-        const qint64 safeCount = qMax<qint64>(0, qMin(count, origSize - safeFrom));
-        _dataShown = _originalData.mid(static_cast<int>(safeFrom), static_cast<int>(safeCount));
-        _hexDataShown = QByteArray(_dataShown.toHex());
-        // Mark positions that differ between original and the current (edited) data
-        const QByteArray currentSlice = _chunks->data(_bPosFirst, count);
-        _markedShown = QByteArray(_dataShown.size(), char(0));
-        for (int i = 0; i < _dataShown.size() && i < currentSlice.size(); ++i) {
-            if (_dataShown.at(i) != currentSlice.at(i))
-                _markedShown[i] = char(1);
-        }
-    } else {
-        _dataShown = _chunks->data(_bPosFirst, _bPosLast - _bPosFirst + _bytesPerLine + 1, &_markedShown);
-        _hexDataShown = QByteArray(_dataShown.toHex());
-    }
-    _encodingCacheValid = false;
-    _tbDisplayCacheValid = false;
-}
-
-void HexEditor::ensureEncodingDisplayCache()
-{
-    if (_encodingCacheValid) return;
-    _encodingCacheValid = true;
-    _encodingChars.clear();
-    _encodingSpan.clear();
-    if (_tb || _currentEncoding == QLatin1String("ASCII"))
-        return; // not applicable: TBL active or plain ASCII
-    _encodingChars = decodeBufferWithEncoding(_dataShown, _currentEncoding);
-
-    // Derive span from _encodingChars: lead byte gets count of bytes in its sequence;
-    // continuation bytes get 0 (same convention as _tbDisplaySpan).
-    const int n = _encodingChars.size();
-    _encodingSpan = QVector<int>(n, 0);
-    int i = 0;
-    while (i < n) {
-        if (_encodingChars[i].isNull()) {
-            // Orphaned continuation (shouldn't happen with valid data, but handle gracefully)
-            _encodingSpan[i] = 0;
-            ++i;
-        } else {
-            // Lead byte: span = 1 + number of consecutive null (continuation) entries
-            int span = 1;
-            while ((i + span) < n && _encodingChars[i + span].isNull())
-                ++span;
-            _encodingSpan[i] = span;
-            i += span;
-        }
-    }
-}
-
-void HexEditor::ensureTableDisplayCache()
-{
-    if (_tbDisplayCacheValid) return;
-    _tbDisplayCacheValid = true;
-    _tbDisplayChars.clear();
-    _tbDisplaySpan.clear();
-    if (!_tb || !_tb->hasMultiByteEntries())
-        return;
-    decodeBufferWithTable(_dataShown, _tb, _tbDisplayChars, _tbDisplaySpan);
-}
-
-QString HexEditor::toReadable(const QByteArray &ba)
-{
-    QString result;
-
-    auto baLen = ba.size();
-
-    for (int i = 0; i < baLen; i += 16)
-    {
-        QString addrStr = QString("%1").arg(_addressOffset + i, addressWidth(), 16, QChar('0'));
-        QString hexStr;
-        const QByteArray rowBytes = ba.mid(i, qMin(16, baLen - i));
-        QString ascStr = decodeTextForCurrentEncoding(rowBytes);
-
-        for (int j = 0; j < 16; j++)
-        {
-            if ((i + j) < baLen)
-            {
-                hexStr.append(" ").append(ba.mid(i + j, 1).toHex());
-            }
-        }
-
-        for (int k = 0; k < ascStr.size(); ++k)
-            if (!ascStr[k].isPrint())
-                ascStr[k] = QChar('.');
-
-        result += addrStr + " " + QString("%1").arg(hexStr, -48) + "  " + QString("%1").arg(ascStr, -17) + "\n";
-    }
-    return result;
-}
-
-void HexEditor::updateCursor()
-{
-    _blink = !_blink;
-
-    viewport()->update(_asciiCursorRect);
-    viewport()->update(_hexCursorRect);
-}
-
-// ---- Scroll map visibility API -------------------------------------------------
-
-bool HexEditor::scrollMapChangesVisible() const
-{
-    return _scrollMapChangesEnabled;
-}
-
-void HexEditor::setScrollMapChangesVisible(bool visible)
-{
-    if (_scrollMapChangesEnabled == visible) return;
-    _scrollMapChangesEnabled = visible;
-    updateScrollMapMargins();
-}
-
-bool HexEditor::scrollMapTargetVisible() const
-{
-    return _scrollMapTargetEnabled;
-}
-
-void HexEditor::setScrollMapTargetVisible(bool visible)
-{
-    if (_scrollMapTargetEnabled == visible) return;
-    _scrollMapTargetEnabled = visible;
-    updateScrollMapMargins();
-}
-
-void HexEditor::setScrollMapChangesBgColor(const QColor &c)
-{
-    if (_scrollMapChanges) _scrollMapChanges->setBgColor(c);
-}
-
-void HexEditor::setScrollMapTargetBgColor(const QColor &c)
-{
-    if (_scrollMapTarget) _scrollMapTarget->setBgColor(c);
-}
-
-void HexEditor::updateScrollMapMargins()
-{
-    // Immediate (non-debounced) re-evaluation of visibility + margins.
-    // Also kicks the debounce timer for future model changes.
-    scheduleScrollMapCompute();
-    updateScrollMap();
-}
-
-// ---- Scroll map computation ---------------------------------------------------
-
-void HexEditor::updateScrollMap()
-{
-    // Debounce: restart timer on every rapid model change.
-    // scheduleScrollMapCompute() fires once things settle.
-    if (_scrollMapTimer)
-        _scrollMapTimer->start();
-}
-
-void HexEditor::scheduleScrollMapCompute()
-{
-    if (!_scrollMapWatcher || !_chunks)
-        return;
-
-    const bool hasPointers = !_pointers.empty();
-    const bool hasChanges  = !_changedPositions.isEmpty();
-    const bool wantChanges = _scrollMapChangesEnabled && hasChanges  && _scrollMapChanges;
-    const bool wantTarget  = _scrollMapTargetEnabled  && hasPointers && _scrollMapTarget;
-
-    // Update strip visibility
-    if (_scrollMapChanges) _scrollMapChanges->setVisible(wantChanges);
-    if (_scrollMapTarget)  _scrollMapTarget->setVisible(wantTarget);
-    if (wantChanges) _scrollMapChanges->raise();
-    if (wantTarget)  _scrollMapTarget->raise();
-
-    // Update viewport right margin only when it actually changes (avoids recursive relayout)
-    const int newMargin = (wantChanges ? kScrollMapWidth : 0) + (wantTarget ? kScrollMapWidth : 0);
-    if (newMargin != _scrollMapCurrentMargin)
-    {
-        _scrollMapCurrentMargin = newMargin;
-        setViewportMargins(0, 0, newMargin, 0);
-        // setViewportMargins relayouts the viewport synchronously in Qt6,
-        // so we call adjust() immediately to size the strip before reading mapH.
-    }
-    adjust();  // always reposition strips so height() is up-to-date
-
-    if (!wantChanges && !wantTarget)
-    {
-        if (_scrollMapChanges)  _scrollMapChanges->setTicks({});
-        if (_scrollMapTarget)   { _scrollMapTarget->setTicks({}); _scrollMapTarget->setSecondaryTicks({}); }
-        return;
-    }
-
-    // If previous background task still running, retry after debounce
-    if (_scrollMapWatcher->isRunning())
-    {
-        _scrollMapTimer->start();
-        return;
-    }
-
-    // Both strips share the same height (set by adjust()).
-    // Read from viewport() directly — adjust() has just positioned the strips,
-    // but reading viewport()->height() is always authoritative and avoids any
-    // stale-geometry edge cases the first time the strips are shown.
-    const int mapH = viewport()->height();
-    const qint64 totalBytes = _chunks->size();
-
-    if (mapH <= 0 || totalBytes <= 0)
-        return;
-
-    // Get real groove geometry via QStyleOptionSlider (initFrom is public).
-    auto *vbar = verticalScrollBar();
-    const int sbMin  = vbar->minimum();
-    const int sbMax  = vbar->maximum();
-    const int sbPage = vbar->pageStep();
-    const int bytesPerLine = qMax(1, _bytesPerLine);
-
-    // Build QStyleOptionSlider from public scrollbar API — no initStyleOption needed.
-    // Use strip dimensions as the rect so subControlRect returns groove/thumb in strip coords.
-    QStyleOptionSlider vbarOpt;
-    vbarOpt.initFrom(vbar);                         // sets palette, state from the widget
-    vbarOpt.rect          = QRect(0, 0, kScrollMapWidth, mapH);  // ← strip size, not vbar size
-    vbarOpt.minimum       = sbMin;
-    vbarOpt.maximum       = sbMax;
-    vbarOpt.pageStep      = sbPage;
-    vbarOpt.singleStep    = vbar->singleStep();
-    vbarOpt.sliderValue   = vbar->value();
-    vbarOpt.sliderPosition = vbar->sliderPosition();
-    vbarOpt.orientation   = Qt::Vertical;
-    vbarOpt.upsideDown    = vbar->invertedAppearance();
-    vbarOpt.subControls   = QStyle::SC_All;
-    vbarOpt.activeSubControls = QStyle::SC_None;
-
-    // Groove rect — in strip coords because we set opt.rect to strip size.
-    const QRect grooveRect = vbar->style()->subControlRect(
-        QStyle::CC_ScrollBar, &vbarOpt, QStyle::SC_ScrollBarGroove, vbar);
-
-    // Slider (thumb) rect — also in strip coords.
-    const QRect sliderRect = vbar->style()->subControlRect(
-        QStyle::CC_ScrollBar, &vbarOpt, QStyle::SC_ScrollBarSlider, vbar);
-
-    const int grooveTop = grooveRect.isValid() ? grooveRect.top() : 0;
-    const int grooveH   = qMax(1, grooveRect.isValid() ? grooveRect.height() : mapH);
-    const int mThumbH   = qMax(1, sliderRect.isValid() ? sliderRect.height() : 1);
-
-    // mGrooveTop/mGrooveH are already in strip (mapH) coords — no scaling needed.
-    const int mGrooveTop = grooveTop;
-    const int mGrooveH   = grooveH;
-
-    QList<qint64> changedKeys = wantChanges ? _changedPositions.values() : QList<qint64>{};
-    QList<qint64> ptrKeys     = wantTarget  ? _pointers.pointerKeys()    : QList<qint64>{};
-    QList<qint64> targetKeys  = wantTarget  ? _pointers.offsetKeys()     : QList<qint64>{};
-
-    const qint64 changedRangeStart = _changedRangeStart;
-    const qint64 changedRangeEnd = _changedRangeEnd;
-
-    auto future = QtConcurrent::run(
-        [mapH, totalBytes,
-         sbMin, sbMax, sbPage, bytesPerLine,
-         mGrooveTop, mGrooveH, mThumbH,
-         wantChanges, wantTarget,
-         changedRangeStart, changedRangeEnd,
-         changedKeys = std::move(changedKeys),
-         ptrKeys     = std::move(ptrKeys),
-         targetKeys  = std::move(targetKeys)]() -> ScrollMapMarkers
-        {
-            ScrollMapMarkers result;
-
-            // Map byte offset → Y that matches the scrollbar thumb CENTER,
-            // using real groove geometry obtained from QStyle on the main thread.
-            auto offToY = [mapH, totalBytes,
-                           sbMin, sbMax, sbPage, bytesPerLine,
-                           mGrooveTop, mGrooveH, mThumbH](qint64 off) -> int
-            {
-                if (totalBytes <= 1 || mapH <= 1)
-                    return 0;
-
-                const qint64 offClamped = qBound<qint64>(0, off, totalBytes - 1);
-                const double line = static_cast<double>(offClamped) / static_cast<double>(bytesPerLine);
-
-                // Scrollbar value that centers this offset in the viewport.
-                const double value = qBound(static_cast<double>(sbMin),
-                                            line - static_cast<double>(sbPage) * 0.5,
-                                            static_cast<double>(sbMax));
-
-                // Thumb travels within groove: from mGrooveTop to mGrooveTop+mGrooveH-mThumbH.
-                const double travel = qMax(0.0, static_cast<double>(mGrooveH - mThumbH));
-                const double valueRange = (sbMax > sbMin) ? static_cast<double>(sbMax - sbMin) : 1.0;
-                const double normVal = (value - sbMin) / valueRange;
-
-                // Y of the thumb CENTER in strip coordinates.
-                const double thumbTopInStrip = mGrooveTop + normVal * travel;
-                const double thumbCenterY = thumbTopInStrip + static_cast<double>(mThumbH) * 0.5;
-
-                return qBound(0, static_cast<int>(std::round(thumbCenterY)), mapH - 1);
-            };
-
-            if (wantChanges)
-            {
-                QVector<bool> px(mapH, false);
-
-                // Extended tail of file (inserted bytes beyond original) should show as continuous block
-                if (changedRangeStart >= 0 && changedRangeEnd > changedRangeStart)
-                {
-                    int y0 = offToY(changedRangeStart);
-                    int y1 = offToY(changedRangeEnd - 1);
-                    if (y0 > y1)
-                        std::swap(y0, y1);
-                    for (int y = y0; y <= y1; ++y)
-                    {
-                        px[y] = true;
-                        if (!result.changesYToOff.contains(y))
-                            result.changesYToOff.insert(y, changedRangeStart);
-                    }
-                }
-
-                for (qint64 off : changedKeys) {
-                    int y = offToY(off);
-                    px[y] = true;
-                    if (!result.changesYToOff.contains(y))
-                        result.changesYToOff.insert(y, off);
-                }
-                for (int i = 0; i < mapH; ++i)
-                    if (px[i]) result.changesYs.push_back(i);
-            }
-
-            if (wantTarget)
-            {
-                QVector<bool> ptrPx(mapH, false);
-                for (qint64 off : ptrKeys) {
-                    int y = offToY(off);
-                    ptrPx[y] = true;
-                    if (!result.pointerYToOff.contains(y))
-                        result.pointerYToOff.insert(y, off);
-                }
-                for (int i = 0; i < mapH; ++i)
-                    if (ptrPx[i]) result.pointerYs.push_back(i);
-
-                QVector<bool> targetPx(mapH, false);
-                for (qint64 off : targetKeys) {
-                    int y = offToY(off);
-                    targetPx[y] = true;
-                    if (!result.targetYToOff.contains(y))
-                        result.targetYToOff.insert(y, off);
-                }
-                for (int i = 0; i < mapH; ++i)
-                    if (targetPx[i]) result.targetYs.push_back(i);
-            }
-
-            return result;
-        });
-
-    _scrollMapWatcher->setFuture(future);
-}
-
-PointerListModel *HexEditor::pointers()
-{
-    return &_pointers;
-}
-
-void HexEditor::clearPointers()
-{
-    _pointers.clear();
-
-    viewport()->update();
-}
-
-/**
- * The function searches for pointers in the specified direction(s) and adds them to the pointers list.
- *
- * @param order - byte order: LittleEndian, BigEndian or SwappedBytes
- * @param searchBefore - whether to search for pointers before the current selection
- * @param searchAfter - whether to search for pointers after the current selection
- * @param firstPrintable - if set, only consider values as pointers if the previous byte is not a printable character (between firstPrintable and lastPrintable)
- * @param lastPrintable - see firstPrintable
- * @param stopChar - if set, skip offsets where the first byte is equal to stopChar
- * @param excludeSelection - whether to exclude the current selection from search (only applicable if both searchBefore and searchAfter are true)
- * @return number of pointers found
- */
-qint64 HexEditor::findPointers(int pointerSize, ByteOrder order, bool searchBefore, bool searchAfter, const char *firstPrintable, const char *lastPrintable, char stopChar, bool excludeSelection)
-{
-    // Validate pointer size
-    if (pointerSize < 2 || pointerSize > 4)
-        pointerSize = 4;
-
-    const QByteArray fileData = data();
-    const char *buf = fileData.constData();
-    const qint64 fileSize = fileData.size();
-
-    qint64 selBegin = _bSelectionBegin;
-    qint64 selEnd = _bSelectionEnd;
-    if (selBegin >= selEnd)
-    {
-        selBegin = 0;
-        selEnd = fileSize;
-    }
-
-    struct SearchRange
-    {
-        qint64 startOffset;
-        qint64 endOffsetExclusive;
-    };
-
-    const qint64 maxDecodedStartExclusive = fileSize - pointerSize + 1;
-
-    QVector<SearchRange> ranges;
-    auto addRange = [&ranges](qint64 startOffset, qint64 endOffsetExclusive)
-    {
-        if (startOffset < endOffsetExclusive)
-        {
-            SearchRange range;
-            range.startOffset = startOffset;
-            range.endOffsetExclusive = endOffsetExclusive;
-            ranges.push_back(range);
-        }
-    };
-
-    if (searchBefore)
-        addRange(0, selBegin);
-    if (searchAfter)
-        addRange(selEnd, fileSize);
-    if (searchBefore && searchAfter && !excludeSelection)
-    {
-        ranges.clear();
-        addRange(0, fileSize);
-    }
-
-    auto isCandidateOffset = [&](quint64 value) -> bool
-    {
-        const qint64 targetOffset = static_cast<qint64>(value);
-
-        if (targetOffset < selBegin || targetOffset >= selEnd)
-            return false;
-
-        if (!firstPrintable || !lastPrintable)
-            return true;
-
-        if (targetOffset == 0)
-            return true;
-
-        const char prevChar = buf[targetOffset - 1];
-        return !(prevChar >= *firstPrintable && prevChar <= *lastPrintable);
-    };
-
-    qint64 found = 0;
-    qint64 its = 0;
-    QElapsedTimer timer;
-    timer.start();
-
-    for (const auto &range : ranges)
-    {
-        const qint64 startOffset = qBound(static_cast<qint64>(0), range.startOffset, fileSize);
-        const qint64 endOffsetExclusive = qBound(static_cast<qint64>(0), range.endOffsetExclusive, fileSize);
-        const qint64 decodeEndExclusive = qMin(endOffsetExclusive, maxDecodedStartExclusive);
-
-        for (qint64 j = startOffset; j < decodeEndExclusive; ++j)
-        {
-            if (stopChar && buf[j] == stopChar)
-            {
-                ++its;
-                continue;
-            }
-
-            quint64 value = 0;
-            const uchar *ptr = reinterpret_cast<const uchar *>(buf + j);
-            value = decodePointer(ptr, pointerSize, order);
-
-            if (isCandidateOffset(value))
-            {
-                _pointers.addPointer(j, static_cast<qint64>(value));
-                ++found;
-            }
-            ++its;
-        }
-    }
-
-    return found;
-}
-
-bool HexEditor::addPointerUndoable(qint64 pointerOffset, qint64 targetOffset, int ptrSize)
-{
-    if (pointerOffset < 0 || targetOffset < 0)
-        return false;
-
-    const PointerState before = capturePointerState(&_pointers, pointerOffset);
-
-    if (before.hasTarget && before.targetOffset == targetOffset && before.ptrSize == ptrSize)
-        return false;
-
-    PointerState after;
-    after.pointerOffset = pointerOffset;
-    after.hasTarget = true;
-    after.targetOffset = targetOffset;
-    after.ptrSize = ptrSize;
-
-    _undoStack->push(new PointerEditCommand(&_pointers,
-                                            QVector<PointerState>{before},
-                                            QVector<PointerState>{after},
-                                            tr("Add pointer")));
-    refresh();
-    return true;
-}
-
-bool HexEditor::removePointerUndoable(qint64 pointerOffset)
-{
-    const PointerState before = capturePointerState(&_pointers, pointerOffset);
-    if (!before.hasTarget)
-        return false;
-
-    PointerState after;
-    after.pointerOffset = pointerOffset;
-    after.hasTarget = false;
-
-    _undoStack->push(new PointerEditCommand(&_pointers,
-                                            QVector<PointerState>{before},
-                                            QVector<PointerState>{after},
-                                            tr("Drop pointer")));
-    refresh();
-    return true;
-}
-
-int HexEditor::removePointersUndoable(const QVector<qint64> &pointerOffsets)
-{
-    if (pointerOffsets.isEmpty())
-        return 0;
-
-    QVector<PointerState> before;
-    QVector<PointerState> after;
-    QSet<qint64> uniqueOffsets;
-    uniqueOffsets.reserve(pointerOffsets.size());
-
-    for (qint64 pointerOffset : pointerOffsets)
-    {
-        if (uniqueOffsets.contains(pointerOffset))
-            continue;
-        uniqueOffsets.insert(pointerOffset);
-
-        const PointerState stateBefore = capturePointerState(&_pointers, pointerOffset);
-        if (!stateBefore.hasTarget)
-            continue;
-
-        before.append(stateBefore);
-
-        PointerState stateAfter;
-        stateAfter.pointerOffset = pointerOffset;
-        stateAfter.hasTarget = false;
-        after.append(stateAfter);
-    }
-
-    if (before.isEmpty())
-        return 0;
-
-    _undoStack->push(new PointerEditCommand(&_pointers, before, after, tr("Drop pointer")));
-    refresh();
-    return before.size();
-}
-
-int HexEditor::removePointersToOffsetUndoable(qint64 targetOffset)
-{
-    const QList<qint64> pointersAtOffset = _pointers.getPointers(targetOffset);
-    if (pointersAtOffset.isEmpty())
-        return 0;
-
-    QVector<PointerState> before;
-    QVector<PointerState> after;
-    before.reserve(pointersAtOffset.size());
-    after.reserve(pointersAtOffset.size());
-
-    for (qint64 pointerOffset : pointersAtOffset)
-    {
-        const PointerState stateBefore = capturePointerState(&_pointers, pointerOffset);
-        if (!stateBefore.hasTarget)
-            continue;
-
-        before.append(stateBefore);
-
-        PointerState stateAfter;
-        stateAfter.pointerOffset = pointerOffset;
-        stateAfter.hasTarget = false;
-        after.append(stateAfter);
-    }
-
-    if (before.isEmpty())
-        return 0;
-
-    _undoStack->push(new PointerEditCommand(&_pointers, before, after, tr("Drop all")));
-    refresh();
-    return before.size();
-}

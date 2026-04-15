@@ -20,7 +20,7 @@ using namespace MainWindowInternal;
 #include <QSplitter>
 #include <QDockWidget>
 #include <QApplication>
-#include <QSettings>
+#include "appsettings.h"
 #include "DockTitleBar.h"
 #include "SectionListModel.h"
 
@@ -680,7 +680,7 @@ void MainWindow::createActions()
     languageGroup->addAction(langJapaneseAct);
     languageGroup->addAction(langChineseSimplifiedAct);
 
-    QSettings settings;
+    auto &settings = AppSettings::instance();
     
     // Detect system language on first run if Language setting doesn't exist
     QString language;
@@ -818,7 +818,7 @@ void MainWindow::createActions()
             { hexEdit->setAddressArea(checked); });
     connect(asciiAreaGroup, &QActionGroup::triggered, this, [this](QAction *act)
             {
-                QSettings s;
+                auto &s = AppSettings::instance();
                 if (act == panelModeTextAct) {
                     hexEdit->setShowDisasm(false);
                     hexEdit->setAsciiArea(true);

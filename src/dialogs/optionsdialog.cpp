@@ -1,7 +1,7 @@
 #include <QColorDialog>
 #include <QFontDialog>
 #include <QEvent>
-#include <QSettings>
+#include "appsettings.h"
 #include <QLabel>
 #include <QLineEdit>
 #include <QVBoxLayout>
@@ -161,7 +161,7 @@ void OptionsDialog::show()
     readSettings();
     readHotkeySettings();
     // Sync dark mode checkbox with current setting
-    QSettings s;
+    auto &s = AppSettings::instance();
     if (m_cbDarkMode) {
         const bool dark = s.value(QStringLiteral("DarkTheme"), false).toBool();
         m_cbDarkMode->setChecked(dark);
@@ -179,7 +179,7 @@ void OptionsDialog::show()
 void OptionsDialog::accept()
 {
     updateSettings();
-    QSettings s;
+    auto &s = AppSettings::instance();
     if (!m_currentThemeId.isEmpty())
         s.setValue(QStringLiteral("CurrentTheme"), m_currentThemeId);
     s.sync();
@@ -189,7 +189,7 @@ void OptionsDialog::accept()
 void OptionsDialog::reject()
 {
     restoreSettings(); // Restore original settings on cancel
-    QSettings s;
+    auto &s = AppSettings::instance();
     if (!m_originalThemeId.isEmpty())
         s.setValue(QStringLiteral("CurrentTheme"), m_originalThemeId);
     s.sync();
@@ -326,7 +326,7 @@ void OptionsDialog::restoreSettings()
     ui->cbAutoFixChecksums->setChecked(m_originalSettings.autoFixChecksums);
     ui->cbDefaultEncoding->setCurrentText(m_originalSettings.defaultEncoding);
 
-    QSettings s;
+    auto &s = AppSettings::instance();
     for (auto &e : m_hotkeys) {
         if (e.editor && m_originalHotkeys.contains(e.settingsKey)) {
             e.editor->setKeySequence(m_originalHotkeys[e.settingsKey]);
@@ -356,7 +356,7 @@ void OptionsDialog::applySettings()
     MainWindow *mainWin = qobject_cast<MainWindow *>(parent());
     if (mainWin)
     {
-        QSettings settings;
+        auto &settings = AppSettings::instance();
         mainWin->updateHexEditorSettings();
     }
 }
@@ -364,7 +364,7 @@ void OptionsDialog::applySettings()
 void OptionsDialog::readSettings()
 {
     m_suppressUpdate = true;
-    QSettings settings;
+    auto &settings = AppSettings::instance();
 
     // Set combos before other widgets (so any signals see correct combo state)
     if (m_cbBytesPerLine) {
@@ -448,7 +448,7 @@ void OptionsDialog::readSettings()
 
 void OptionsDialog::writeSettings()
 {
-    QSettings settings;
+    auto &settings = AppSettings::instance();
     
     // Write all boolean settings
     // AddressArea and AddressAreaWidth managed by hex editor drag (not written here)
@@ -969,7 +969,7 @@ void OptionsDialog::initHotkeysTab()
     m_conflictLabel->setVisible(false);
     form->addRow(m_conflictLabel);
 
-    QSettings settings;
+    auto &settings = AppSettings::instance();
     for (auto &e : m_hotkeys) {
         e.label  = new QLabel(QCoreApplication::translate("MainWindow", e.displayKey));
         e.editor = new QKeySequenceEdit(
@@ -983,7 +983,7 @@ void OptionsDialog::initHotkeysTab()
             const QKeySequence seq = editor->keySequence();
             if (!seq.isEmpty())
                 resolveShortcutConflict(key, seq);
-            QSettings s;
+            auto &s = AppSettings::instance();
             s.setValue(key, seq);
             s.sync();
             auto *mw = qobject_cast<MainWindow*>(parent());
@@ -1001,7 +1001,7 @@ void OptionsDialog::initHotkeysTab()
 
 void OptionsDialog::readHotkeySettings()
 {
-    QSettings settings;
+    auto &settings = AppSettings::instance();
     for (auto &e : m_hotkeys) {
         if (e.editor)
             e.editor->setKeySequence(
@@ -1011,7 +1011,7 @@ void OptionsDialog::readHotkeySettings()
 
 void OptionsDialog::resetHotkeysToDefaults()
 {
-    QSettings s;
+    auto &s = AppSettings::instance();
     for (auto &e : m_hotkeys) {
         if (e.editor) {
             e.editor->setKeySequence(e.defaultSeq);
@@ -1051,7 +1051,7 @@ void OptionsDialog::resolveShortcutConflict(const QString &sourceKey, const QKey
             e.editor->blockSignals(true);
             e.editor->setKeySequence(QKeySequence());
             e.editor->blockSignals(false);
-            QSettings s;
+            auto &s = AppSettings::instance();
             s.setValue(e.settingsKey, QKeySequence());
             s.sync();
             return;
@@ -1174,7 +1174,7 @@ void OptionsDialog::initThemesTab()
     // Dark mode checkbox
     m_cbDarkMode = new QCheckBox(tr("Dark mode"));
     {
-        QSettings s;
+        auto &s = AppSettings::instance();
         m_cbDarkMode->setChecked(s.value(QStringLiteral("DarkTheme"), false).toBool());
     }
     rightVL->addWidget(m_cbDarkMode);
@@ -1309,7 +1309,7 @@ void OptionsDialog::populateThemeList()
     }
 
     // Select the current theme
-    QSettings settings;
+    auto &settings = AppSettings::instance();
     const QString currentThemeId = settings.value(QStringLiteral("CurrentTheme"), QStringLiteral("__builtin_light__")).toString();
     
     for (int i = 0; i < m_themeList->count(); ++i) {

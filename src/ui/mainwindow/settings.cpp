@@ -2,7 +2,8 @@
 #include "mainwindow.h"
 #include "internal.h"
 using namespace MainWindowInternal;
-#include <QSettings>
+#include <QSettings>   // kept for QSettings::NativeFormat (Windows dark-mode detection)
+#include "appsettings.h"
 #include <QApplication>
 #include <QStyleFactory>
 #include <QMenuBar>
@@ -25,7 +26,7 @@ using namespace MainWindowInternal;
 
 void MainWindow::readSettings()
 {
-    QSettings settings;
+    auto &settings = AppSettings::instance();
     const QByteArray geom = settings.value("WindowGeometry").toByteArray();
     if (!geom.isEmpty())
         restoreGeometry(geom);
@@ -400,7 +401,7 @@ void MainWindow::readSettings()
     applyShortcutsFromSettings();
     
     // Load and apply the language translator
-    QSettings settingsForLang;
+    auto &settingsForLang = AppSettings::instance();
     const QString language = settingsForLang.value("Language", QStringLiteral("en")).toString();
     applyLanguage(language);
 }
@@ -408,7 +409,7 @@ void MainWindow::readSettings()
 
 void MainWindow::applyShortcutsFromSettings()
 {
-    QSettings s;
+    auto &s = AppSettings::instance();
     openAct->setShortcut(s.value("hotkey_Open",         QKeySequence(QKeySequence::Open)).value<QKeySequence>());
     saveAct->setShortcut(s.value("hotkey_Save",          QKeySequence(QKeySequence::Save)).value<QKeySequence>());
     saveAsAct->setShortcut(s.value("hotkey_SaveAs",      QKeySequence(QKeySequence::SaveAs)).value<QKeySequence>());
@@ -518,7 +519,7 @@ void MainWindow::updateNavigationActions()
 void MainWindow::toggleDarkTheme(bool enabled)
 {
     applyDarkTheme(enabled);
-    QSettings settings;
+    auto &settings = AppSettings::instance();
     settings.setValue("DarkTheme", enabled);
 }
 
@@ -586,7 +587,7 @@ void MainWindow::updateHexEditorSettings()
         const qint64 savedTopByte = static_cast<qint64>(editor->verticalScrollBar()->value()) * savedBytesPerLine;
         const int savedHorizontal = editor->horizontalScrollBar()->value();
 
-        QSettings settings;
+        auto &settings = AppSettings::instance();
 
         editor->setAddressArea(settings.value("AddressArea", true).toBool());
         {
@@ -652,7 +653,7 @@ void MainWindow::updateHexEditorSettings()
     if (showAddressAreaAct && hexEdit)
         showAddressAreaAct->setChecked(hexEdit->addressArea());
     if (panelModeTextAct && hexEdit) {
-        QSettings s;
+        auto &s = AppSettings::instance();
         const QString pm = s.value("PanelMode").toString();
         if (pm == QLatin1String("disasm"))
             panelModeDisasmAct->setChecked(true);
@@ -670,7 +671,7 @@ void MainWindow::updateHexEditorSettings()
 
 void MainWindow::writeSettings()
 {
-    QSettings settings;
+    auto &settings = AppSettings::instance();
 
     // Save window geometry
     settings.setValue("WindowGeometry", saveGeometry());
@@ -764,7 +765,7 @@ void MainWindow::writeSettings()
 
 QString MainWindow::lastDirectory(const QString &settingsKey) const
 {
-    QSettings settings;
+    auto &settings = AppSettings::instance();
     const QString dir = settings.value(settingsKey).toString();
     return dir.isEmpty() ? QDir::homePath() : dir;
 }
@@ -778,7 +779,7 @@ void MainWindow::rememberDirectory(const QString &settingsKey, const QString &fi
     if (dirPath.isEmpty())
         return;
 
-    QSettings settings;
+    auto &settings = AppSettings::instance();
     settings.setValue(settingsKey, dirPath);
 }
 
@@ -788,7 +789,7 @@ void MainWindow::saveProjectDockVisibilityState() const
     if (!m_document || m_document->projectFilePath.isEmpty())
         return;
 
-    QSettings settings;
+    auto &settings = AppSettings::instance();
     const QString pfx = projectUiSettingsPrefix(m_document->projectFilePath);
     settings.setValue(pfx + QStringLiteral("/dockTablesVisible"), m_tablesDock ? m_tablesDock->isVisible() : true);
     settings.setValue(pfx + QStringLiteral("/dockPointersVisible"), m_pointersDock ? m_pointersDock->isVisible() : true);
@@ -801,7 +802,7 @@ void MainWindow::restoreProjectDockVisibilityState(const QString &projectPath)
     if (projectPath.isEmpty())
         return;
 
-    QSettings settings;
+    auto &settings = AppSettings::instance();
     const QString pfx = projectUiSettingsPrefix(projectPath);
     const bool tablesVisible = settings.value(pfx + QStringLiteral("/dockTablesVisible"), true).toBool();
     const bool pointersVisible = settings.value(pfx + QStringLiteral("/dockPointersVisible"), true).toBool();
@@ -832,7 +833,7 @@ void MainWindow::addToRecentFiles(const QString &fileName)
     if (fileName.isEmpty())
         return;
 
-    QSettings settings;
+    auto &settings = AppSettings::instance();
     QStringList files = settings.value(kRecentFilesKey).toStringList();
 
     files.removeAll(fileName);
@@ -850,7 +851,7 @@ void MainWindow::addToRecentTables(const QString &fileName)
     if (fileName.isEmpty())
         return;
 
-    QSettings settings;
+    auto &settings = AppSettings::instance();
     QStringList files = settings.value(kRecentTablesKey).toStringList();
 
     files.removeAll(fileName);
@@ -865,7 +866,7 @@ void MainWindow::addToRecentTables(const QString &fileName)
 
 void MainWindow::updateRecentFileMenu()
 {
-    QSettings settings;
+    auto &settings = AppSettings::instance();
     QStringList files = settings.value(kRecentFilesKey).toStringList();
 
     recentFileMenu->clear();
@@ -891,7 +892,7 @@ void MainWindow::updateRecentFileMenu()
 
 void MainWindow::updateRecentTableMenu()
 {
-    QSettings settings;
+    auto &settings = AppSettings::instance();
     QStringList files = settings.value(kRecentTablesKey).toStringList();
 
     recentTableMenu->clear();
@@ -979,7 +980,7 @@ void MainWindow::addToRecentProjects(const QString &fileName)
     if (fileName.isEmpty())
         return;
 
-    QSettings settings;
+    auto &settings = AppSettings::instance();
     QStringList files = settings.value(kRecentProjectsKey).toStringList();
 
     files.removeAll(fileName);
@@ -994,7 +995,7 @@ void MainWindow::addToRecentProjects(const QString &fileName)
 
 void MainWindow::updateRecentProjectMenu()
 {
-    QSettings settings;
+    auto &settings = AppSettings::instance();
     QStringList files = settings.value(kRecentProjectsKey).toStringList();
 
     // Filter out the currently open project

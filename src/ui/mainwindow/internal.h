@@ -3,7 +3,7 @@
 
 #include <QString>
 #include <QFileInfo>
-#include <QSettings>
+#include "appsettings.h"
 #include <QUrl>
 #include <QInputDialog>
 #include <QFile>
@@ -80,7 +80,7 @@ inline QString chooseTableImportEncoding(QWidget *parent, const QString &fileNam
     return ok ? selected : QString();
 }
 
-inline QChar readSingleCharSetting(const QSettings &settings, const char *key, const QChar &fallback)
+inline QChar readSingleCharSetting(const AppSettings &settings, const char *key, const QChar &fallback)
 {
     const QString value = settings.value(key, QString(fallback)).toString();
     return value.isEmpty() ? fallback : value.at(0);

@@ -23,6 +23,7 @@ macx {
 INCLUDEPATH += \
     $$PWD \
     $$PWD/ui \
+    $$PWD/hexeditor \
     $$PWD/dialogs \
     $$PWD/dockwidgets \
     $$PWD/document \
@@ -35,6 +36,8 @@ HEADERS = \
     utils/langtranslator.h \
     # hexeditor
     hexeditor/hexeditor.h \
+    hexeditor/internal.h \
+    hexeditor/encoding.h \
     hexeditor/chunks.h \
     hexeditor/commands.h \
     hexeditor/hexscrollmap.h \
@@ -66,6 +69,7 @@ HEADERS = \
     utils/disassembler.h \
     utils/encodingdetect.h \
     utils/updatechecker.h \
+    utils/appsettings.h \
     utils/romdetect.h
 
 SOURCES = \
@@ -80,6 +84,12 @@ SOURCES = \
     utils/langtranslator.cpp \
     # hexeditor
     hexeditor/hexeditor.cpp \
+    hexeditor/encoding.cpp \
+    hexeditor/events.cpp \
+    hexeditor/disasm.cpp \
+    hexeditor/pointers.cpp \
+    hexeditor/scrollmap.cpp \
+    hexeditor/layout.cpp \
     hexeditor/chunks.cpp \
     hexeditor/commands.cpp \
     hexeditor/hexscrollmap.cpp \
@@ -109,7 +119,8 @@ SOURCES = \
     # utils
     utils/byteglue.cpp \
     utils/disassembler.cpp \
-    utils/updatechecker.cpp
+    utils/updatechecker.cpp \
+    utils/appsettings.cpp
 
 RESOURCES = \
     rthextion.qrc

@@ -15,7 +15,7 @@
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QGridLayout>
-#include <QSettings>
+#include "appsettings.h"
 #include <QScrollBar>
 #include <QUrl>
 #include <QDesktopServices>
@@ -647,7 +647,7 @@ void MainWindow::closeFile()
 
     // Remove table: always when a project existed, otherwise respect settings
     {
-        QSettings s;
+        auto &s = AppSettings::instance();
         if (hadProject || s.value("ResetTableOnClose", false).toBool()) {
             hexEdit->removeTranslationTable();
             tb = nullptr;
@@ -1241,7 +1241,7 @@ void MainWindow::setLanguage()
     applyLanguage(language);
 
     // Save language preference
-    QSettings settings;
+    auto &settings = AppSettings::instance();
     settings.setValue("Language", language);
 }
 
@@ -1891,7 +1891,7 @@ void MainWindow::disconnectEditorSignals(HexEditor *editor)
 
 bool MainWindow::saveFile(const QString &fileName)
 {
-    QSettings settings;
+    auto &settings = AppSettings::instance();
     const bool autoFixChecksums = settings.value("AutoFixChecksums", false).toBool();
 
     QString tmpFileName = fileName + ".~tmp";

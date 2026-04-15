@@ -1,5 +1,6 @@
 #include "InsertScriptDialog.h"
 #include "ui_InsertScriptDialog.h"
+#include "appsettings.h"
 #include "Datas.h"
 #include <QtEndian>
 #include <QEvent>
@@ -66,7 +67,7 @@ void InsertScriptDialog::on_bbControls_clicked(QAbstractButton *button)
 {
     if (ui->bbControls->standardButton(button) == QDialogButtonBox::Open)
     {
-        QSettings settings;
+        auto &settings = AppSettings::instance();
         const QString defaultDir = settings.value("Paths/LastDumpDir", QDir::homePath()).toString();
         const QString fileName = QFileDialog::getOpenFileName(this, tr("Open script"), defaultDir, tr("Text files (*.txt *.script *.scr);;All files (*)"));
         if (fileName.isEmpty())
