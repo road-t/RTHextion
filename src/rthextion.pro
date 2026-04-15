@@ -31,6 +31,7 @@ INCLUDEPATH += \
 HEADERS = \
     appinfo.h \
     ui/mainwindow.h \
+    ui/mainwindow/internal.h \
     utils/langtranslator.h \
     # hexeditor
     hexeditor/hexeditor.h \
@@ -70,6 +71,12 @@ HEADERS = \
 SOURCES = \
     main.cpp \
     ui/mainwindow.cpp \
+    ui/mainwindow/contextmenu.cpp \
+    ui/mainwindow/sections.cpp \
+    ui/mainwindow/actions.cpp \
+    ui/mainwindow/session.cpp \
+    ui/mainwindow/project.cpp \
+    ui/mainwindow/settings.cpp \
     utils/langtranslator.cpp \
     # hexeditor
     hexeditor/hexeditor.cpp \
