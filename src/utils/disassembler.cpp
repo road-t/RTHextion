@@ -668,19 +668,12 @@ QVector<DetectedFunction> Disassembler::scanFunctions(
                                          ? sortedTargets[i + 1]
                                          : fileEnd;
 
-        // Find a RET-end after funcStart.
-        // Prefer the last RET before nextFuncStart, but if none exists there,
-        // keep the first RET after funcStart so valid entries are not dropped.
+        // Find the first RET-end after funcStart — RTS ends the function.
         auto it = std::lower_bound(retEndOffsets.begin(), retEndOffsets.end(), funcStart + 1);
         if (it == retEndOffsets.end())
             continue;
 
         qint64 funcEnd = *it;
-        auto it2 = it;
-        while (it2 != retEndOffsets.end() && *it2 <= nextFuncStart) {
-            funcEnd = *it2;
-            ++it2;
-        }
 
         DetectedFunction df;
         df.startOffset = funcStart;
