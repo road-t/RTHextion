@@ -2,6 +2,7 @@
 #include <QBuffer>
 #include <QSignalSpy>
 
+#include "../../src/document/SectionListModel.h"
 #include "../../src/hexeditor/hexeditor.h"
 
 class TstHexEdit : public QObject
@@ -893,6 +894,93 @@ private slots:
         editor.addLineBreak(10);
         editor.removeLineBreak(20);  // not present
         QCOMPARE(editor.lineBreaks().size(), 1);
+    }
+
+    void sectionAddUndoRedo()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(64, 'A'));
+
+        SectionListModel model;
+        model.setUndoStack(editor.undoStack());
+
+        Section section;
+        section.name = QStringLiteral("Header");
+        section.startOffset = 0;
+        section.endOffset = 16;
+        section.color = Qt::red;
+
+        model.addSection(section);
+        QCOMPARE(model.count(), 1);
+        QVERIFY(editor.canUndo());
+
+        editor.undo();
+        QCOMPARE(model.count(), 0);
+        QVERIFY(editor.canRedo());
+
+        editor.redo();
+        QCOMPARE(model.count(), 1);
+        QCOMPARE(model.at(0).name, QStringLiteral("Header"));
+    }
+
+    void sectionRenameUndoRedo()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(64, 'A'));
+
+        SectionListModel model;
+        model.setUndoStack(editor.undoStack());
+
+        Section section;
+        section.name = QStringLiteral("Header");
+        section.startOffset = 0;
+        section.endOffset = 16;
+        section.color = Qt::red;
+
+        model.addSection(section);
+        model.renameSection(0, QStringLiteral("Code"));
+        QCOMPARE(model.at(0).name, QStringLiteral("Code"));
+
+        editor.undo();
+        QCOMPARE(model.at(0).name, QStringLiteral("Header"));
+
+        editor.redo();
+        QCOMPARE(model.at(0).name, QStringLiteral("Code"));
+    }
+
+    void sectionRemoveUndoRedo()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(64, 'A'));
+
+        SectionListModel model;
+        model.setUndoStack(editor.undoStack());
+
+        Section parent;
+        parent.name = QStringLiteral("Header");
+        parent.startOffset = 0;
+        parent.endOffset = 32;
+        parent.color = Qt::red;
+        model.addSection(parent);
+
+        Section child;
+        child.name = QStringLiteral("Sub");
+        child.startOffset = 8;
+        child.endOffset = 16;
+        child.parentIndex = 0;
+        child.color = Qt::blue;
+        model.addSection(child);
+
+        model.removeSection(0);
+        QCOMPARE(model.count(), 0);
+
+        editor.undo();
+        QCOMPARE(model.count(), 2);
+        QCOMPARE(model.at(0).name, QStringLiteral("Header"));
+        QCOMPARE(model.at(1).name, QStringLiteral("Sub"));
+
+        editor.redo();
+        QCOMPARE(model.count(), 0);
     }
 };
 
