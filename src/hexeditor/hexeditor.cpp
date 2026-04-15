@@ -13,6 +13,7 @@
 #include <QSet>
 #include <QSettings>
 #include <QInputDialog>
+#include <QElapsedTimer>
 #include <QLineEdit>
 #include <QUndoCommand>
 #include <QStringDecoder>
@@ -1591,6 +1592,44 @@ QByteArray HexEditor::getRawSelection()
     return _chunks->data(getSelectionBegin(), getSelectionEnd() - getSelectionBegin());
 }
 
+QString HexEditor::selectedDisasmText() const
+{
+    const qint64 selBegin = getSelectionBegin();
+    const qint64 selEnd = getSelectionEnd();
+    if (selEnd <= selBegin)
+        return QString();
+
+    const_cast<HexEditor *>(this)->ensureDisasmBoundaries();
+    if (_disasmBoundaries.isEmpty())
+        return QString();
+
+    QStringList lines;
+    qint64 lastInstrStart = -1;
+    for (const auto &boundary : _disasmBoundaries) {
+        const qint64 instrStart = boundary.offset;
+        const qint64 instrEnd = instrStart + boundary.size;
+
+        if (instrStart >= selEnd)
+            break;
+        if (instrEnd <= selBegin)
+            continue;
+        if (!isDisasmAt(instrStart))
+            continue;
+
+        const DisasmInstruction *instr = disasmInstructionAtOffset(instrStart);
+        if (!instr || instr->fileOffset == lastInstrStart)
+            continue;
+
+        const QString line = disasmDisplayText(instr);
+        if (!line.isEmpty()) {
+            lines.append(line);
+            lastInstrStart = instr->fileOffset;
+        }
+    }
+
+    return lines.join(QLatin1Char('\n'));
+}
+
 Datas HexEditor::getValue(qint64 offset)
 {
     Datas value{};
@@ -1893,6 +1932,21 @@ bool HexEditor::isDisasmAt(qint64 offset) const
         && _sectionModel->displayModeAtOffset(offset) == SectionDisplay_Disasm;
 }
 
+quint64 HexEditor::computeLayoutFingerprint() const
+{
+    if (!_sectionModel) return 0;
+    const int count = _sectionModel->count();
+    if (count == 0) return 0;
+    quint64 fp = quint64(count);
+    for (int i = 0; i < count; ++i) {
+        const auto &s = _sectionModel->at(i);
+        fp = fp * 131 + quint64(s.startOffset);
+        fp = fp * 131 + quint64(s.endOffset);
+        fp = fp * 131 + quint64(s.displayMode);
+    }
+    return fp;
+}
+
 void HexEditor::rebuildSectionAwareLayout()
 {
     // Global disassembly already owns the entire layout.
@@ -1901,11 +1955,52 @@ void HexEditor::rebuildSectionAwareLayout()
         return;
     }
 
+    // Fast path: if sections + collapse state haven't changed, reuse cached layout.
+    const quint64 fp = computeLayoutFingerprint();
+    if (fp != 0 && fp == _layoutFingerprint && !_lineBreaks.isEmpty()) {
+        readBuffers();
+        viewport()->update();
+        return;
+    }
+
     const QVector<qint64> baseBreaks = _savedLineBreaksValid ? _savedLineBreaks : _lineBreaks;
 
     if (!hasSectionDisasmMode()) {
-        if (_lineBreaks != baseBreaks) {
-            _lineBreaks = baseBreaks;
+        // Even without disasm sections we must apply section-header gaps
+        // and collapse logic to the base breaks.
+        QVector<qint64> breaks = baseBreaks;
+
+        // ── Ensure double breaks at every section start for header rows. ──
+        if (_sectionModel) {
+            QHash<qint64, int> breakFreq;
+            breakFreq.reserve(breaks.size());
+            for (qint64 b : std::as_const(breaks))
+                breakFreq[b]++;
+
+            for (int si = 0; si < _sectionModel->count(); ++si) {
+                const auto &sec = _sectionModel->at(si);
+                if (sec.startOffset == 0) {
+                    // One -1 break = one empty row for the section header.
+                    const int existing = breakFreq.value(-1, 0);
+                    for (int j = existing; j < 1; ++j) {
+                        breaks.append(-1);
+                        breakFreq[-1]++;
+                    }
+                } else {
+                    const qint64 pos = sec.startOffset - 1;
+                    const int existing = breakFreq.value(pos, 0);
+                    for (int j = existing; j < 2; ++j) {
+                        breaks.append(pos);
+                        breakFreq[pos]++;
+                    }
+                }
+            }
+        }
+
+        std::sort(breaks.begin(), breaks.end());
+
+        if (_lineBreaks != breaks) {
+            _lineBreaks = breaks;
             adjust();
             viewport()->update();
             emit lineBreaksChanged();
@@ -1917,6 +2012,7 @@ void HexEditor::rebuildSectionAwareLayout()
             _savedLineBreaks.clear();
             _savedLineBreaksValid = false;
         }
+        _layoutFingerprint = fp;
         return;
     }
 
@@ -2001,6 +2097,34 @@ void HexEditor::rebuildSectionAwareLayout()
             breaks.append(end - 1); // next non-disasm bytes also start on a fresh row
     }
 
+    // ── Ensure double breaks at every section start for header rows. ──
+    // Use a frequency set so we don't do O(n) std::count per section.
+    if (_sectionModel) {
+        QHash<qint64, int> breakFreq;
+        breakFreq.reserve(breaks.size());
+        for (qint64 b : std::as_const(breaks))
+            breakFreq[b]++;
+
+        for (int si = 0; si < _sectionModel->count(); ++si) {
+            const auto &sec = _sectionModel->at(si);
+            if (sec.startOffset == 0) {
+                // One -1 break = one empty row for the section header.
+                const int existing = breakFreq.value(-1, 0);
+                for (int j = existing; j < 1; ++j) {
+                    breaks.append(-1);
+                    breakFreq[-1]++;
+                }
+            } else {
+                const qint64 pos = sec.startOffset - 1;
+                const int existing = breakFreq.value(pos, 0);
+                for (int j = existing; j < 2; ++j) {
+                    breaks.append(pos);
+                    breakFreq[pos]++;
+                }
+            }
+        }
+    }
+
     std::sort(breaks.begin(), breaks.end());
 
     if (_lineBreaks != breaks) {
@@ -2012,6 +2136,7 @@ void HexEditor::rebuildSectionAwareLayout()
         readBuffers();
         viewport()->update();
     }
+    _layoutFingerprint = fp;
 }
 
 int HexEditor::disasmBoundaryIndex(qint64 fileOffset) const
@@ -2071,6 +2196,24 @@ const DisasmInstruction *HexEditor::disasmInstructionAtOffset(qint64 fileOffset)
     return nullptr;
 }
 
+QString HexEditor::disasmDisplayText(const DisasmInstruction *instr) const
+{
+    if (!instr)
+        return QString();
+
+    QString displayOps = instr->operands;
+    if (instr->isBranch && instr->branchTarget >= 0
+        && instr->branchTarget < _chunks->size() && _sectionModel) {
+        const QString label = _sectionModel->sectionNameAtStartOffset(instr->branchTarget);
+        if (!label.isEmpty())
+            displayOps = label;
+    }
+
+    if (displayOps.isEmpty())
+        return instr->mnemonic;
+    return instr->mnemonic + QStringLiteral(" ") + displayOps;
+}
+
 void HexEditor::setShowSections(bool show)
 {
     _showSections = show;
@@ -2091,6 +2234,7 @@ void HexEditor::setSectionModel(SectionListModel *model)
 
     if (_sectionModel) {
         connect(_sectionModel, &SectionListModel::sectionsChanged, this, [this]() {
+            _layoutFingerprint = 0;
             rebuildSectionAwareLayout();
         });
     }
@@ -2424,72 +2568,59 @@ void HexEditor::ensureVisibleTop()
 
 qint64 HexEditor::indexOf(const QByteArray &ba, qint64 from)
 {
-    qint64 pos = _chunks->indexOf(ba, from);
-
+    const qint64 pos = findNextIndex(ba, from);
     if (pos > -1)
-    {
-        qint64 curPos = pos * 2;
-        const qint64 selectionEndPos = curPos + ba.length() * 2 - 1;
+        highlightMatch(pos, ba.length());
+    return pos;
+}
 
-        setCursorPosition(curPos);
-        resetSelection(curPos);
-        setSelection(selectionEndPos);
-        ensureVisible();
+qint64 HexEditor::findNextIndex(const QByteArray &ba, qint64 from, bool relative)
+{
+    if (ba.isEmpty())
+        return -1;
+
+    if (!relative)
+        return _chunks->indexOf(ba, from);
+
+    const QByteArray haystack = _chunks->data(0, -1);
+    const char *buf = haystack.constData();
+    const int searchLen = ba.size();
+    const qint64 maxOffset = haystack.size() - searchLen;
+    if (maxOffset < 0)
+        return -1;
+
+    QByteArray relNeedle;
+    relNeedle.reserve(searchLen);
+    relNeedle.append('\0');
+
+    for (int j = 1; j < searchLen; ++j)
+        relNeedle.append(ba[0] - ba[j]);
+
+    for (qint64 i = qBound<qint64>(0, from, maxOffset); i <= maxOffset; ++i)
+    {
+        int coin = 1;
+
+        for (int j = 1; j < searchLen; ++j)
+        {
+            if ((buf[i] - buf[i + j]) != relNeedle[j])
+                break;
+
+            ++coin;
+        }
+
+        if (coin == searchLen)
+            return i;
     }
 
-    return pos;
+    return -1;
 }
 
 qint64 HexEditor::relativeSearch(const QByteArray &ba, qint64 from)
 {
-    auto buf = data().constData();
-    uint8_t coin;
-    QByteArray relNeedle;
-    auto searchLen = ba.size();
-
-    relNeedle.append('\0');
-
-    for (uint8_t j = 1; j < searchLen; j++)
-    {
-        relNeedle.append(ba[0] - ba[j]);
-    }
-
-    auto maxOffset = data().size() - searchLen;
-
-    for (qint64 i = from; i < maxOffset; i++)
-    {
-        coin = 1;
-
-        for (uint8_t j = 1; j < searchLen; j++)
-        {
-            if ((buf[i] - buf[i + j]) != relNeedle[j])
-            {
-                break;
-            }
-
-            coin++;
-        }
-
-        if (coin == searchLen)
-        {
-            qint64 curPos = i * 2;
-            const qint64 selectionEndPos = curPos + searchLen * 2 - 1;
-
-            setCursorPosition(curPos);
-            resetSelection(curPos);
-            setSelection(selectionEndPos);
-            ensureVisible();
-
-            /*if (!_tb)
-                _tb = new TranslationTable();
-
-            _tb->generateTable(QString::fromLatin1(_chunks->data(i, searchLen), searchLen), ba);*/
-
-            return i;
-        }
-    }
-
-    return -1;
+    const qint64 pos = findNextIndex(ba, from, true);
+    if (pos > -1)
+        highlightMatch(pos, ba.length());
+    return pos;
 }
 
 void HexEditor::jumpTo(qint64 offset, bool relative)
@@ -2538,21 +2669,67 @@ void HexEditor::selectByteRange(qint64 start, qint64 end)
     setSelection(selectionEndPos);
 }
 
+void HexEditor::highlightMatch(qint64 pos, qint64 length)
+{
+    if (pos < 0 || length <= 0)
+        return;
+
+    const qint64 curPos = pos * 2;
+    const qint64 selectionEndPos = curPos + length * 2 - 1;
+
+    setCursorPosition(curPos);
+    resetSelection(curPos);
+    setSelection(selectionEndPos);
+    ensureVisible();
+}
+
 qint64 HexEditor::lastIndexOf(const QByteArray &ba, qint64 from)
 {
-    qint64 pos = _chunks->lastIndexOf(ba, from);
-
+    const qint64 pos = findPreviousIndex(ba, from);
     if (pos > -1)
+        highlightMatch(pos, ba.length());
+    return pos;
+}
+
+qint64 HexEditor::findPreviousIndex(const QByteArray &ba, qint64 from, bool relative)
+{
+    if (ba.isEmpty())
+        return -1;
+
+    if (!relative)
+        return _chunks->lastIndexOf(ba, from);
+
+    const QByteArray haystack = _chunks->data(0, -1);
+    const char *buf = haystack.constData();
+    const int searchLen = ba.size();
+    const qint64 maxOffset = haystack.size() - searchLen;
+    if (maxOffset < 0)
+        return -1;
+
+    QByteArray relNeedle;
+    relNeedle.reserve(searchLen);
+    relNeedle.append('\0');
+
+    for (int j = 1; j < searchLen; ++j)
+        relNeedle.append(ba[0] - ba[j]);
+
+    for (qint64 i = qBound<qint64>(0, from, maxOffset); i >= 0; --i)
     {
-        qint64 curPos = pos * 2;
-        const qint64 selectionEndPos = curPos + ba.length() * 2 - 1;
-        setCursorPosition(curPos);
-        resetSelection(curPos);
-        setSelection(selectionEndPos);
-        ensureVisible();
+        int coin = 1;
+
+        for (int j = 1; j < searchLen; ++j)
+        {
+            if ((buf[i] - buf[i + j]) != relNeedle[j])
+                break;
+
+            ++coin;
+        }
+
+        if (coin == searchLen)
+            return i;
     }
 
-    return pos;
+    return -1;
 }
 
 void HexEditor::redo()
@@ -3274,12 +3451,26 @@ void HexEditor::keyPressEvent(QKeyEvent *event)
     {
         const qint64 selBegin = getSelectionBegin();
         const qint64 selEnd = getSelectionEnd();
+        if (selEnd <= selBegin) return;
         const QByteArray raw = _chunks->data(selBegin, selEnd - selBegin);
+        const qint64 selLast = qMax<qint64>(selBegin, selEnd - 1);
 
-        if (_editAreaIsAscii)
+        const bool copyDisasm = _showDisasm
+            || (_sectionModel && (_sectionModel->displayModeAtOffset(selBegin) == SectionDisplay_Disasm
+                || _sectionModel->displayModeAtOffset(selLast) == SectionDisplay_Disasm));
+
+        if (copyDisasm) {
+            const QString disasmText = selectedDisasmText();
+            if (!disasmText.isEmpty()) {
+                QApplication::clipboard()->setText(disasmText);
+                return;
+            }
             QApplication::clipboard()->setText(decodeTextForCurrentEncoding(raw));
-        else
+        } else if (_editAreaIsAscii) {
+            QApplication::clipboard()->setText(decodeTextForCurrentEncoding(raw));
+        } else {
             QApplication::clipboard()->setText(QString::fromLatin1(raw.toHex(' ')).toUpper());
+        }
     }
 
     // Switch between insert/overwrite mode
@@ -3866,7 +4057,9 @@ void HexEditor::paintEvent(QPaintEvent *event)
                                          - _visualRowStartBytes[row + 1]) > 0;
                     }
                     if (nextRowIsData) {
-                        const QString secName = _sectionModel->sectionNameAtStartOffset(absOfs);
+                        const int secIdx = _sectionModel->sectionIndexAtStartOffset(absOfs);
+                        const QString secName = (secIdx >= 0) ? _sectionModel->at(secIdx).name
+                                                              : _sectionModel->sectionNameAtStartOffset(absOfs);
                         if (!secName.isEmpty()) {
                             const int textX = _pxPosHexX - pxOfsX;
                             const QRect textRect(textX, pxPosY - _pxCharHeight + _pxSelectionSub + 2,
@@ -3881,6 +4074,7 @@ void HexEditor::paintEvent(QPaintEvent *event)
                             painter.setPen(_sectionHeaderFontColor.isValid()
                                                ? _sectionHeaderFontColor
                                                : palette().color(QPalette::Text));
+
                             painter.drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter,
                                              secName + QStringLiteral(":"));
                             painter.setFont(prevFont);
@@ -3898,7 +4092,8 @@ void HexEditor::paintEvent(QPaintEvent *event)
                 : SectionDisplay_Default;
             const bool rowForcesRaw = (rowSectionMode == SectionDisplay_Raw);
             const bool useTbMultiByte = useTbDisplayCache && !rowForcesRaw;
-            const bool rowUsesDisasm = _showDisasm || (rowSectionMode == SectionDisplay_Disasm);
+            const bool rowUsesDisasm = (rowSectionMode == SectionDisplay_Disasm)
+                || (rowSectionMode == SectionDisplay_Default && _showDisasm);
 
             // can be slow here
             for (int colIdx = 0; ((bPosLine + colIdx) < _dataShown.size() && (colIdx < bytesThisRow)); colIdx++)
@@ -3923,7 +4118,7 @@ void HexEditor::paintEvent(QPaintEvent *event)
                     : -1;
                 const bool isPointerByte = pointerStart >= 0;
                 const int actualPtrSize = isPointerByte ? _pointers.getPointerSize(pointerStart) : kPointerByteSize;
-                const bool isPointedByte = (_showPointers && !rowUsesDisasm) && _pointers.hasOffset(posBa);
+                const bool isPointedByte = _showPointers && _pointers.hasOffset(posBa);
                 const bool isSelectedByte = (getSelectionEnd() - getSelectionBegin() > 1)
                                          && (getSelectionBegin() <= posBa) && (getSelectionEnd() > posBa);
                 const bool isHighlightedByte = _highlighting && _markedShown.at((int)(posBa - _bPosFirst));
@@ -4029,6 +4224,20 @@ void HexEditor::paintEvent(QPaintEvent *event)
                             }
                         }
                     }
+                }
+
+                // Pointer arrow for pointed bytes in disasm mode (function entry points)
+                if (_showPointers && rowUsesDisasm && isPointedByte)
+                {
+                    static const QImage ptrIcon(QStringLiteral(":/images/pointer.png"));
+
+                    if (!isSelectedByte && !isHighlightedByte && !isChangedByte)
+                        c = _brushPointed.color();
+
+                    if (!isSelectedByte)
+                        painter.setPen(_penPointed);
+
+                    painter.drawImage(pxPosX - _pxCharWidth - 2, pxPosY - (_pxCharHeight / 2), ptrIcon, 0, 0, 10, 10);
                 }
 
                 // render hex value
@@ -4670,12 +4879,12 @@ void HexEditor::setSelection(qint64 pos)
     emit selectionChanged(_bSelectionBegin, _bSelectionEnd);
 }
 
-qint64 HexEditor::getSelectionBegin()
+qint64 HexEditor::getSelectionBegin() const
 {
     return _bSelectionBegin;
 }
 
-qint64 HexEditor::getSelectionEnd()
+qint64 HexEditor::getSelectionEnd() const
 {
     return _bSelectionEnd;
 }
@@ -4848,8 +5057,11 @@ qint64 HexEditor::totalVisualRows() const
     qint64 segStart = 0;
     for (qint64 brk : _lineBreaks) {
         if (brk >= fileSize) continue;
+        if (brk < 0) {
+            total += 1;
+            continue;
+        }
         if (brk < segStart) {
-            // Duplicate break → empty row
             total += 1;
             continue;
         }
@@ -4874,10 +5086,15 @@ qint64 HexEditor::byteOffsetForVisualRow(qint64 visualRow) const
     qint64 segStart = 0;
     for (qint64 brk : _lineBreaks) {
         if (brk >= fileSize) continue;
-        if (brk < segStart) {
-            // Duplicate break → empty row
+        if (brk < 0) {
             if (rowsSoFar == visualRow)
-                return segStart;  // empty row maps to segStart
+                return 0;
+            rowsSoFar += 1;
+            continue;
+        }
+        if (brk < segStart) {
+            if (rowsSoFar == visualRow)
+                return segStart;
             rowsSoFar += 1;
             continue;
         }
@@ -4891,6 +5108,68 @@ qint64 HexEditor::byteOffsetForVisualRow(qint64 visualRow) const
     return qMin(segStart + (visualRow - rowsSoFar) * _bytesPerLine, fileSize);
 }
 
+QVector<qint64> HexEditor::byteOffsetsForVisualRows(qint64 startRow, int count) const
+{
+    QVector<qint64> result(count);
+    const qint64 fileSize = _chunks->size();
+
+    if (_lineBreaks.isEmpty()) {
+        for (int i = 0; i < count; ++i)
+            result[i] = qMin((startRow + i) * _bytesPerLine, fileSize);
+        return result;
+    }
+
+    int ri = 0; // index into result
+    qint64 rowsSoFar = 0;
+    qint64 segStart = 0;
+    const qint64 endRow = startRow + count;
+
+    for (qint64 brk : _lineBreaks) {
+        if (ri >= count) break;
+        if (brk >= fileSize) continue;
+        if (brk < 0) {
+            if (rowsSoFar >= startRow && rowsSoFar < endRow)
+                result[ri++] = 0;
+            rowsSoFar += 1;
+            continue;
+        }
+        if (brk < segStart) {
+            if (rowsSoFar >= startRow && rowsSoFar < endRow)
+                result[ri++] = segStart;
+            rowsSoFar += 1;
+            continue;
+        }
+        qint64 segSize = brk - segStart + 1;
+        qint64 segRows = (segSize + _bytesPerLine - 1) / _bytesPerLine;
+        // Emit rows that fall within [startRow, endRow) from this segment
+        if (rowsSoFar + segRows > startRow) {
+            qint64 localFirst = qMax<qint64>(0, startRow - rowsSoFar);
+            qint64 localLast = qMin(segRows, endRow - rowsSoFar);
+            for (qint64 lr = localFirst; lr < localLast && ri < count; ++lr) {
+                result[ri++] = segStart + lr * _bytesPerLine;
+            }
+        }
+        rowsSoFar += segRows;
+        segStart = brk + 1;
+    }
+    // Trailing segment after last break
+    if (ri < count && segStart < fileSize) {
+        qint64 segSize = fileSize - segStart;
+        qint64 segRows = (segSize + _bytesPerLine - 1) / _bytesPerLine;
+        if (rowsSoFar + segRows > startRow) {
+            qint64 localFirst = qMax<qint64>(0, startRow - rowsSoFar);
+            qint64 localLast = qMin(segRows, endRow - rowsSoFar);
+            for (qint64 lr = localFirst; lr < localLast && ri < count; ++lr) {
+                result[ri++] = qMin(segStart + lr * _bytesPerLine, fileSize);
+            }
+        }
+    }
+    // Fill any remaining slots with fileSize
+    for (; ri < count; ++ri)
+        result[ri] = fileSize;
+    return result;
+}
+
 qint64 HexEditor::visualRowForByte(qint64 bytePos) const
 {
     const qint64 fileSize = _chunks->size();
@@ -4901,8 +5180,11 @@ qint64 HexEditor::visualRowForByte(qint64 bytePos) const
     qint64 segStart = 0;
     for (qint64 brk : _lineBreaks) {
         if (brk >= fileSize) continue;
+        if (brk < 0) {
+            rowsSoFar += 1;
+            continue;
+        }
         if (brk < segStart) {
-            // Duplicate break → empty row (no bytes)
             rowsSoFar += 1;
             continue;
         }
@@ -4978,15 +5260,9 @@ void HexEditor::adjust()
 
     auto value = verticalScrollBar()->value();
 
-    _bPosFirst = byteOffsetForVisualRow(value);
-
-    // Precompute absolute byte offsets for each visible row
-    _visualRowStartBytes.resize(_rowsShown + 1);
-    {
-        for (int i = 0; i <= _rowsShown; ++i) {
-            _visualRowStartBytes[i] = byteOffsetForVisualRow(value + i);
-        }
-    }
+    // Precompute absolute byte offsets for each visible row in a single pass
+    _visualRowStartBytes = byteOffsetsForVisualRows(value, _rowsShown + 1);
+    _bPosFirst = _visualRowStartBytes.isEmpty() ? 0 : _visualRowStartBytes[0];
 
     _bPosLast = _visualRowStartBytes[_rowsShown] - 1;
     if (_bPosLast >= _chunks->size())

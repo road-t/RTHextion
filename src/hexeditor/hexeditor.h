@@ -329,6 +329,12 @@ public:
      */
     qint64 indexOf(const QByteArray &ba, qint64 from);
 
+    /*! Find the next occurrence of ba without changing selection/cursor.
+     * 
+eturn pos if found, else -1
+     */
+    qint64 findNextIndex(const QByteArray &ba, qint64 from, bool relative = false);
+
     /*! Returns if any changes where done on document
      * \return true when document is modified else false
      */
@@ -348,17 +354,31 @@ public:
      */
     qint64 lastIndexOf(const QByteArray &ba, qint64 from);
 
+    /*! Find the previous occurrence of ba without changing selection/cursor.
+     * 
+eturn pos if found, else -1
+     */
+    qint64 findPreviousIndex(const QByteArray &ba, qint64 from, bool relative = false);
+
     /*! Peform a relative text search useful for finding encodings
      * \param ba Data to find
      * \return pos if found, else -1
      */
     qint64 relativeSearch(const QByteArray &ba, qint64 from);
 
+    /*! Highlight a byte-range match and scroll it into view. */
+    void highlightMatch(qint64 pos, qint64 length);
+
     void jumpTo(qint64 offset, bool relative = false);
 
     /*! Gives back a formatted image of the selected content of HexEditor
     */
     QString selectionToReadableString();
+
+    /*! Return the selected disassembly lines as visible text.
+     *  Empty if the selection does not overlap disassembly rows.
+     */
+    QString selectedDisasmText() const;
 
     /*! Return the selected content of HexEditor as QByteArray
     */
@@ -601,6 +621,7 @@ public:
 
     TranslationTable* getTranslationTable();
     void setTranslationTable(TranslationTable* tb = nullptr);
+    void clearTranslationTableQuiet() { _tb = nullptr; _tbDisplayCacheValid = false; }
     void removeTranslationTable();
 
     QString currentEncoding() const;
@@ -632,8 +653,8 @@ public:
 
     bool hasSelection();
     void resetSelection();                      // set selectionEnd to selectionStart
-    qint64 getSelectionBegin();
-    qint64 getSelectionEnd();
+    qint64 getSelectionBegin() const;
+    qint64 getSelectionEnd() const;
 
     QByteArray getRawSelection();
     Datas getValue(qint64 offset);
@@ -674,10 +695,12 @@ private:
     // Virtual line break helpers
     qint64 totalVisualRows() const;
     qint64 byteOffsetForVisualRow(qint64 visualRow) const;
+    QVector<qint64> byteOffsetsForVisualRows(qint64 startRow, int count) const;
     qint64 visualRowForByte(qint64 bytePos) const;
     qint64 firstByteOfVisualRowContaining(qint64 bytePos) const;
     int    bytesOnVisualRowAt(qint64 byteOffset) const;
     int    visibleRowForByte(qint64 bytePos) const;  // row index in _visualRowStartBytes
+    QString disasmDisplayText(const DisasmInstruction *instr) const;
 
 private slots:
     void adjust();                              // recalc pixel positions
@@ -831,6 +854,7 @@ private:
     QVector<InsnBoundary> _disasmBoundaries; // lightweight instruction boundaries
     QVector<qint64> _savedLineBreaks;               // project/user line breaks saved while derived disasm layout is active
     bool _savedLineBreaksValid = false;             // distinguishes "saved empty layout" from "no saved layout"
+    quint64 _layoutFingerprint = 0;                  // fingerprint of section+collapse state used for last layout
 
     // On-demand disasm cache for visible rows
     mutable QVector<DisasmInstruction> _disasmCache;
@@ -839,6 +863,7 @@ private:
 
     void rebuildDisasmLayout();
     void rebuildSectionAwareLayout(); ///< apply section-specific disasm wraps on top of user line breaks
+    quint64 computeLayoutFingerprint() const;
     void ensureDisasmBoundaries();    ///< populate boundaries only (no line break change)
     bool hasSectionDisasmMode() const;
     bool isDisasmAt(qint64 offset) const;
