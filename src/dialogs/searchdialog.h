@@ -4,6 +4,7 @@
 #include <QDialog>
 #include <QComboBox>
 #include <QCheckBox>
+#include <QLabel>
 #include <QPushButton>
 #include <QtCore>
 #include "hexeditor/hexeditor.h"
@@ -45,6 +46,17 @@ protected:
     void changeEvent(QEvent *event) override;
 
 private:
+    struct SearchResult {
+        qint64 index = -1;
+        int matchNumber = 0;
+        int totalMatches = 0;
+        bool wrapped = false;
+    };
+
+    SearchResult findOccurrence(bool forward, bool allowWrap = true);
+    bool selectionMatchesPattern(const QByteArray &needle, bool relativeMode) const;
+    void updateMatchStatus(const SearchResult &result, bool hasPattern, bool found);
+    void clearMatchStatus();
     QByteArray getContent(int comboIndex, const QString &input, TranslationTable *table);
     qint64 replaceOccurrence(qint64 idx, const QByteArray &replaceBa);
 
@@ -62,6 +74,7 @@ private:
     QComboBox *cbFind;
     QComboBox *cmbFindTable;
     QCheckBox *cbRelative;
+    QLabel *lbMatchStatus;
     QPushButton *pbFind;
     QPushButton *pbFindPrev;
 

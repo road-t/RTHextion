@@ -40,6 +40,9 @@ SearchDialog::SearchDialog(HexEditor *hexEdit, QWidget *parent) :
     cmbFindTable->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
     cbRelative = new QCheckBox(tr("Relative search"), this);
+    lbMatchStatus = new QLabel(tr("No active match"), this);
+    lbMatchStatus->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    lbMatchStatus->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 
     // Row 0: input + find next
     findGrid->addWidget(cbFind, 0, 0, 1, 3);
@@ -50,7 +53,8 @@ SearchDialog::SearchDialog(HexEditor *hexEdit, QWidget *parent) :
     findGrid->addWidget(pbFindPrev, 1, 3);
 
     // Row 2: relative checkbox
-    findGrid->addWidget(cbRelative, 2, 0, 1, 3);
+    findGrid->addWidget(cbRelative, 2, 0, 1, 2);
+    findGrid->addWidget(lbMatchStatus, 2, 2, 1, 2);
 
     findGrid->setColumnStretch(1, 1);
 
@@ -100,6 +104,8 @@ SearchDialog::SearchDialog(HexEditor *hexEdit, QWidget *parent) :
             this, &SearchDialog::onFindTableChanged);
     connect(cmbReplaceTable, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &SearchDialog::onReplaceTableChanged);
+        connect(cbFind->lineEdit(), &QLineEdit::textChanged, this, [this]() { clearMatchStatus(); });
+        connect(cbRelative, &QCheckBox::toggled, this, [this]() { clearMatchStatus(); });
 
     resize(480, 0);
 }
@@ -197,6 +203,7 @@ void SearchDialog::showEvent(QShowEvent *ev)
     };
     m_findTable = tableFromCombo(cmbFindTable);
     m_replaceTable = tableFromCombo(cmbReplaceTable);
+    clearMatchStatus();
 }
 
 void SearchDialog::onFindTableChanged(int /*index*/)
@@ -211,6 +218,7 @@ void SearchDialog::onFindTableChanged(int /*index*/)
         QRegularExpression("[0-9A-Fa-f ]*"), le) : nullptr);
     if (data == -2)
         cbFind->setEditText(QString());
+    clearMatchStatus();
 }
 
 void SearchDialog::onReplaceTableChanged(int /*index*/)
@@ -227,42 +235,121 @@ void SearchDialog::onReplaceTableChanged(int /*index*/)
         cbReplace->setEditText(QString());
 }
 
-qint64 SearchDialog::findNext()
+void SearchDialog::clearMatchStatus()
 {
-    if (!_hexEdit)
-        return -1;
+    lbMatchStatus->setText(tr("No active match"));
+}
 
-    qint64 from = _hexEdit->cursorPosition() / 2;
-    int comboIndex = (cmbFindTable->currentData().toInt() == -2) ? 1 : 0;
-    _findBa = getContent(comboIndex, cbFind->currentText(), m_findTable);
-    qint64 idx = -1;
+bool SearchDialog::selectionMatchesPattern(const QByteArray &needle, bool relativeMode) const
+{
+    if (!_hexEdit || needle.isEmpty())
+        return false;
 
-    if (_findBa.length() > 0)
-    {
-        if (cbRelative->isChecked())
-            idx = _hexEdit->relativeSearch(_findBa, from);
-        else
-            idx = _hexEdit->indexOf(_findBa, from);
+    const qint64 selBegin = _hexEdit->getSelectionBegin();
+    const qint64 selEnd = _hexEdit->getSelectionEnd();
+    const qint64 selLen = selEnd - selBegin;
+    if (selLen != needle.size())
+        return false;
+
+    const QByteArray selection = _hexEdit->dataAt(selBegin, selLen);
+    if (!relativeMode)
+        return selection == needle;
+
+    if (selection.size() != needle.size())
+        return false;
+
+    for (int i = 1; i < needle.size(); ++i) {
+        if ((selection[0] - selection[i]) != (needle[0] - needle[i]))
+            return false;
     }
 
-    return idx;
+    return true;
+}
+
+void SearchDialog::updateMatchStatus(const SearchResult &result, bool hasPattern, bool found)
+{
+    if (!hasPattern) {
+        clearMatchStatus();
+        return;
+    }
+
+    if (!found || result.totalMatches <= 0) {
+        lbMatchStatus->setText(tr("No matches"));
+        return;
+    }
+
+    QString text = tr("Match %1 of %2").arg(result.matchNumber).arg(result.totalMatches);
+    if (result.wrapped)
+        text += tr(" (wrapped)");
+    lbMatchStatus->setText(text);
+}
+
+SearchDialog::SearchResult SearchDialog::findOccurrence(bool forward, bool allowWrap)
+{
+    SearchResult result;
+    if (!_hexEdit)
+        return result;
+
+    int comboIndex = (cmbFindTable->currentData().toInt() == -2) ? 1 : 0;
+    _findBa = getContent(comboIndex, cbFind->currentText(), m_findTable);
+    const bool hasPattern = !cbFind->currentText().isEmpty();
+    if (_findBa.isEmpty()) {
+        updateMatchStatus(result, hasPattern, false);
+        return result;
+    }
+
+    const bool relativeMode = cbRelative->isChecked();
+    const bool selectionMatches = selectionMatchesPattern(_findBa, relativeMode);
+    const qint64 selectionBegin = _hexEdit->getSelectionBegin();
+    const qint64 fileSize = _hexEdit->dataSize();
+    const qint64 lastPossibleStart = qMax<qint64>(0, fileSize - _findBa.size());
+
+    qint64 from = _hexEdit->cursorPosition() / 2;
+    if (selectionMatches)
+        from = forward ? (selectionBegin + 1) : (selectionBegin - 1);
+
+    if (forward) {
+        result.index = _hexEdit->findNextIndex(_findBa, from, relativeMode);
+        if (result.index < 0 && allowWrap) {
+            result.index = _hexEdit->findNextIndex(_findBa, 0, relativeMode);
+            result.wrapped = result.index >= 0;
+        }
+    } else {
+        result.index = _hexEdit->findPreviousIndex(_findBa, from, relativeMode);
+        if (result.index < 0 && allowWrap) {
+            result.index = _hexEdit->findPreviousIndex(_findBa, lastPossibleStart, relativeMode);
+            result.wrapped = result.index >= 0;
+        }
+    }
+
+    if (result.index >= 0) {
+        _hexEdit->highlightMatch(result.index, _findBa.size());
+
+        for (qint64 scanFrom = 0; scanFrom <= lastPossibleStart; ) {
+            const qint64 matchIndex = _hexEdit->findNextIndex(_findBa, scanFrom, relativeMode);
+            if (matchIndex < 0)
+                break;
+
+            ++result.totalMatches;
+            if (matchIndex == result.index && result.matchNumber == 0)
+                result.matchNumber = result.totalMatches;
+
+            scanFrom = matchIndex + 1;
+        }
+    }
+
+    updateMatchStatus(result, hasPattern, result.index >= 0);
+    return result;
+}
+
+qint64 SearchDialog::findNext()
+{
+    return findOccurrence(true).index;
 }
 
 qint64 SearchDialog::findPrevious()
 {
-    if (!_hexEdit)
-        return -1;
-
-    qint64 from = _hexEdit->cursorPosition() / 2;
-    if (from > 0)
-        --from;
-
-    int comboIndex = (cmbFindTable->currentData().toInt() == -2) ? 1 : 0;
-    _findBa = getContent(comboIndex, cbFind->currentText(), m_findTable);
-    if (_findBa.isEmpty())
-        return -1;
-
-    return _hexEdit->lastIndexOf(_findBa, from);
+    return findOccurrence(false).index;
 }
 
 void SearchDialog::on_pbFind_clicked()
@@ -288,19 +375,33 @@ void SearchDialog::on_pbReplace_clicked()
 
 void SearchDialog::on_pbReplaceAll_clicked()
 {
-    int replaceCounter = 0;
-    int idx = 0;
+    if (!_hexEdit)
+        return;
 
-    while (idx >= 0)
-    {
-        idx = findNext();
-        if (idx >= 0)
-        {
-            int replaceComboIndex = (cmbReplaceTable->currentData().toInt() == -2) ? 1 : 0;
-            QByteArray replaceBa = getContent(replaceComboIndex, cbReplace->currentText(), m_replaceTable);
-            replaceOccurrence(idx, replaceBa);
-            replaceCounter += 1;
-        }
+    int findComboIndex = (cmbFindTable->currentData().toInt() == -2) ? 1 : 0;
+    _findBa = getContent(findComboIndex, cbFind->currentText(), m_findTable);
+    if (_findBa.isEmpty()) {
+        updateMatchStatus(SearchResult{}, !cbFind->currentText().isEmpty(), false);
+        return;
+    }
+
+    int replaceComboIndex = (cmbReplaceTable->currentData().toInt() == -2) ? 1 : 0;
+    QByteArray replaceBa = getContent(replaceComboIndex, cbReplace->currentText(), m_replaceTable);
+    const bool relativeMode = cbRelative->isChecked();
+
+    int replaceCounter = 0;
+    qint64 searchFrom = 0;
+
+    while (searchFrom <= qMax<qint64>(0, _hexEdit->dataSize() - _findBa.size())) {
+        const qint64 idx = _hexEdit->findNextIndex(_findBa, searchFrom, relativeMode);
+        if (idx < 0)
+            break;
+
+        _hexEdit->highlightMatch(idx, _findBa.size());
+        replaceOccurrence(idx, replaceBa);
+        ++replaceCounter;
+
+        searchFrom = idx + qMax<qint64>(replaceBa.size(), 1);
     }
 
     if (replaceCounter > 0)
