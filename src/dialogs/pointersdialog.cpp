@@ -183,6 +183,11 @@ void PointersDialog::refreshFromTable()
 void PointersDialog::setHexEdit(HexEditor *he)
 {
     _hexEdit = he;
+    plModel = _hexEdit ? _hexEdit->pointers() : nullptr;
+    
+    if (plModel)
+        plModel->setSectionNames(QStringList() << tr("Offset") << tr("Pointer") << tr("Data"));
+    
     // Force range-combo rebuild on next showEvent by invalidating the cached
     // table pointer (tb may belong to a different tab's TranslationTable).
     tb = nullptr;

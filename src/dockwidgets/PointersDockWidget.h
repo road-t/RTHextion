@@ -32,6 +32,7 @@ public:
     void endSearch();
     /// Refresh the view (e.g. after external model changes).
     void refreshView();
+    void setSuppressResize(bool suppress) { m_suppressResize = suppress; }
 
     void retranslateUi() override;
 
@@ -70,6 +71,7 @@ private:
     QAction            *m_deleteAct  = nullptr;
     QAction            *m_cleanAllAct = nullptr;
     QToolButton        *m_showPointersBtn = nullptr;
+    bool                m_suppressResize = false;
 };
 
 #endif // POINTERSDOCKWIDGET_H

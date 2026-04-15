@@ -146,7 +146,8 @@ void PointersDockWidget::endSearch()
 void PointersDockWidget::refreshView()
 {
     m_view->viewport()->update();
-    if (m_model && m_model->rowCount() > 0)
+    
+    if (!m_suppressResize && m_model && m_model->rowCount() > 0)
         m_view->resizeColumnsToContents();
     updateButtonStates();
 }
