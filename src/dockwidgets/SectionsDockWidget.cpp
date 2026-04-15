@@ -90,8 +90,8 @@ SectionsDockWidget::SectionsDockWidget(QWidget *parent)
 
     // Tree widget
     m_tree = new SectionTree(this);
-    m_tree->setHeaderLabels({tr("Name"), tr("Offset")});
-    m_tree->setColumnCount(2);
+    m_tree->setHeaderLabels({tr("Name"), tr("Offset"), tr("Size")});
+    m_tree->setColumnCount(3);
     m_tree->header()->setStretchLastSection(true);
     m_tree->setContextMenuPolicy(Qt::CustomContextMenu);
     m_tree->setRootIsDecorated(true);
@@ -121,13 +121,6 @@ SectionsDockWidget::SectionsDockWidget(QWidget *parent)
             this, &SectionsDockWidget::onItemChanged);
     connect(m_tree, &QTreeWidget::customContextMenuRequested,
             this, &SectionsDockWidget::onTreeContextMenu);
-}
-
-SectionsDockWidget::~SectionsDockWidget()
-{
-    if (m_model)
-        disconnect(m_model, nullptr, this, nullptr);
-    m_tree = nullptr;
 }
 
 void SectionsDockWidget::setModel(SectionListModel *model)
@@ -197,20 +190,6 @@ void SectionsDockWidget::onItemClicked(QTreeWidgetItem *item, int /*column*/)
         emit jumpToOffset(offset);
 }
 
-void SectionsDockWidget::onItemDoubleClicked(QTreeWidgetItem *item, int /*column*/)
-{
-    if (!item || !m_model)
-        return;
-
-    const int sectionIdx = item->data(0, Qt::UserRole + 1).toInt();
-    if (sectionIdx < 0 || sectionIdx >= m_model->count())
-        return;
-
-    const Section &s = m_model->at(sectionIdx);
-    if (s.endOffset > s.startOffset)
-        emit selectRangeRequested(s.startOffset, s.endOffset);
-}
-
 void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
 {
     QTreeWidgetItem *item = m_tree->itemAt(pos);
@@ -219,15 +198,15 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
 
     const int sectionIdx = item->data(0, Qt::UserRole + 1).toInt();
 
-    // ROM root node: show a minimal context menu with "Detect functions"
+    // ROM root node: show a single parse action.
     if (sectionIdx < 0 || sectionIdx >= m_model->count()) {
         if (sectionIdx != -1)
             return;
         QMenu menu(this);
-        QAction *detectAct = menu.addAction(tr("Detect functions"));
+        QAction *parseAct = menu.addAction(tr("Parse"));
         QAction *chosen = menu.exec(m_tree->viewport()->mapToGlobal(pos));
-        if (chosen == detectAct)
-            emit detectFunctionsRequested();
+        if (chosen == parseAct)
+            emit parseRequested();
         return;
     }
 
@@ -384,7 +363,9 @@ void SectionsDockWidget::rebuildTree()
 
             const QString offsetStr = QStringLiteral("0x%1")
                 .arg(s.startOffset, 0, 16, QLatin1Char('0'));
-            auto *child = new QTreeWidgetItem(parentItem, {s.name, offsetStr});
+            const qint64 sizeBytes = s.endOffset - s.startOffset;
+            const QString sizeStr = QString::number(sizeBytes);
+            auto *child = new QTreeWidgetItem(parentItem, {s.name, offsetStr, sizeStr});
             child->setData(0, Qt::UserRole,     s.startOffset);
             child->setData(0, Qt::UserRole + 1, i);
             child->setIcon(0, colorSwatchIcon(s.color));

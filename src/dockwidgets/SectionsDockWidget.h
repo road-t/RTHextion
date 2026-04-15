@@ -3,6 +3,7 @@
 
 #include "BaseDockWidget.h"
 #include "romdetect.h"
+#include <QPointer>
 #include <QTreeWidget>
 #include <QToolButton>
 
@@ -23,6 +24,9 @@ public:
     void setTableNames(const QStringList &names);
     void refresh();
 
+    /// Suppress or allow rebuildTree() calls (useful during batch operations).
+    void setSuppressRebuild(bool suppress) { m_suppressRebuild = suppress; }
+
     void setShowSectionsChecked(bool checked);
 
     void retranslateUi() override;
@@ -36,7 +40,7 @@ signals:
     // parentIndex == -1: add at ROM root; >= 0: add as child of that section
     void addSectionRequested(int parentIndex);
     void disasmCpuChanged(int sectionIdx, RomType cpu);
-    void detectFunctionsRequested();
+    void parseRequested();
 
 public slots:
     void highlightOffset(qint64 offset);
@@ -47,7 +51,6 @@ protected:
 
 private slots:
     void onItemClicked(QTreeWidgetItem *item, int column);
-    void onItemDoubleClicked(QTreeWidgetItem *item, int column);
     void onTreeContextMenu(const QPoint &pos);
     void onDropped();
     void onItemChanged(QTreeWidgetItem *item, int column);
@@ -57,10 +60,10 @@ private:
     void syncModelFromTree();
     QIcon colorSwatchIcon(const QColor &color) const;
 
-    SectionTree      *m_tree            = nullptr;
+    QPointer<SectionTree> m_tree        = nullptr;
     QToolButton      *m_showSectionsBtn = nullptr;
     QToolButton      *m_addBtn          = nullptr;
-    SectionListModel *m_model           = nullptr;
+    QPointer<SectionListModel> m_model  = nullptr;
     QString           m_romTypeName;
     QStringList       m_tableNames;
     RomType           m_currentRomType = RomType::Unknown;
