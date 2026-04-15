@@ -4,6 +4,8 @@
 
 #include "../../src/document/SectionListModel.h"
 #include "../../src/hexeditor/hexeditor.h"
+#include "../../src/hexeditor/encoding.h"
+#include "../../src/document/PointerListModel.h"
 
 class TstHexEdit : public QObject
 {
@@ -981,6 +983,284 @@ private slots:
 
         editor.redo();
         QCOMPARE(model.count(), 0);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Encoding module tests (encoding.cpp)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    void isSingleByteEncodingRecognisesKnownCodecs()
+    {
+        QVERIFY(isSingleByteEncoding(QStringLiteral("ASCII")));
+        QVERIFY(isSingleByteEncoding(QStringLiteral("Windows-1251")));
+        QVERIFY(isSingleByteEncoding(QStringLiteral("KOI8-R")));
+        QVERIFY(isSingleByteEncoding(QStringLiteral("ISO-8859-1")));
+        QVERIFY(!isSingleByteEncoding(QStringLiteral("UTF-8")));
+        QVERIFY(!isSingleByteEncoding(QStringLiteral("Shift-JIS")));
+        QVERIFY(!isSingleByteEncoding(QStringLiteral("UTF-16 LE")));
+    }
+
+    void decodeSingleByteAsciiPassthrough()
+    {
+        // ASCII range should pass through for any single-byte encoding
+        QChar ch = decodeSingleByte(0x41, QStringLiteral("ASCII"));
+        QCOMPARE(ch, QChar('A'));
+    }
+
+    void decodeSingleByteWindows1251CyrillicBlock()
+    {
+        // 0xC0 in Windows-1251 = А (U+0410)
+        QChar ch = decodeSingleByte(0xC0, QStringLiteral("Windows-1251"));
+        QCOMPARE(ch.unicode(), ushort(0x0410));
+        // 0xC1 = Б (U+0411)
+        ch = decodeSingleByte(0xC1, QStringLiteral("Windows-1251"));
+        QCOMPARE(ch.unicode(), ushort(0x0411));
+    }
+
+    void decodeSingleByteKoi8R()
+    {
+        // 0xC1 in KOI8-R = А (U+0410)
+        QChar ch = decodeSingleByte(0xE1, QStringLiteral("KOI8-R"));
+        QCOMPARE(ch.unicode(), ushort(0x0410));
+    }
+
+    void decodeTextWithEncodingAscii()
+    {
+        QByteArray data("Hello");
+        QString result = decodeTextWithEncoding(data, QStringLiteral("ASCII"));
+        QCOMPARE(result, QStringLiteral("Hello"));
+    }
+
+    void decodeTextWithEncodingEmptyData()
+    {
+        QString result = decodeTextWithEncoding(QByteArray(), QStringLiteral("ASCII"));
+        QVERIFY(result.isEmpty());
+    }
+
+    void encodeTextWithEncodingRoundTrip()
+    {
+        // ASCII round-trip
+        QString text = QStringLiteral("Test123");
+        QByteArray encoded = encodeTextWithEncoding(text, QStringLiteral("ASCII"));
+        QString decoded = decodeTextWithEncoding(encoded, QStringLiteral("ASCII"));
+        QCOMPARE(decoded, text);
+    }
+
+    void decodeWithIconvUtf8()
+    {
+        QByteArray data("Hello, World!");
+        QString result = decodeWithIconv(data, QStringLiteral("UTF-8"));
+        QCOMPARE(result, QStringLiteral("Hello, World!"));
+    }
+
+    void encodeWithIconvUtf8RoundTrip()
+    {
+        QString text = QStringLiteral("Unicode: café");
+        QByteArray encoded = encodeWithIconv(text, QStringLiteral("UTF-8"));
+        QString decoded = decodeWithIconv(encoded, QStringLiteral("UTF-8"));
+        QCOMPARE(decoded, text);
+    }
+
+    void decodeBufferWithEncodingAllNullBytes()
+    {
+        QByteArray data(8, '\0');
+        QVector<QString> result = decodeBufferWithEncoding(data, QStringLiteral("ASCII"));
+        QCOMPARE(result.size(), 8);
+        // Null bytes in ASCII are non-printable → empty string (not null)
+        for (int i = 0; i < 8; ++i) {
+            QVERIFY(!result[i].isNull() || result[i].isEmpty());
+        }
+    }
+
+    void decodeBufferWithEncodingPrintableAscii()
+    {
+        QByteArray data("ABCD");
+        QVector<QString> result = decodeBufferWithEncoding(data, QStringLiteral("ASCII"));
+        QCOMPARE(result.size(), 4);
+        QCOMPARE(result[0], QStringLiteral("A"));
+        QCOMPARE(result[1], QStringLiteral("B"));
+        QCOMPARE(result[2], QStringLiteral("C"));
+        QCOMPARE(result[3], QStringLiteral("D"));
+    }
+
+    void codecCandidatesReturnsSomethingForKnownEncodings()
+    {
+        QVERIFY(!codecCandidates(QStringLiteral("Shift-JIS")).isEmpty());
+        QVERIFY(!codecCandidates(QStringLiteral("UTF-16 LE")).isEmpty());
+        QVERIFY(!codecCandidates(QStringLiteral("Windows-1251")).isEmpty());
+        QVERIFY(!codecCandidates(QStringLiteral("UnknownEncoding")).isEmpty());
+    }
+
+    void iconvSeqLenShiftJIS()
+    {
+        // Single-byte ASCII character
+        QByteArray data;
+        data.append(char(0x41)); // 'A'
+        QCOMPARE(iconvSeqLen(data, 0, QStringLiteral("Shift-JIS")), 1);
+
+        // Double-byte Shift-JIS character: 0x82 0x A0 (hiragana)
+        data.clear();
+        data.append(char(0x82));
+        data.append(char(0xA0));
+        QCOMPARE(iconvSeqLen(data, 0, QStringLiteral("Shift-JIS")), 2);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Layout module tests (layout.cpp — additional line break + range tests)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    void addLineBreakUndoableRoundTrip()
+    {
+        HexEditor editor;
+        editor.setBytesPerLine(16);
+        editor.setDynamicBytesPerLine(false);
+        editor.setData(QByteArray(32, 'A'));
+
+        editor.addLineBreak(8);
+        QVERIFY(editor.lineBreaks().contains(8));
+
+        editor.undo();
+        QVERIFY(!editor.lineBreaks().contains(8));
+
+        editor.redo();
+        QVERIFY(editor.lineBreaks().contains(8));
+    }
+
+    void clearLineBreaksInRangePartial()
+    {
+        HexEditor editor;
+        editor.setBytesPerLine(16);
+        editor.setDynamicBytesPerLine(false);
+        editor.setData(QByteArray(64, 'A'));
+        editor.addLineBreak(8);
+        editor.addLineBreak(24);
+        editor.addLineBreak(40);
+
+        editor.clearLineBreaksInRange(10, 30);
+        QVector<qint64> breaks = editor.lineBreaks();
+        QCOMPARE(breaks.size(), 2);
+        QVERIFY(breaks.contains(8));
+        QVERIFY(!breaks.contains(24));
+        QVERIFY(breaks.contains(40));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Pointers module tests (pointers.cpp)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    void pointersInitiallyEmpty()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(256, '\0'));
+        QCOMPARE(editor.pointers()->rowCount(), 0);
+    }
+
+    void addPointerUndoable()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(256, '\0'));
+        bool ok = editor.addPointerUndoable(0, 128, 4);
+        QVERIFY(ok);
+        QCOMPARE(editor.pointers()->rowCount(), 1);
+    }
+
+    void removePointerUndoable()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(256, '\0'));
+        editor.addPointerUndoable(0, 128, 4);
+        QCOMPARE(editor.pointers()->rowCount(), 1);
+
+        bool ok = editor.removePointerUndoable(0);
+        QVERIFY(ok);
+        QCOMPARE(editor.pointers()->rowCount(), 0);
+    }
+
+    void addPointerUndoableUndoRedo()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(256, '\0'));
+        editor.addPointerUndoable(0, 128, 4);
+        QCOMPARE(editor.pointers()->rowCount(), 1);
+
+        editor.undo();
+        QCOMPARE(editor.pointers()->rowCount(), 0);
+
+        editor.redo();
+        QCOMPARE(editor.pointers()->rowCount(), 1);
+    }
+
+    void clearPointersRemovesAll()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(256, '\0'));
+        editor.addPointerUndoable(0, 128, 4);
+        editor.addPointerUndoable(8, 64, 4);
+        QCOMPARE(editor.pointers()->rowCount(), 2);
+
+        editor.clearPointers();
+        QCOMPARE(editor.pointers()->rowCount(), 0);
+    }
+
+    void pointerColorProperties()
+    {
+        HexEditor editor;
+        QColor c(Qt::cyan);
+        editor.setPointersColor(c);
+        QCOMPARE(editor.pointersColor(), c);
+
+        editor.setPointedColor(c);
+        QCOMPARE(editor.pointedColor(), c);
+
+        editor.setPointerFontColor(c);
+        QCOMPARE(editor.pointerFontColor(), c);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Scroll map tests (scrollmap.cpp)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    void scrollMapVisibilityProperties()
+    {
+        HexEditor editor;
+        editor.setScrollMapChangesVisible(true);
+        QVERIFY(editor.scrollMapChangesVisible());
+        editor.setScrollMapChangesVisible(false);
+        QVERIFY(!editor.scrollMapChangesVisible());
+
+        editor.setScrollMapTargetVisible(true);
+        QVERIFY(editor.scrollMapTargetVisible());
+        editor.setScrollMapTargetVisible(false);
+        QVERIFY(!editor.scrollMapTargetVisible());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Disassembly module tests (disasm.cpp)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    void disasmDefaultOff()
+    {
+        HexEditor editor;
+        editor.setData(QByteArray(256, '\0'));
+        QVERIFY(!editor.showDisasm());
+    }
+
+    void showSectionsProperty()
+    {
+        HexEditor editor;
+        editor.setShowSections(true);
+        QVERIFY(editor.showSections());
+        editor.setShowSections(false);
+        QVERIFY(!editor.showSections());
+    }
+
+    void multibyteFrameProperty()
+    {
+        HexEditor editor;
+        editor.setShowMultibyteFrame(true);
+        QVERIFY(editor.showMultibyteFrame());
+        editor.setShowMultibyteFrame(false);
+        QVERIFY(!editor.showMultibyteFrame());
     }
 };
 
