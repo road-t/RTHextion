@@ -52,6 +52,8 @@ protected:
     }
 };
 
+SectionsDockWidget::~SectionsDockWidget() = default;
+
 SectionsDockWidget::SectionsDockWidget(QWidget *parent)
     : BaseDockWidget(tr("Sections"), parent)
 {
@@ -108,17 +110,19 @@ SectionsDockWidget::SectionsDockWidget(QWidget *parent)
 
     connect(m_showSectionsBtn, &QToolButton::toggled,
             this, &SectionsDockWidget::showSectionsToggled);
+
     // When the add button is clicked, let mainwindow determine the parent by
     // offset — just emit -1 so mainwindow auto-detects via cursor position.
     connect(m_addBtn, &QToolButton::clicked, this, [this]() {
         emit addSectionRequested(-1);
     });
+    
     connect(m_tree, &QTreeWidget::itemClicked,
             this, &SectionsDockWidget::onItemClicked);
-    connect(m_tree, &QTreeWidget::itemDoubleClicked,
-            this, &SectionsDockWidget::onItemDoubleClicked);
-        connect(m_tree, &QTreeWidget::itemChanged,
+    
+    connect(m_tree, &QTreeWidget::itemChanged,
             this, &SectionsDockWidget::onItemChanged);
+    
     connect(m_tree, &QTreeWidget::customContextMenuRequested,
             this, &SectionsDockWidget::onTreeContextMenu);
 }
