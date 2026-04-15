@@ -86,6 +86,8 @@ private slots:
     void showVirtualFormatDialog(qint64 rangeFrom = -1, qint64 rangeTo = -1);
     void removeVirtualFormatting(qint64 rangeFrom = -1, qint64 rangeTo = -1);
     void addSectionFromSelection(int parentIdx = -1);
+    void parseSections();
+    void parseHeaderSections();
     void detectFunctions();
     void selectRangeInEditor(qint64 start, qint64 end, bool focus = true);
     void showPointersDialog();
@@ -144,7 +146,9 @@ public slots:
 
 public:
     void loadFile(const QString &fileName);
+    void loadFile(const QString &fileName, RomType suggestedRomType);  // Restore with preserved ROM type
     void loadFileInNewTab(const QString &fileName);
+    void loadFileInNewTab(const QString &fileName, RomType suggestedRomType);  // Restore with preserved ROM type
     void updateHexEditorSettings();
     void applyShortcutsFromSettings();
     RomType currentRomType() const { return m_detectedRomType; }
@@ -193,6 +197,11 @@ private:
     TranslationTable *tableForViewMode(bool showOriginal) const;
     void applySelectedTable();
     void applyTranslationTableForViewMode();
+    void detectFunctionPointersOnly();
+    int deepestSectionIndexForRange(qint64 selBegin, qint64 selEnd) const;
+    bool canRemoveSelectionFromSection() const;
+    void removeSelectionFromSection();
+    void parseHeaderSectionsImpl(bool pushToUndo);
     bool shouldSwitchTableOnViewModeChange() const;
     void enforceBottomDockEqualWidth();
     void updateStatusBarVisibility();
@@ -409,6 +418,7 @@ private:
     QLabel *lbEncoding = nullptr;
 
     RomType m_detectedRomType = RomType::Unknown;
+    QHash<qint64, QString> m_vectorFunctionNames;
     qint64 m_pointerOffset = defaultPointerOffset(RomType::Unknown);
     int m_pointerSize = 4;
 
