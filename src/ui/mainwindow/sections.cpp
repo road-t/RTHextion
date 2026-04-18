@@ -13,6 +13,7 @@ using namespace MainWindowInternal;
 #include "disassembler.h"
 #include "SectionListModel.h"
 #include "PointerListModel.h"
+#include "AudioDockWidget.h"
 
 namespace
 {
@@ -112,54 +113,102 @@ namespace
         const int scanBytes = static_cast<int>(qMin<qint64>(scanBytes64, INT_MAX));
         const QVector<DisasmInstruction> insns = disasm.disassemble(fileData, funcStart, scanBytes, 8192);
 
-        qint64 endAfterReturnRun = -1;
-        bool insideReturnRun = false;
+        // Find the LAST return instruction before nextFuncStart.
+        // This avoids cutting functions short at early-return branches.
+        qint64 lastRetEnd = -1;
         for (const auto &insn : insns) {
             if (nextFuncStart > funcStart && insn.fileOffset >= nextFuncStart)
                 break;
 
-            if (!insideReturnRun) {
-                if (insn.isReturn) {
-                    insideReturnRun = true;
-                    endAfterReturnRun = insn.fileOffset + insn.size;
-                }
-                continue;
-            }
-
-            if (!insn.isReturn)
-                break;
-
-            endAfterReturnRun = insn.fileOffset + insn.size;
+            if (insn.isReturn)
+                lastRetEnd = insn.fileOffset + insn.size;
         }
 
-        if (endAfterReturnRun > funcStart)
-            return endAfterReturnRun;
+        if (lastRetEnd > funcStart)
+            return lastRetEnd;
         if (nextFuncStart > funcStart)
             return nextFuncStart;
         return qMin(fileSize, funcStart + qint64(2));
     }
-
-    bool endsWithJumpToTarget(const QByteArray &fileData, Disassembler &disasm,
-                              qint64 start, qint64 end, qint64 target)
-    {
-        if (end <= start)
-            return false;
-
-        const int scanBytes = static_cast<int>(qMin<qint64>(end - start, INT_MAX));
-        const QVector<DisasmInstruction> insns = disasm.disassemble(fileData, start, scanBytes, 4096);
-        for (int i = insns.size() - 1; i >= 0; --i) {
-            const DisasmInstruction &insn = insns[i];
-            if (insn.fileOffset + insn.size > end)
-                continue;
-            return insn.mnemonic.compare(QStringLiteral("JMP"), Qt::CaseInsensitive) == 0
-                && insn.branchTarget == target;
-        }
-        return false;
-    }
-
 }
 
-void MainWindow::addSectionFromSelection(int parentIdx)
+// ═══════════════════════════════════════════════════════════════════
+//  Section splitting
+// ═══════════════════════════════════════════════════════════════════
+
+void MainWindow::splitSection(int sectionIndex, const QVector<qint64> &sizes)
+{
+    if (!hexEdit || !m_sectionModel)
+        return;
+    if (sectionIndex < 0 || sectionIndex >= m_sectionModel->count())
+        return;
+    if (sizes.isEmpty())
+        return;
+
+    const qint64 fileSize = hexEdit->dataSize();
+    const Section &orig = m_sectionModel->at(sectionIndex);
+    const qint64 secStart = orig.startOffset;
+    const qint64 secEnd   = m_sectionModel->endOffsetOf(sectionIndex, fileSize);
+    const qint64 secSize  = secEnd - secStart;
+    if (secSize <= 0)
+        return;
+
+    // Build new section offsets from sizes
+    QVector<qint64> partOffsets;
+    qint64 offset = secStart;
+    for (qint64 sz : sizes) {
+        offset += sz;
+        if (offset >= secEnd)
+            break;
+        partOffsets.append(offset);
+    }
+    if (partOffsets.isEmpty())
+        return;
+
+    QUndoStack *stack = hexEdit->undoStack();
+    if (stack)
+        stack->beginMacro(tr("Split section"));
+
+    QVector<Section> allSections = m_sectionModel->sections();
+    QVector<qint64> allBreaks = hexEdit->lineBreaks();
+    auto ensureBreaks = [&](qint64 off) {
+        if (off <= 0) return;
+        const qint64 pos = off - 1;
+        const int existing = static_cast<int>(std::count(allBreaks.begin(), allBreaks.end(), pos));
+        for (int i = existing; i < 2; ++i)
+            allBreaks.append(pos);
+    };
+
+    int partNum = 2;
+    for (qint64 partOff : partOffsets) {
+        Section s;
+        s.name = QStringLiteral("%1 (%2)").arg(orig.name).arg(partNum++);
+        s.startOffset = partOff;
+        s.color = orig.color;
+        s.displayMode = orig.displayMode;
+        s.disasmCpu = orig.disasmCpu;
+        s.groupId = orig.groupId;
+        allSections.append(s);
+        ensureBreaks(partOff);
+    }
+
+    std::sort(allBreaks.begin(), allBreaks.end());
+    m_sectionModel->applySections(allSections, tr("Split section"));
+    hexEdit->setLineBreaks(allBreaks);
+
+    if (stack)
+        stack->endMacro();
+
+    if (m_document)
+        m_document->markDirty();
+    hexEdit->viewport()->update();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  Section addition
+// ═══════════════════════════════════════════════════════════════════
+
+void MainWindow::addSectionFromSelection(int /*parentIdx*/)
 {
     if (!hexEdit || !m_sectionModel)
         return;
@@ -169,62 +218,146 @@ void MainWindow::addSectionFromSelection(int parentIdx)
     if (selEnd - selBegin < 1)
         return;
 
-    // parentIdx >= 0: explicit parent set by context menu "Add subsection"
-    // parentIdx == -1: auto-detect by finding the deepest section that
-    //                  contains the selection start
-    if (parentIdx < 0) {
-        int maxDepth = -1;
-        for (int i = 0; i < m_sectionModel->count(); ++i) {
-            const Section &sec = m_sectionModel->at(i);
-            if (selBegin >= sec.startOffset && selBegin < sec.endOffset) {
-                int d = 0;
-                for (int pi = sec.parentIndex; pi >= 0; pi = m_sectionModel->at(pi).parentIndex)
-                    ++d;
-                if (d > maxDepth) { maxDepth = d; parentIdx = i; }
-            }
-        }
+    const qint64 fileSize = hexEdit->dataSize();
+    const int existingIdx = m_sectionModel->sectionIndexAtOffset(selBegin);
+
+    // Check if selBegin lands exactly on an existing section's startOffset
+    const bool startsAtExisting = (existingIdx >= 0
+        && m_sectionModel->at(existingIdx).startOffset == selBegin);
+
+    // Find the next section after selBegin
+    const qint64 nextSectionStart = (existingIdx >= 0)
+        ? m_sectionModel->endOffsetOf(existingIdx, fileSize)
+        : fileSize;
+
+    // Find which sections are overlapped by the selection
+    // (sections whose startOffset is > selBegin and < selEnd)
+    QVector<int> overlappedIndices;
+    for (int i = 0; i < m_sectionModel->count(); ++i) {
+        const qint64 so = m_sectionModel->at(i).startOffset;
+        if (so > selBegin && so < selEnd)
+            overlappedIndices.append(i);
     }
 
     const int n = m_sectionModel->count() + 1;
-    const QString title = (parentIdx < 0) ? tr("Add section") : tr("Add subsection");
     bool ok = false;
     const QString name = QInputDialog::getText(
-        this, title,
+        this, tr("Add section"),
         tr("Section name:"), QLineEdit::Normal,
         tr("Section %1").arg(n), &ok);
     if (!ok || name.isEmpty())
         return;
 
-    Section s;
-    s.name = name;
-    s.startOffset = selBegin;
-    s.endOffset = selEnd;
-    s.color = SectionListModel::randomPastelColor();
-    s.parentIndex = parentIdx;
-
     QUndoStack *stack = hexEdit->undoStack();
     if (stack)
-        stack->beginMacro((parentIdx < 0) ? tr("Add section") : tr("Add subsection"));
+        stack->beginMacro(tr("Add section"));
 
-    m_sectionModel->addSection(s);
+    QVector<Section> allSections = m_sectionModel->sections();
 
-    // Add up to 2 blank visual rows before and after the section,
-    // but only add line breaks that weren't already there.
-    // Skip each boundary if it touches the start or end of the file.
-    const qint64 fileSize = hexEdit->dataSize();
-    if (selBegin > 0) {
-        const qint64 pos = selBegin - 1;
+    auto ensureBreaks = [&](qint64 offset) {
+        if (offset <= 0) return;
+        const qint64 pos = offset - 1;
         auto lb = hexEdit->lineBreaks();
         int cnt = static_cast<int>(std::count(lb.begin(), lb.end(), pos));
         for (int i = cnt; i < 2; ++i)
             hexEdit->addLineBreak(pos);
-    }
-    if (selEnd < fileSize) {
-        const qint64 pos = selEnd - 1;
-        auto lb = hexEdit->lineBreaks();
-        int cnt = static_cast<int>(std::count(lb.begin(), lb.end(), pos));
-        for (int i = cnt; i < 2; ++i)
-            hexEdit->addLineBreak(pos);
+    };
+
+    if (startsAtExisting && overlappedIndices.isEmpty() && selEnd < nextSectionStart) {
+        // Case 1: Selection starts at an existing section and ends before
+        // the next section.  Create a new section at selEnd, transfer the
+        // old section's name to it, and rename the old section to what the
+        // user just typed.
+        const Section &oldSec = m_sectionModel->at(existingIdx);
+        Section newSec;
+        newSec.name = oldSec.name;                // inherit old name
+        newSec.startOffset = selEnd;
+        newSec.color = oldSec.color;
+        newSec.displayMode = oldSec.displayMode;
+        newSec.groupId = oldSec.groupId;
+
+        // Rename old section to user's name
+        for (auto &s : allSections) {
+            if (s.startOffset == selBegin) {
+                s.name = name;
+                break;
+            }
+        }
+        allSections.append(newSec);
+
+        m_sectionModel->applySections(allSections, tr("Add section"));
+        ensureBreaks(selEnd);
+    } else if (!overlappedIndices.isEmpty()) {
+        // Case 2: Selection overlaps other sections.  Create a new section
+        // at selBegin (or rename the existing one) and move the last
+        // overlapping section's start to selEnd.
+        if (startsAtExisting) {
+            // Rename the existing section at selBegin
+            for (auto &s : allSections) {
+                if (s.startOffset == selBegin) {
+                    s.name = name;
+                    break;
+                }
+            }
+        } else {
+            // Create a new section at selBegin
+            Section newSec;
+            newSec.name = name;
+            newSec.startOffset = selBegin;
+            newSec.color = SectionListModel::randomPastelColor();
+            allSections.append(newSec);
+        }
+
+        // Move the last overlapping section's startOffset to selEnd
+        const int lastOverlapped = overlappedIndices.last();
+        const qint64 oldStart = m_sectionModel->at(lastOverlapped).startOffset;
+        for (auto &s : allSections) {
+            if (s.startOffset == oldStart) {
+                s.startOffset = selEnd;
+                break;
+            }
+        }
+
+        // Remove sections that are fully inside selection (between selBegin and
+        // the last overlapping one, exclusive — those are the ones that got
+        // swallowed by the selection).
+        for (int i = overlappedIndices.size() - 2; i >= 0; --i) {
+            const qint64 rmStart = m_sectionModel->at(overlappedIndices[i]).startOffset;
+            for (int j = allSections.size() - 1; j >= 0; --j) {
+                if (allSections[j].startOffset == rmStart) {
+                    allSections.removeAt(j);
+                    break;
+                }
+            }
+        }
+
+        m_sectionModel->applySections(allSections, tr("Add section"));
+        ensureBreaks(selBegin);
+        ensureBreaks(selEnd);
+    } else {
+        // Default: just add a new section at selBegin
+        Section s;
+        s.name = name;
+        s.startOffset = selBegin;
+        s.color = SectionListModel::randomPastelColor();
+        allSections.append(s);
+
+        // Check for duplicate
+        bool hasDup = false;
+        for (int i = 0; i < allSections.size() - 1; ++i) {
+            if (allSections[i].startOffset == selBegin) { hasDup = true; break; }
+        }
+        if (hasDup) {
+            if (stack)
+                stack->endMacro();
+            QMessageBox::information(this, tr("Add section"),
+                tr("A section already exists at offset 0x%1.")
+                    .arg(selBegin, 0, 16));
+            return;
+        }
+
+        m_sectionModel->applySections(allSections, tr("Add section"));
+        ensureBreaks(selBegin);
     }
 
     if (stack)
@@ -234,6 +367,10 @@ void MainWindow::addSectionFromSelection(int parentIdx)
         m_document->markDirty();
     hexEdit->viewport()->update();
 }
+
+// ═══════════════════════════════════════════════════════════════════
+//  Parsing
+// ═══════════════════════════════════════════════════════════════════
 
 void MainWindow::parseSections()
 {
@@ -249,59 +386,31 @@ void MainWindow::parseSections()
     detectFunctions();
 }
 
-int MainWindow::deepestSectionIndexForRange(qint64 selBegin, qint64 selEnd) const
+int MainWindow::deepestSectionIndexForRange(qint64 selBegin, qint64 /*selEnd*/) const
 {
-    if (!m_sectionModel || selEnd <= selBegin)
+    if (!m_sectionModel)
         return -1;
-
-    int bestIdx = -1;
-    int bestDepth = -1;
-    for (int i = 0; i < m_sectionModel->count(); ++i) {
-        const Section &s = m_sectionModel->at(i);
-        if (selBegin < s.startOffset || selEnd > s.endOffset)
-            continue;
-
-        int depth = 0;
-        for (int pi = s.parentIndex; pi >= 0; pi = m_sectionModel->at(pi).parentIndex)
-            ++depth;
-
-        if (depth > bestDepth) {
-            bestDepth = depth;
-            bestIdx = i;
-        }
-    }
-
-    return bestIdx;
+    return m_sectionModel->sectionIndexAtOffset(selBegin);
 }
 
 bool MainWindow::canRemoveSelectionFromSection() const
 {
+    // In the new model, removing part of a section means adding a new section
+    // at the cut boundary. Always possible if there's a selection inside a section.
     if (!hexEdit || !m_sectionModel)
         return false;
-
     const qint64 selBegin = hexEdit->getSelectionBegin();
     const qint64 selEnd = hexEdit->getSelectionEnd();
     if (selEnd - selBegin < 1)
         return false;
-
-    const int idx = deepestSectionIndexForRange(selBegin, selEnd);
+    const int idx = m_sectionModel->sectionIndexAtOffset(selBegin);
     if (idx < 0)
         return false;
-
-    // Keep operation simple/safe: only for leaf sections.
-    for (int i = 0; i < m_sectionModel->count(); ++i) {
-        if (m_sectionModel->at(i).parentIndex == idx)
-            return false;
-    }
-
     const Section &s = m_sectionModel->at(idx);
-    const qint64 cutStart = qBound(s.startOffset, selBegin, s.endOffset);
-    const qint64 cutEnd = qBound(s.startOffset, selEnd, s.endOffset);
-    if (cutStart >= cutEnd)
-        return false;
-
-    // "Part of section" only: full-section selection is excluded.
-    return !(cutStart <= s.startOffset && cutEnd >= s.endOffset);
+    const qint64 fileSize = hexEdit->dataSize();
+    const qint64 secEnd = m_sectionModel->endOffsetOf(idx, fileSize);
+    // Only if the selection start is strictly inside (not at the section start boundary)
+    return selBegin > s.startOffset && selBegin < secEnd;
 }
 
 void MainWindow::removeSelectionFromSection()
@@ -310,34 +419,16 @@ void MainWindow::removeSelectionFromSection()
         return;
 
     const qint64 selBegin = hexEdit->getSelectionBegin();
-    const qint64 selEnd = hexEdit->getSelectionEnd();
-    const int idx = deepestSectionIndexForRange(selBegin, selEnd);
-    if (idx < 0)
-        return;
 
-    QVector<Section> next = m_sectionModel->sections();
-    Section s = next.at(idx);
+    // In the new model, "removing from section" = creating a new section at selBegin
+    // which effectively splits the existing section at that point.
+    const int n = m_sectionModel->count() + 1;
+    Section newSec;
+    newSec.name = tr("Section %1").arg(n);
+    newSec.startOffset = selBegin;
+    newSec.color = SectionListModel::randomPastelColor();
+    m_sectionModel->addSection(newSec);
 
-    const qint64 cutStart = qBound(s.startOffset, selBegin, s.endOffset);
-    const qint64 cutEnd = qBound(s.startOffset, selEnd, s.endOffset);
-    if (cutStart >= cutEnd)
-        return;
-
-    if (cutStart <= s.startOffset) {
-        next[idx].startOffset = cutEnd;
-    } else if (cutEnd >= s.endOffset) {
-        next[idx].endOffset = cutStart;
-    } else {
-        next[idx].endOffset = cutStart;
-
-        Section tail = s;
-        tail.name = s.name + QStringLiteral("-2");
-        tail.startOffset = cutEnd;
-        tail.endOffset = s.endOffset;
-        next.append(tail);
-    }
-
-    m_sectionModel->applySections(next, tr("Remove from section"));
     if (m_document)
         m_document->markDirty();
     hexEdit->viewport()->update();
@@ -358,7 +449,49 @@ void MainWindow::parseHeaderSectionsImpl(bool pushToUndo)
         return;
 
     QVector<Section> sections;
+    QVector<SectionGroup> groups;
     QVector<QPair<qint64, qint64>> ptrBatch;
+
+    // Helper to add a section (only by startOffset).
+    auto addSection = [&](const QString &name, qint64 start,
+                          int groupId = -1, int dispMode = SectionDisplay_Default) -> int {
+        const qint64 fileSize = hexEdit->dataSize();
+        start = qMin(start, fileSize);
+        if (start < 0) return -1;
+        // Skip duplicate offsets
+        for (const auto &existing : sections) {
+            if (existing.startOffset == start)
+                return -1;
+        }
+        Section s;
+        s.name = name;
+        s.startOffset = start;
+        s.color = SectionListModel::randomPastelColor();
+        s.groupId = groupId;
+        s.displayMode = dispMode;
+        int idx = sections.size();
+        sections.append(s);
+        return idx;
+    };
+
+    auto addGroup = [&](const QString &name) -> int {
+        SectionGroup g;
+        g.name = name;
+        g.color = SectionListModel::randomPastelColor();
+        int idx = groups.size();
+        groups.append(g);
+        return idx;
+    };
+
+    auto ensureBreaksBefore = [this](qint64 offset) {
+        if (offset <= 0)
+            return;
+        const qint64 pos = offset - 1;
+        auto breaks = hexEdit->lineBreaks();
+        const int existing = static_cast<int>(std::count(breaks.begin(), breaks.end(), pos));
+        for (int i = existing; i < 2; ++i)
+            hexEdit->addLineBreakDirect(pos);
+    };
 
     if (rom == RomType::MD || rom == RomType::X32) {
         const QByteArray fileData = hexEdit->dataAt(0, hexEdit->dataSize());
@@ -367,145 +500,54 @@ void MainWindow::parseHeaderSectionsImpl(bool pushToUndo)
             return;
 
         const qint64 headerSize = qMin<qint64>(SectionListModel::romHeaderSize(rom), fileSize);
-        const qint64 stackEnd = qMin<qint64>(4, fileSize);
-        const qint64 entryStart = qMin<qint64>(4, fileSize);
-        const qint64 entryEnd = qMin<qint64>(8, fileSize);
-        const qint64 vectorStart = qMin<qint64>(8, fileSize);
-        const qint64 vectorEnd = qMin<qint64>(0x100, fileSize);
 
-        // ── "Header" parent branch (0x00 – headerSize) ──
-        const int headerParentIdx = sections.size();
-        {
-            Section headerParent;
-            headerParent.name = tr("Header");
-            headerParent.startOffset = 0;
-            headerParent.endOffset = headerSize;
-            headerParent.color = SectionListModel::randomPastelColor();
-            sections.append(headerParent);
-        }
+        // Header group
+        const int headerGrp = addGroup(tr("Header"));
 
-        if (stackEnd > 0) {
-            Section stack;
-            stack.name = tr("Stack pointer");
-            stack.startOffset = 0;
-            stack.endOffset = stackEnd;
-            stack.color = SectionListModel::randomPastelColor();
-            stack.parentIndex = headerParentIdx;
-            stack.displayMode = SectionDisplay_Raw;
-            sections.append(stack);
-        }
+        addSection(tr("Stack pointer"), 0, headerGrp, SectionDisplay_Raw);
+        if (fileSize > 4) addSection(tr("Entry point"), 4, headerGrp, SectionDisplay_Raw);
+        if (fileSize > 8) addSection(tr("Vector table"), 8, headerGrp, SectionDisplay_Raw);
+        if (fileSize > 0x100) addSection(tr("System header"), 0x100, headerGrp, SectionDisplay_Raw);
+        if (fileSize > headerSize) addSection(tr("ROM data"), headerSize);
 
-        if (entryEnd > entryStart) {
-            Section entry;
-            entry.name = tr("Entry point");
-            entry.startOffset = entryStart;
-            entry.endOffset = entryEnd;
-            entry.color = SectionListModel::randomPastelColor();
-            entry.parentIndex = headerParentIdx;
-            entry.displayMode = SectionDisplay_Raw;
-            sections.append(entry);
-        }
+        ensureBreaksBefore(4);
+        ensureBreaksBefore(8);
+        ensureBreaksBefore(0x100);
+        ensureBreaksBefore(headerSize);
 
-        int vectorParentIdx = -1;
-        if (vectorEnd > vectorStart) {
-            Section vectors;
-            vectors.name = tr("Vector table");
-            vectors.startOffset = vectorStart;
-            vectors.endOffset = vectorEnd;
-            vectors.color = SectionListModel::randomPastelColor();
-            vectors.parentIndex = headerParentIdx;
-            vectors.displayMode = SectionDisplay_Raw;
-            vectorParentIdx = sections.size();
-            sections.append(vectors);
-        }
-
-        if (vectorParentIdx >= 0) {
-            for (const auto &vec : kMdVectors) {
-                if (vec.offset < vectorStart || vec.offset + 4 > vectorEnd)
-                    continue;
-
-                Section vectorEntry;
-                vectorEntry.name = tr(vec.name);
-                vectorEntry.startOffset = vec.offset;
-                vectorEntry.endOffset = vec.offset + 4;
-                vectorEntry.color = SectionListModel::randomPastelColor();
-                vectorEntry.parentIndex = vectorParentIdx;
-                vectorEntry.displayMode = SectionDisplay_Raw;
-                sections.append(vectorEntry);
-            }
-        }
-
-        // System header (0x100-0x200): ROM metadata, publisher, version, etc.
-        const qint64 sysHeaderStart = qMin<qint64>(0x100, fileSize);
-        const qint64 sysHeaderEnd = qMin<qint64>(headerSize, fileSize);
-        if (sysHeaderEnd > sysHeaderStart) {
-            Section sysHeader;
-            sysHeader.name = tr("System header");
-            sysHeader.startOffset = sysHeaderStart;
-            sysHeader.endOffset = sysHeaderEnd;
-            sysHeader.color = SectionListModel::randomPastelColor();
-            sysHeader.displayMode = SectionDisplay_Raw;
-            sysHeader.parentIndex = headerParentIdx;
-            sections.append(sysHeader);
-        }
-
-        // ── Collect vector target pointers and names for detectFunctions() ──
+        // Collect vector target pointers
         QHash<qint64, QString> nameByTarget;
-        auto addVectorTarget = [&](qint64 tableOffset, const QString &name) {
-            const qint64 target = static_cast<qint64>(readBe32(fileData, tableOffset));
-            if (target < headerSize || target >= fileSize)
-                return;
-
-            ptrBatch.append({tableOffset, PointerListModel::encodePtrValue(target, 4)});
-
-            if (!nameByTarget.contains(target)) {
-                nameByTarget.insert(target, name);
-            } else if (name == tr("Entry point")) {
-                nameByTarget[target] = name;
-            }
-        };
-
         for (const auto &vec : kMdVectors) {
             if (!vec.codeTarget)
                 continue;
-            addVectorTarget(vec.offset, tr(vec.name));
+            const qint64 target = static_cast<qint64>(readBe32(fileData, vec.offset));
+            if (target < headerSize || target >= fileSize)
+                continue;
+            ptrBatch.append({vec.offset, PointerListModel::encodePtrValue(target, 4)});
+            if (!nameByTarget.contains(target))
+                nameByTarget.insert(target, tr(vec.name));
+            else if (QString::fromLatin1(vec.name) == QLatin1String("Entry point"))
+                nameByTarget[target] = tr(vec.name);
         }
-
-        // Store vector names so detectFunctions() can label known entry points.
         m_vectorFunctionNames = nameByTarget;
 
         if (!sections.isEmpty()) {
             if (pushToUndo)
-                m_sectionModel->applySections(sections, tr("Parse header"));
+                m_sectionModel->applySections(sections, groups, tr("Parse header"));
             else
-                m_sectionModel->setSections(sections);
+                m_sectionModel->setSectionsAndGroups(sections, groups);
         }
 
         if (!ptrBatch.isEmpty()) {
             hexEdit->pointers()->addPointersBatch(ptrBatch);
             showPointersAct->setEnabled(!hexEdit->pointers()->empty());
         }
-
-        auto ensureBreaksBefore = [this](qint64 offset) {
-            if (offset <= 0)
-                return;
-            const qint64 pos = offset - 1;
-            auto breaks = hexEdit->lineBreaks();
-            const int existing = static_cast<int>(std::count(breaks.begin(), breaks.end(), pos));
-            for (int i = existing; i < 2; ++i)
-                hexEdit->addLineBreakDirect(pos);
-        };
-
-        ensureBreaksBefore(entryStart);
-        ensureBreaksBefore(vectorStart);
-        ensureBreaksBefore(sysHeaderStart);
-        ensureBreaksBefore(headerSize);
     } else {
         const qint64 hdrSize = SectionListModel::romHeaderSize(rom);
         if (hdrSize <= 0)
             goto finalize;
 
-        // Skip header creation if already parsed (preserve user sections).
+        // Skip header creation if already parsed
         for (int i = 0; i < m_sectionModel->count(); ++i) {
             if (m_sectionModel->at(i).name == tr("Header")
                 && m_sectionModel->at(i).startOffset == 0)
@@ -519,47 +561,18 @@ void MainWindow::parseHeaderSectionsImpl(bool pushToUndo)
                 goto finalize;
 
             const qint64 headerSize = qMin<qint64>(hdrSize, fileSize);
+            const int headerGrp = addGroup(tr("Header"));
 
-            auto addSection = [&](const QString &name, qint64 start, qint64 end,
-                                  int parent = -1, int dispMode = SectionDisplay_Default) {
-                start = qMin(start, fileSize);
-                end = qMin(end, fileSize);
-                if (end <= start)
-                    return -1;
-                Section s;
-                s.name = name;
-                s.startOffset = start;
-                s.endOffset = end;
-                s.color = SectionListModel::randomPastelColor();
-                s.parentIndex = parent;
-                s.displayMode = dispMode;
-                int idx = sections.size();
-                sections.append(s);
-                return idx;
-            };
-
-            auto ensureBreaksBefore = [this](qint64 offset) {
-                if (offset <= 0)
-                    return;
-                const qint64 pos = offset - 1;
-                auto breaks = hexEdit->lineBreaks();
-                const int existing = static_cast<int>(std::count(breaks.begin(), breaks.end(), pos));
-                for (int i = existing; i < 2; ++i)
-                    hexEdit->addLineBreakDirect(pos);
-            };
-
-            // ── NES (iNES / NES 2.0) ─────────────────────────────────
             if (rom == RomType::NES) {
-                const int hp = addSection(tr("Header"), 0, headerSize);
-                addSection(tr("Magic"), 0x00, 0x04, hp, SectionDisplay_Raw);
-                addSection(tr("PRG/CHR size"), 0x04, 0x06, hp, SectionDisplay_Raw);
-                addSection(tr("Flags"), 0x06, 0x0B, hp, SectionDisplay_Raw);
-                addSection(tr("Padding"), 0x0B, headerSize, hp, SectionDisplay_Raw);
+                addSection(tr("Magic"), 0x00, headerGrp, SectionDisplay_Raw);
+                if (fileSize > 4)  addSection(tr("PRG/CHR size"), 0x04, headerGrp, SectionDisplay_Raw);
+                if (fileSize > 6)  addSection(tr("Flags"), 0x06, headerGrp, SectionDisplay_Raw);
+                if (fileSize > 0xB) addSection(tr("Padding"), 0x0B, headerGrp, SectionDisplay_Raw);
+
                 ensureBreaksBefore(0x04);
                 ensureBreaksBefore(0x06);
                 ensureBreaksBefore(headerSize);
 
-                // ── NES PRG-ROM / CHR-ROM split ──
                 const int prgSize16k = (headerSize <= 4 || fileSize <= 4)
                     ? 0 : static_cast<unsigned char>(fileData.at(4));
                 const int chrSize8k  = (headerSize <= 5 || fileSize <= 5)
@@ -567,36 +580,17 @@ void MainWindow::parseHeaderSectionsImpl(bool pushToUndo)
                 const qint64 prgStart = headerSize;
                 const qint64 prgEnd   = qMin<qint64>(prgStart + prgSize16k * 0x4000, fileSize);
                 const qint64 chrStart = prgEnd;
-                const qint64 chrEnd   = qMin<qint64>(chrStart + chrSize8k * 0x2000, fileSize);
 
                 if (prgEnd > prgStart) {
-                    addSection(tr("PRG-ROM"), prgStart, prgEnd);
+                    addSection(tr("PRG-ROM"), prgStart);
                     ensureBreaksBefore(prgStart);
                 }
-                if (chrEnd > chrStart) {
-                    addSection(tr("CHR-ROM"), chrStart, chrEnd, -1, SectionDisplay_Raw);
+                if (chrStart < fileSize && chrSize8k > 0) {
+                    addSection(tr("CHR-ROM"), chrStart, -1, SectionDisplay_Raw);
                     ensureBreaksBefore(chrStart);
                 }
-            }
 
-            // ── Game Boy / Game Boy Color ─────────────────────────────
-            else if (rom == RomType::GB || rom == RomType::GBC) {
-                const int hp = addSection(tr("Header"), 0, headerSize);
-                addSection(tr("RST / Interrupt vectors"), 0x00, 0x100, hp, SectionDisplay_Raw);
-                addSection(tr("Entry point"), 0x100, 0x104, hp, SectionDisplay_Raw);
-                addSection(tr("Nintendo logo"), 0x104, 0x134, hp, SectionDisplay_Raw);
-                addSection(tr("Title"), 0x134, 0x144, hp, SectionDisplay_Raw);
-                addSection(tr("Cartridge info"), 0x144, headerSize, hp, SectionDisplay_Raw);
-                ensureBreaksBefore(0x100);
-                ensureBreaksBefore(0x104);
-                ensureBreaksBefore(0x134);
-                ensureBreaksBefore(0x144);
-                ensureBreaksBefore(headerSize);
-
-                // Store entry point target for future disassembly
                 if (fileSize >= 0x104) {
-                    // GB entry point at 0x100 is typically: NOP + JP nn
-                    // The jump target is at bytes 0x101..0x102 (little-endian 16-bit)
                     const quint16 jpTarget = static_cast<quint16>(
                         static_cast<unsigned char>(fileData.at(0x102)) << 8
                         | static_cast<unsigned char>(fileData.at(0x101)));
@@ -606,61 +600,77 @@ void MainWindow::parseHeaderSectionsImpl(bool pushToUndo)
                         m_vectorFunctionNames = nameByTarget;
                     }
                 }
-            }
+            } else if (rom == RomType::GB || rom == RomType::GBC) {
+                addSection(tr("RST / Interrupt vectors"), 0x00, headerGrp, SectionDisplay_Raw);
+                if (fileSize > 0x100) addSection(tr("Entry point"), 0x100, headerGrp, SectionDisplay_Raw);
+                if (fileSize > 0x104) addSection(tr("Nintendo logo"), 0x104, headerGrp, SectionDisplay_Raw);
+                if (fileSize > 0x134) addSection(tr("Title"), 0x134, headerGrp, SectionDisplay_Raw);
+                if (fileSize > 0x144) addSection(tr("Cartridge info"), 0x144, headerGrp, SectionDisplay_Raw);
+                if (fileSize > headerSize) addSection(tr("ROM data"), headerSize);
 
-            // ── Game Boy Advance ──────────────────────────────────────
-            else if (rom == RomType::GBA) {
-                const int hp = addSection(tr("Header"), 0, headerSize);
-                addSection(tr("Entry point"), 0x00, 0x04, hp, SectionDisplay_Raw);
-                addSection(tr("Nintendo logo"), 0x04, 0xA0, hp, SectionDisplay_Raw);
-                addSection(tr("Game title"), 0xA0, 0xAC, hp, SectionDisplay_Raw);
-                addSection(tr("Game code"), 0xAC, 0xB0, hp, SectionDisplay_Raw);
-                addSection(tr("System info"), 0xB0, headerSize, hp, SectionDisplay_Raw);
+                ensureBreaksBefore(0x100);
+                ensureBreaksBefore(0x104);
+                ensureBreaksBefore(0x134);
+                ensureBreaksBefore(0x144);
+                ensureBreaksBefore(headerSize);
+
+                if (fileSize >= 0x104) {
+                    const quint16 jpTarget = static_cast<quint16>(
+                        static_cast<unsigned char>(fileData.at(0x102)) << 8
+                        | static_cast<unsigned char>(fileData.at(0x101)));
+                    if (jpTarget >= headerSize && jpTarget < fileSize) {
+                        QHash<qint64, QString> nameByTarget;
+                        nameByTarget.insert(jpTarget, tr("Entry point"));
+                        m_vectorFunctionNames = nameByTarget;
+                    }
+                }
+            } else if (rom == RomType::GBA) {
+                addSection(tr("Entry point"), 0x00, headerGrp, SectionDisplay_Raw);
+                if (fileSize > 0x04) addSection(tr("Nintendo logo"), 0x04, headerGrp, SectionDisplay_Raw);
+                if (fileSize > 0xA0) addSection(tr("Game title"), 0xA0, headerGrp, SectionDisplay_Raw);
+                if (fileSize > 0xAC) addSection(tr("Game code"), 0xAC, headerGrp, SectionDisplay_Raw);
+                if (fileSize > 0xB0) addSection(tr("System info"), 0xB0, headerGrp, SectionDisplay_Raw);
+                if (fileSize > headerSize) addSection(tr("ROM data"), headerSize);
+
                 ensureBreaksBefore(0x04);
                 ensureBreaksBefore(0xA0);
                 ensureBreaksBefore(0xB0);
                 ensureBreaksBefore(headerSize);
-            }
+            } else if (rom == RomType::SNES_SMC || rom == RomType::SNES_HIROM_SMC) {
+                addSection(tr("ROM size"), 0x00, headerGrp, SectionDisplay_Raw);
+                if (fileSize > 2) addSection(tr("Flags"), 0x02, headerGrp, SectionDisplay_Raw);
+                if (fileSize > 3) addSection(tr("Reserved"), 0x03, headerGrp, SectionDisplay_Raw);
+                if (fileSize > headerSize) addSection(tr("ROM data"), headerSize);
 
-            // ── SNES with copier header ───────────────────────────────
-            else if (rom == RomType::SNES_SMC || rom == RomType::SNES_HIROM_SMC) {
-                const int hp = addSection(tr("Header"), 0, headerSize);
-                addSection(tr("ROM size"), 0x00, 0x02, hp, SectionDisplay_Raw);
-                addSection(tr("Flags"), 0x02, 0x03, hp, SectionDisplay_Raw);
-                addSection(tr("Reserved"), 0x03, headerSize, hp, SectionDisplay_Raw);
                 ensureBreaksBefore(0x03);
                 ensureBreaksBefore(headerSize);
-            }
+            } else if (rom == RomType::N64 || rom == RomType::N64_LE || rom == RomType::N64_V64) {
+                addSection(tr("PI config"), 0x00, headerGrp, SectionDisplay_Raw);
+                if (fileSize > 4)  addSection(tr("Clock rate"), 0x04, headerGrp, SectionDisplay_Raw);
+                if (fileSize > 8)  addSection(tr("Entry point"), 0x08, headerGrp, SectionDisplay_Raw);
+                if (fileSize > 0x0C) addSection(tr("Release"), 0x0C, headerGrp, SectionDisplay_Raw);
+                if (fileSize > 0x10) addSection(tr("CRC"), 0x10, headerGrp, SectionDisplay_Raw);
+                if (fileSize > 0x18) addSection(tr("Reserved"), 0x18, headerGrp, SectionDisplay_Raw);
+                if (fileSize > 0x20) addSection(tr("Name"), 0x20, headerGrp, SectionDisplay_Raw);
+                if (fileSize > 0x34) addSection(tr("Cartridge info"), 0x34, headerGrp, SectionDisplay_Raw);
+                if (fileSize > headerSize) addSection(tr("ROM data"), headerSize);
 
-            // ── Nintendo 64 ──────────────────────────────────────────
-            else if (rom == RomType::N64 || rom == RomType::N64_LE || rom == RomType::N64_V64) {
-                const int hp = addSection(tr("Header"), 0, headerSize);
-                addSection(tr("PI config"), 0x00, 0x04, hp, SectionDisplay_Raw);
-                addSection(tr("Clock rate"), 0x04, 0x08, hp, SectionDisplay_Raw);
-                addSection(tr("Entry point"), 0x08, 0x0C, hp, SectionDisplay_Raw);
-                addSection(tr("Release"), 0x0C, 0x10, hp, SectionDisplay_Raw);
-                addSection(tr("CRC"), 0x10, 0x18, hp, SectionDisplay_Raw);
-                addSection(tr("Reserved"), 0x18, 0x20, hp, SectionDisplay_Raw);
-                addSection(tr("Name"), 0x20, 0x34, hp, SectionDisplay_Raw);
-                addSection(tr("Cartridge info"), 0x34, headerSize, hp, SectionDisplay_Raw);
                 ensureBreaksBefore(0x08);
                 ensureBreaksBefore(0x18);
                 ensureBreaksBefore(0x20);
                 ensureBreaksBefore(0x34);
                 ensureBreaksBefore(headerSize);
-            }
-
-            // ── Fallback: single "Header" section ─────────────────────
-            else {
-                addSection(tr("Header"), 0, headerSize, -1, SectionDisplay_Raw);
+            } else {
+                addSection(tr("Header"), 0, headerGrp, SectionDisplay_Raw);
+                if (fileSize > hdrSize) addSection(tr("ROM data"), hdrSize);
                 ensureBreaksBefore(headerSize);
             }
 
             if (!sections.isEmpty()) {
                 if (pushToUndo)
-                    m_sectionModel->applySections(sections, tr("Parse header"));
+                    m_sectionModel->applySections(sections, groups, tr("Parse header"));
                 else
-                    m_sectionModel->setSections(sections);
+                    m_sectionModel->setSectionsAndGroups(sections, groups);
             }
         }
     }
@@ -669,11 +679,18 @@ finalize:
     if (m_sectionsDock) {
         m_sectionsDock->setRomTypeName(QString::fromLatin1(romTypeName(rom)));
         m_sectionsDock->setCurrentRomType(rom);
+        m_sectionsDock->setFileSize(hexEdit->dataSize());
     }
+    if (m_audioDock)
+        m_audioDock->setRomType(rom);
 
     if (pushToUndo && m_document)
         m_document->markDirty();
 }
+
+// ═══════════════════════════════════════════════════════════════════
+//  Function detection
+// ═══════════════════════════════════════════════════════════════════
 
 void MainWindow::detectFunctions()
 {
@@ -697,12 +714,10 @@ void MainWindow::detectFunctions()
     if (codeLen <= 0)
         return;
 
-    // Read the ROM data
     QByteArray romData = hexEdit->dataAt(0, fileSize);
     if (romData.size() < fileSize)
         return;
 
-    // Disassemble and detect functions
     Disassembler disasm;
     if (!disasm.setRomType(romType)) {
         QMessageBox::warning(this, tr("Detect functions"),
@@ -710,7 +725,6 @@ void MainWindow::detectFunctions()
         return;
     }
 
-    // Progress dialog
     QProgressDialog progress(tr("Detecting functions..."), tr("Cancel"), 0, 100, this);
     progress.setWindowModality(Qt::WindowModal);
     progress.setMinimumDuration(0);
@@ -718,12 +732,10 @@ void MainWindow::detectFunctions()
     bool cancelled = false;
 
     QVector<CallPointer> callPointers;
-
     QVector<DetectedFunction> functions = disasm.scanFunctions(
         romData, codeStart, static_cast<int>(codeLen),
         [&](int percent) {
             if (cancelled) return;
-            // Reserve 0-80% for scanning; 80-100% for section building.
             progress.setValue(percent * 80 / 100);
             QApplication::processEvents();
             if (progress.wasCanceled())
@@ -731,37 +743,22 @@ void MainWindow::detectFunctions()
         },
         &callPointers);
 
-    if (cancelled) {
-        progress.close();
-        return;
-    }
+    if (cancelled) { progress.close(); return; }
 
-    // For MD/X32 ROMs, always inject the entry point function from the
-    // 32-bit BE address at offset 0x04 in the ROM header.
+    // Inject entry point for MD/X32
     if (romType == RomType::MD || romType == RomType::X32) {
         const qint64 entryTarget = static_cast<qint64>(readBe32(romData, 0x04));
         if (entryTarget >= codeStart && entryTarget < fileSize) {
-            // Check if scanFunctions already found a function at this offset.
             bool alreadyFound = false;
-            for (const auto &f : functions) {
-                if (f.startOffset == entryTarget) {
-                    alreadyFound = true;
-                    break;
-                }
-            }
+            for (const auto &f : functions)
+                if (f.startOffset == entryTarget) { alreadyFound = true; break; }
             if (!alreadyFound) {
-                // Sort first so the next-start search is correct.
                 std::sort(functions.begin(), functions.end(),
                           [](const DetectedFunction &a, const DetectedFunction &b) {
-                              return a.startOffset < b.startOffset;
-                          });
+                              return a.startOffset < b.startOffset; });
                 qint64 nextStart = fileSize;
-                for (const auto &f : functions) {
-                    if (f.startOffset > entryTarget) {
-                        nextStart = f.startOffset;
-                        break;
-                    }
-                }
+                for (const auto &f : functions)
+                    if (f.startOffset > entryTarget) { nextStart = f.startOffset; break; }
                 const qint64 funcEnd = findFunctionEndByReturnRun(romData, disasm, entryTarget, nextStart);
                 DetectedFunction df;
                 df.startOffset = entryTarget;
@@ -769,17 +766,15 @@ void MainWindow::detectFunctions()
                 df.cpuAddress  = static_cast<quint64>(entryTarget);
                 functions.append(df);
             }
-            // Ensure it's always named "Entry point" in the lookup table.
             m_vectorFunctionNames[entryTarget] = tr("Entry point");
         }
     }
 
-    // Inject remaining vector-table targets that scanFunctions may have missed.
+    // Inject vector targets
     {
         std::sort(functions.begin(), functions.end(),
                   [](const DetectedFunction &a, const DetectedFunction &b) {
-                      return a.startOffset < b.startOffset;
-                  });
+                      return a.startOffset < b.startOffset; });
 
         QSet<qint64> existingStarts;
         for (const auto &f : functions)
@@ -788,19 +783,12 @@ void MainWindow::detectFunctions()
         for (auto it = m_vectorFunctionNames.constBegin();
              it != m_vectorFunctionNames.constEnd(); ++it) {
             const qint64 addr = it.key();
-            if (addr < codeStart || addr >= fileSize)
-                continue;
-            if (existingStarts.contains(addr))
+            if (addr < codeStart || addr >= fileSize || existingStarts.contains(addr))
                 continue;
             qint64 nextStart = fileSize;
-            for (const auto &f : functions) {
-                if (f.startOffset > addr) {
-                    nextStart = f.startOffset;
-                    break;
-                }
-            }
+            for (const auto &f : functions)
+                if (f.startOffset > addr) { nextStart = f.startOffset; break; }
             const qint64 funcEnd = findFunctionEndByReturnRun(romData, disasm, addr, nextStart);
-
             DetectedFunction df;
             df.startOffset = addr;
             df.endOffset   = qBound(addr + 1, funcEnd, qMax(addr + 1, nextStart));
@@ -810,14 +798,12 @@ void MainWindow::detectFunctions()
 
         std::sort(functions.begin(), functions.end(),
                   [](const DetectedFunction &a, const DetectedFunction &b) {
-                      return a.startOffset < b.startOffset;
-                  });
+                      return a.startOffset < b.startOffset; });
     }
 
     if (functions.isEmpty()) {
         progress.close();
-        QMessageBox::information(this, tr("Detect functions"),
-                                 tr("No functions detected."));
+        QMessageBox::information(this, tr("Detect functions"), tr("No functions detected."));
         return;
     }
 
@@ -825,79 +811,38 @@ void MainWindow::detectFunctions()
     progress.setValue(82);
     QApplication::processEvents();
 
-    // ── Build all sections and line breaks in bulk, then apply once ──
-
-    // Remove old auto-detected Code parent + its children so re-parse
-    // doesn't duplicate sections.  Non-disasm user sections are preserved.
+    // Start from existing sections; remove old Code/Data sections from previous parse
     QVector<Section> allSections;
+    QVector<SectionGroup> allGroups = m_sectionModel->groups();
     {
         const auto &existing = m_sectionModel->sections();
-        int oldCodeIdx = -1;
-        for (int i = 0; i < existing.size(); ++i) {
-            if (existing[i].parentIndex < 0
-                && existing[i].displayMode == SectionDisplay_Disasm
-                && existing[i].startOffset == codeStart) {
-                oldCodeIdx = i;
-                break;
-            }
-        }
-        QSet<int> toRemove;
-        if (oldCodeIdx >= 0) {
-            toRemove.insert(oldCodeIdx);
-            bool changed = true;
-            while (changed) {
-                changed = false;
-                for (int i = 0; i < existing.size(); ++i) {
-                    if (toRemove.contains(i)) continue;
-                    if (existing[i].parentIndex >= 0 && toRemove.contains(existing[i].parentIndex)) {
-                        toRemove.insert(i);
-                        changed = true;
-                    }
-                }
-            }
-        }
-        QHash<int, int> remap;
-        int newIdx = 0;
-        for (int i = 0; i < existing.size(); ++i) {
-            if (!toRemove.contains(i))
-                remap[i] = newIdx++;
-        }
-        for (int i = 0; i < existing.size(); ++i) {
-            if (toRemove.contains(i)) continue;
-            Section s = existing[i];
-            if (s.parentIndex >= 0)
-                s.parentIndex = remap.value(s.parentIndex, -1);
+        // Keep only non-disasm, non "Data-*" sections from within code area
+        for (const auto &s : existing) {
+            if (s.startOffset >= codeStart
+                && (s.displayMode == SectionDisplay_Disasm
+                    || s.name.startsWith(QLatin1String("Data"))))
+                continue;
             allSections.append(s);
         }
     }
 
-    const int codeParentIdx = allSections.size();
-
-    Section codeSection;
-    codeSection.name        = tr("Code");
-    codeSection.startOffset = codeStart;
-    codeSection.endOffset   = fileSize;
-    codeSection.color       = SectionListModel::randomPastelColor();
-    codeSection.parentIndex = -1;
-    codeSection.displayMode = SectionDisplay_Disasm;
-    codeSection.disasmCpu   = RomType::Unknown;
-    allSections.append(codeSection);
-
-    const int dataParentIdx = allSections.size();
-
-    Section dataRootSection;
-    dataRootSection.name        = tr("Data");
-    dataRootSection.startOffset = codeStart;
-    dataRootSection.endOffset   = fileSize;
-    dataRootSection.color       = SectionListModel::randomPastelColor();
-    dataRootSection.parentIndex = -1;
-    dataRootSection.displayMode = SectionDisplay_Raw;
-    dataRootSection.disasmCpu   = RomType::Unknown;
-    allSections.append(dataRootSection);
+    // Create Code and Data groups
+    int codeGrp = -1, dataGrp = -1;
+    // Check if these groups already exist
+    for (int gi = 0; gi < allGroups.size(); ++gi) {
+        if (allGroups[gi].name == tr("Code")) codeGrp = gi;
+        if (allGroups[gi].name == tr("Data")) dataGrp = gi;
+    }
+    if (codeGrp < 0) {
+        SectionGroup g; g.name = tr("Code"); g.color = SectionListModel::randomPastelColor();
+        codeGrp = allGroups.size(); allGroups.append(g);
+    }
+    if (dataGrp < 0) {
+        SectionGroup g; g.name = tr("Data"); g.color = SectionListModel::randomPastelColor();
+        dataGrp = allGroups.size(); allGroups.append(g);
+    }
 
     QVector<qint64> allBreaks = hexEdit->lineBreaks();
-
-    // Helper: ensure 2 breaks at (offset - 1) so there is an empty header row.
     auto ensureBreaks = [&](qint64 offset) {
         if (offset <= 0) return;
         const qint64 pos = offset - 1;
@@ -906,80 +851,75 @@ void MainWindow::detectFunctions()
             allBreaks.append(pos);
     };
 
-    // Break before the Code section.
     ensureBreaks(codeStart);
 
-    // Build function sections and data gaps.
+    // Collect used offsets
+    QSet<qint64> usedOffsets;
+    for (const auto &s : allSections)
+        usedOffsets.insert(s.startOffset);
+
+    // Build function sections and data gap sections
     int dataSectionCounter = 0;
-    qint64 prevEnd = codeStart; // tracks the end of previous section for gap detection
+    qint64 prevEnd = codeStart;
 
     for (int fi = 0; fi < functions.size(); ++fi) {
         const DetectedFunction &df = functions[fi];
 
-        // Data gap BEFORE this function
-        if (df.startOffset > prevEnd) {
+        // Data gap
+        if (df.startOffset > prevEnd && !usedOffsets.contains(prevEnd)) {
             ++dataSectionCounter;
             Section dataSec;
-            dataSec.name        = (dataSectionCounter == 1)
-                                    ? tr("Data")
-                                    : tr("Data-%1").arg(dataSectionCounter);
+            dataSec.name = (dataSectionCounter == 1) ? tr("Data") : tr("Data-%1").arg(dataSectionCounter);
             dataSec.startOffset = prevEnd;
-            dataSec.endOffset   = df.startOffset;
-            dataSec.color       = SectionListModel::randomPastelColor();
-            dataSec.parentIndex = dataParentIdx;
+            dataSec.color = SectionListModel::randomPastelColor();
+            dataSec.groupId = dataGrp;
             dataSec.displayMode = SectionDisplay_Raw;
-            dataSec.disasmCpu   = RomType::Unknown;
             allSections.append(dataSec);
-            ensureBreaks(dataSec.startOffset);
+            usedOffsets.insert(prevEnd);
+            ensureBreaks(prevEnd);
         }
 
-        // Apply vector table name if this function matches a known entry point.
-        QString funcName = m_vectorFunctionNames.value(df.startOffset);
-        if (funcName.isEmpty()) {
-            funcName = QStringLiteral("sub_%1")
-                .arg(df.cpuAddress, 0, 16, QLatin1Char('0')).toUpper();
-        }
+        // Function section
+        if (!usedOffsets.contains(df.startOffset)) {
+            QString funcName = m_vectorFunctionNames.value(df.startOffset);
+            if (funcName.isEmpty())
+                funcName = QStringLiteral("sub_%1").arg(df.cpuAddress, 0, 16, QLatin1Char('0')).toUpper();
 
-        Section funcSection;
-        funcSection.name        = funcName;
-        funcSection.startOffset = df.startOffset;
-        funcSection.endOffset   = df.endOffset;
-        funcSection.color       = SectionListModel::randomPastelColor();
-        funcSection.parentIndex = codeParentIdx;
-        funcSection.displayMode = SectionDisplay_Disasm;
-        funcSection.disasmCpu   = RomType::Unknown;
-        allSections.append(funcSection);
-        ensureBreaks(funcSection.startOffset);
+            Section funcSection;
+            funcSection.name = funcName;
+            funcSection.startOffset = df.startOffset;
+            funcSection.color = SectionListModel::randomPastelColor();
+            funcSection.groupId = codeGrp;
+            funcSection.displayMode = SectionDisplay_Disasm;
+            allSections.append(funcSection);
+            usedOffsets.insert(df.startOffset);
+            ensureBreaks(df.startOffset);
+        }
 
         prevEnd = df.endOffset;
     }
 
-    // Trailing data gap after the last function
-    if (prevEnd < fileSize) {
+    // Trailing data gap
+    if (prevEnd < fileSize && !usedOffsets.contains(prevEnd)) {
         ++dataSectionCounter;
         Section dataSec;
-        dataSec.name        = (dataSectionCounter == 1)
-                                ? tr("Data")
-                                : tr("Data-%1").arg(dataSectionCounter);
+        dataSec.name = (dataSectionCounter == 1) ? tr("Data") : tr("Data-%1").arg(dataSectionCounter);
         dataSec.startOffset = prevEnd;
-        dataSec.endOffset   = fileSize;
-        dataSec.color       = SectionListModel::randomPastelColor();
-        dataSec.parentIndex = dataParentIdx;
+        dataSec.color = SectionListModel::randomPastelColor();
+        dataSec.groupId = dataGrp;
         dataSec.displayMode = SectionDisplay_Raw;
-        dataSec.disasmCpu   = RomType::Unknown;
         allSections.append(dataSec);
-        ensureBreaks(dataSec.startOffset);
+        ensureBreaks(prevEnd);
     }
 
     progress.setValue(90);
     QApplication::processEvents();
 
     std::sort(allBreaks.begin(), allBreaks.end());
-    m_sectionModel->applySections(allSections, tr("Detect functions"));
+    m_sectionModel->applySections(allSections, allGroups, tr("Detect functions"));
     hexEdit->setLineBreaks(allBreaks);
 
-    // Add call pointers (absolute-address JSR/JMP references) to the pointer list.
-    // Only keep pointers whose target matches a detected function entry.
+    // Add call pointers
     if (!callPointers.isEmpty()) {
         QSet<qint64> funcStarts;
         for (const auto &f : functions)
@@ -987,10 +927,9 @@ void MainWindow::detectFunctions()
 
         QVector<QPair<qint64, qint64>> ptrBatch;
         for (const auto &cp : callPointers) {
-            if (funcStarts.contains(cp.targetOffset)) {
+            if (funcStarts.contains(cp.targetOffset))
                 ptrBatch.append({cp.ptrFileOffset,
                                  PointerListModel::encodePtrValue(cp.targetOffset, cp.ptrSize)});
-            }
         }
         if (!ptrBatch.isEmpty())
             hexEdit->pointers()->addPointersBatch(ptrBatch);
@@ -1004,6 +943,198 @@ void MainWindow::detectFunctions()
     hexEdit->viewport()->update();
 
     statusBar()->showMessage(tr("Detected %1 functions").arg(functions.size()), 5000);
+}
+
+void MainWindow::detectFunctionsInRange(qint64 rangeStart, qint64 rangeEnd)
+{
+    if (!hexEdit || !m_sectionModel)
+        return;
+
+    const RomType romType = m_detectedRomType;
+    if (!Disassembler::isSupported(romType)) {
+        QMessageBox::warning(this, tr("Detect functions"),
+                             tr("Disassembly is not supported for the current ROM type."));
+        return;
+    }
+
+    const qint64 fileSize = hexEdit->dataSize();
+    if (rangeEnd <= rangeStart || rangeStart < 0 || rangeEnd > fileSize)
+        return;
+
+    const qint64 codeLen = rangeEnd - rangeStart;
+    if (codeLen <= 0)
+        return;
+
+    QByteArray romData = hexEdit->dataAt(0, fileSize);
+    if (romData.size() < fileSize)
+        return;
+
+    Disassembler disasm;
+    if (!disasm.setRomType(romType)) {
+        QMessageBox::warning(this, tr("Detect functions"),
+                             tr("Failed to initialize disassembler."));
+        return;
+    }
+
+    QProgressDialog progress(tr("Detecting functions in section..."), tr("Cancel"), 0, 100, this);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(0);
+    progress.setValue(0);
+    bool cancelled = false;
+
+    QVector<CallPointer> callPointers;
+    QVector<DetectedFunction> functions = disasm.scanFunctions(
+        romData, rangeStart, static_cast<int>(codeLen),
+        [&](int percent) {
+            if (cancelled) return;
+            progress.setValue(percent * 80 / 100);
+            QApplication::processEvents();
+            if (progress.wasCanceled())
+                cancelled = true;
+        },
+        &callPointers);
+
+    if (cancelled) { progress.close(); return; }
+
+    // Sort and refine function boundaries
+    std::sort(functions.begin(), functions.end(),
+              [](const DetectedFunction &a, const DetectedFunction &b) {
+                  return a.startOffset < b.startOffset; });
+
+    for (int i = 0; i < functions.size(); ++i) {
+        const qint64 nextStart = (i + 1 < functions.size())
+                                     ? functions[i + 1].startOffset
+                                     : rangeEnd;
+        const qint64 funcEnd = findFunctionEndByReturnRun(romData, disasm,
+                                   functions[i].startOffset, nextStart);
+        functions[i].endOffset = qBound(functions[i].startOffset + 1, funcEnd,
+                                        qMax(functions[i].startOffset + 1, nextStart));
+    }
+
+    if (functions.isEmpty()) {
+        progress.close();
+        QMessageBox::information(this, tr("Detect functions"), tr("No functions detected in section."));
+        return;
+    }
+
+    progress.setLabelText(tr("Building sections..."));
+    progress.setValue(82);
+    QApplication::processEvents();
+
+    QVector<Section> allSections = m_sectionModel->sections();
+
+    // Ensure Code and Data groups exist
+    QVector<SectionGroup> allGroups = m_sectionModel->groups();
+    int codeGrp = -1, dataGrp = -1;
+    for (int gi = 0; gi < allGroups.size(); ++gi) {
+        if (allGroups[gi].name == tr("Code")) codeGrp = gi;
+        if (allGroups[gi].name == tr("Data")) dataGrp = gi;
+    }
+    if (codeGrp < 0) {
+        SectionGroup g; g.name = tr("Code"); g.color = SectionListModel::randomPastelColor();
+        codeGrp = allGroups.size(); allGroups.append(g);
+    }
+    if (dataGrp < 0) {
+        SectionGroup g; g.name = tr("Data"); g.color = SectionListModel::randomPastelColor();
+        dataGrp = allGroups.size(); allGroups.append(g);
+    }
+
+    QVector<qint64> allBreaks = hexEdit->lineBreaks();
+    auto ensureBreaks = [&](qint64 offset) {
+        if (offset <= 0) return;
+        const qint64 pos = offset - 1;
+        const int existing = static_cast<int>(std::count(allBreaks.begin(), allBreaks.end(), pos));
+        for (int i = existing; i < 2; ++i)
+            allBreaks.append(pos);
+    };
+
+    QSet<qint64> usedOffsets;
+    for (const auto &s : allSections)
+        usedOffsets.insert(s.startOffset);
+
+    int dataSectionCounter = m_sectionModel->count();
+    qint64 prevEnd = rangeStart;
+
+    for (int fi = 0; fi < functions.size(); ++fi) {
+        const DetectedFunction &df = functions[fi];
+
+        // Data gap
+        if (df.startOffset > prevEnd && !usedOffsets.contains(prevEnd)) {
+            ++dataSectionCounter;
+            Section dataSec;
+            dataSec.name = tr("Data-%1").arg(dataSectionCounter);
+            dataSec.startOffset = prevEnd;
+            dataSec.color = SectionListModel::randomPastelColor();
+            dataSec.groupId = dataGrp;
+            dataSec.displayMode = SectionDisplay_Raw;
+            allSections.append(dataSec);
+            usedOffsets.insert(prevEnd);
+            ensureBreaks(prevEnd);
+        }
+
+        // Function section
+        if (!usedOffsets.contains(df.startOffset)) {
+            const QString funcName = QStringLiteral("sub_%1")
+                .arg(df.cpuAddress, 0, 16, QLatin1Char('0')).toUpper();
+
+            Section funcSection;
+            funcSection.name = funcName;
+            funcSection.startOffset = df.startOffset;
+            funcSection.color = SectionListModel::randomPastelColor();
+            funcSection.groupId = codeGrp;
+            funcSection.displayMode = SectionDisplay_Disasm;
+            allSections.append(funcSection);
+            usedOffsets.insert(df.startOffset);
+            ensureBreaks(df.startOffset);
+        }
+
+        prevEnd = df.endOffset;
+    }
+
+    // Trailing data gap
+    if (prevEnd < rangeEnd && !usedOffsets.contains(prevEnd)) {
+        ++dataSectionCounter;
+        Section dataSec;
+        dataSec.name = tr("Data-%1").arg(dataSectionCounter);
+        dataSec.startOffset = prevEnd;
+        dataSec.color = SectionListModel::randomPastelColor();
+        dataSec.groupId = dataGrp;
+        dataSec.displayMode = SectionDisplay_Raw;
+        allSections.append(dataSec);
+        ensureBreaks(prevEnd);
+    }
+
+    progress.setValue(90);
+    QApplication::processEvents();
+
+    std::sort(allBreaks.begin(), allBreaks.end());
+    m_sectionModel->applySections(allSections, allGroups, tr("Detect functions"));
+    hexEdit->setLineBreaks(allBreaks);
+
+    // Add call pointers
+    if (!callPointers.isEmpty()) {
+        QSet<qint64> funcStarts;
+        for (const auto &f : functions)
+            funcStarts.insert(f.startOffset);
+
+        QVector<QPair<qint64, qint64>> ptrBatch;
+        for (const auto &cp : callPointers) {
+            if (funcStarts.contains(cp.targetOffset))
+                ptrBatch.append({cp.ptrFileOffset,
+                                 PointerListModel::encodePtrValue(cp.targetOffset, cp.ptrSize)});
+        }
+        if (!ptrBatch.isEmpty())
+            hexEdit->pointers()->addPointersBatch(ptrBatch);
+    }
+
+    progress.setValue(100);
+    progress.close();
+
+    if (m_document)
+        m_document->markDirty();
+    hexEdit->viewport()->update();
+
+    statusBar()->showMessage(tr("Detected %1 functions in section").arg(functions.size()), 5000);
 }
 
 void MainWindow::detectFunctionPointersOnly()
@@ -1046,10 +1177,9 @@ void MainWindow::detectFunctionPointersOnly()
     QVector<QPair<qint64, qint64>> ptrBatch;
     ptrBatch.reserve(callPointers.size());
     for (const auto &cp : callPointers) {
-        if (funcStarts.contains(cp.targetOffset)) {
+        if (funcStarts.contains(cp.targetOffset))
             ptrBatch.append({cp.ptrFileOffset,
                              PointerListModel::encodePtrValue(cp.targetOffset, cp.ptrSize)});
-        }
     }
 
     if (!ptrBatch.isEmpty()) {
@@ -1069,15 +1199,12 @@ void MainWindow::showPointersDialog()
         connect(pointersDialog, &PointersDialog::searchCompleted, this, &MainWindow::onQuickSearchCompleted);
         pointersDialog->setDock(m_pointersDock);
     }
-    // Always sync to the active tab's editor and ROM profile before showing
     pointersDialog->setHexEdit(hexEdit);
     m_pointersDock->show();
     m_pointersDock->raise();
     pointersDialog->show();
-    // Override profile AFTER show so it takes effect regardless of _profileInitialized
     pointersDialog->setRomProfile(m_detectedRomType, m_pointerOffset);
 
-    // Restore per-tab "where" and "text optimization" options
     if (m_currentSession) {
         PointersDialog::State ps;
         ps.searchDir        = m_currentSession->ptrSearchDir;
@@ -1088,3 +1215,402 @@ void MainWindow::showPointersDialog()
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════
+//  Audio sample detection and playback
+// ═══════════════════════════════════════════════════════════════════
+
+#include "audiodetector.h"
+#include "audioplayer.h"
+#include <QFileDialog>
+
+void MainWindow::detectAudioSamples()
+{
+    if (!hexEdit || !m_sectionModel)
+        return;
+
+    const qint64 fileSize = hexEdit->dataSize();
+    if (fileSize <= 0)
+        return;
+
+    const QByteArray data = hexEdit->dataAt(0, fileSize);
+
+    QProgressDialog progress(tr("Detecting audio samples..."), tr("Cancel"), 0, 100, this);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setValue(10);
+    QApplication::processEvents();
+
+    AudioDetector detector;
+    detector.setMinSampleBytes(64);
+    detector.setMinConfidence(0.40f);
+
+    const auto samples = detector.detect(data, m_detectedRomType);
+    progress.setValue(100);
+    progress.close();
+
+    if (samples.isEmpty()) {
+        QMessageBox::information(this, tr("Detect Audio Samples"),
+                                 tr("No audio samples detected in this ROM."));
+        return;
+    }
+
+    const QString msg = tr("Detected %1 audio sample(s). Create sections for them?")
+                            .arg(samples.size());
+    if (QMessageBox::question(this, tr("Detect Audio Samples"), msg,
+                              QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes) {
+        return;
+    }
+
+    QUndoStack *stack = hexEdit->undoStack();
+    if (stack)
+        stack->beginMacro(tr("Detect audio samples"));
+
+    QVector<Section> newSections = m_sectionModel->sections();
+
+    // Collect already-used offsets
+    QSet<qint64> usedOffsets;
+    for (const auto &s : newSections)
+        usedOffsets.insert(s.startOffset);
+
+    for (const DetectedSample &s : samples) {
+        if (usedOffsets.contains(s.offset))
+            continue;   // skip duplicates
+        Section sec;
+        sec.name = s.name;
+        sec.startOffset = s.offset;
+        sec.color = QColor(0x40, 0xA0, 0xFF, 0x40);
+        sec.displayMode = SectionDisplay_Audio;
+        newSections.append(sec);
+        usedOffsets.insert(s.offset);
+    }
+
+    m_sectionModel->applySections(newSections, tr("Detect audio samples"));
+
+    // Add visual line breaks
+    for (const DetectedSample &s : samples) {
+        if (s.offset > 0) {
+            const qint64 pos = s.offset - 1;
+            auto lb = hexEdit->lineBreaks();
+            int cnt = static_cast<int>(std::count(lb.begin(), lb.end(), pos));
+            for (int i = cnt; i < 2; ++i)
+                hexEdit->addLineBreak(pos);
+        }
+    }
+
+    if (stack)
+        stack->endMacro();
+
+    if (m_document)
+        m_document->markDirty();
+
+    hexEdit->viewport()->update();
+
+    statusBar()->showMessage(tr("Found %1 audio sample(s)").arg(samples.size()), 5000);
+}
+
+void MainWindow::detectAudioSamplesInRange(qint64 rangeStart, qint64 rangeEnd)
+{
+    if (!hexEdit || !m_sectionModel)
+        return;
+
+    const qint64 fileSize = hexEdit->dataSize();
+    if (rangeEnd <= rangeStart || rangeStart < 0 || rangeEnd > fileSize)
+        return;
+
+    const QByteArray data = hexEdit->dataAt(rangeStart, rangeEnd - rangeStart);
+
+    QProgressDialog progress(tr("Detecting audio samples..."), tr("Cancel"), 0, 100, this);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setValue(10);
+    QApplication::processEvents();
+
+    AudioDetector detector;
+    detector.setMinSampleBytes(64);
+    detector.setMinConfidence(0.40f);
+
+    auto samples = detector.detect(data, m_detectedRomType);
+    progress.setValue(100);
+    progress.close();
+
+    // Adjust offsets — detector sees data starting at 0, actual file offset is rangeStart
+    for (auto &s : samples)
+        s.offset += rangeStart;
+
+    if (samples.isEmpty()) {
+        QMessageBox::information(this, tr("Detect Audio Samples"),
+                                 tr("No audio samples detected in this section."));
+        return;
+    }
+
+    const QString msg = tr("Detected %1 audio sample(s). Create sections for them?")
+                            .arg(samples.size());
+    if (QMessageBox::question(this, tr("Detect Audio Samples"), msg,
+                              QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes)
+        return;
+
+    QUndoStack *stack = hexEdit->undoStack();
+    if (stack)
+        stack->beginMacro(tr("Detect audio samples"));
+
+    QVector<Section> newSections = m_sectionModel->sections();
+
+    QSet<qint64> usedOffsets;
+    for (const auto &s : newSections)
+        usedOffsets.insert(s.startOffset);
+
+    for (const DetectedSample &s : samples) {
+        if (usedOffsets.contains(s.offset))
+            continue;
+        Section sec;
+        sec.name = s.name;
+        sec.startOffset = s.offset;
+        sec.color = QColor(0x40, 0xA0, 0xFF, 0x40);
+        sec.displayMode = SectionDisplay_Audio;
+        newSections.append(sec);
+        usedOffsets.insert(s.offset);
+    }
+
+    m_sectionModel->applySections(newSections, tr("Detect audio samples"));
+
+    for (const DetectedSample &s : samples) {
+        if (s.offset > 0) {
+            const qint64 pos = s.offset - 1;
+            auto lb = hexEdit->lineBreaks();
+            int cnt = static_cast<int>(std::count(lb.begin(), lb.end(), pos));
+            for (int i = cnt; i < 2; ++i)
+                hexEdit->addLineBreak(pos);
+        }
+    }
+
+    if (stack)
+        stack->endMacro();
+
+    if (m_document)
+        m_document->markDirty();
+
+    hexEdit->viewport()->update();
+
+    statusBar()->showMessage(tr("Found %1 audio sample(s) in section").arg(samples.size()), 5000);
+}
+
+void MainWindow::playAudioAtCursor()
+{
+    if (!hexEdit || !m_sectionModel)
+        return;
+
+    const qint64 curPos = hexEdit->cursorPosition() / 2;
+    const qint64 fileSize = hexEdit->dataSize();
+    const int idx = m_sectionModel->sectionIndexAtOffset(curPos);
+    if (idx < 0)
+        return;
+
+    const Section &sec = m_sectionModel->at(idx);
+    if (sec.displayMode != SectionDisplay_Audio)
+        return;
+
+    const qint64 secEnd = m_sectionModel->endOffsetOf(idx, fileSize);
+    const qint64 playOffset = qMax(curPos, sec.startOffset);
+    const qint64 playLen = secEnd - playOffset;
+    if (playLen <= 0) return;
+
+    const QByteArray sampleData = hexEdit->dataAt(playOffset, playLen);
+
+    AudioSampleFormat fmt = AudioSampleFormat::Unknown;
+    if (m_audioDock)
+        fmt = m_audioDock->selectedFormat();
+
+    if (fmt == AudioSampleFormat::Unknown) {
+        if (sec.name.contains(QStringLiteral("BRR"), Qt::CaseInsensitive))
+            fmt = AudioSampleFormat::SNES_BRR;
+        else if (sec.name.contains(QStringLiteral("UMK3"), Qt::CaseInsensitive)
+                 || sec.name.contains(QStringLiteral("IMA ADPCM"), Qt::CaseInsensitive)
+                 || sec.name.contains(QStringLiteral("DPCM4"), Qt::CaseInsensitive)
+                 || sec.name.contains(QStringLiteral("4-bit DPCM"), Qt::CaseInsensitive))
+            fmt = AudioSampleFormat::MD_DPCM4_6500;
+        else if (sec.name.contains(QStringLiteral("OKI"), Qt::CaseInsensitive)
+                 || sec.name.contains(QStringLiteral("Dialogic"), Qt::CaseInsensitive))
+            fmt = AudioSampleFormat::MD_ADPCM_OKI;
+        else if (sec.name.contains(QStringLiteral("DPCM"), Qt::CaseInsensitive))
+            fmt = (m_detectedRomType == RomType::MD || m_detectedRomType == RomType::X32)
+                ? AudioSampleFormat::MD_DPCM4_6500
+                : AudioSampleFormat::NES_DPCM;
+        else if (sec.name.contains(QStringLiteral("ulaw"), Qt::CaseInsensitive)
+                 || sec.name.contains(QStringLiteral("µ-law"), Qt::CaseInsensitive)
+                 || sec.name.contains(QStringLiteral("mu-law"), Qt::CaseInsensitive))
+            fmt = AudioSampleFormat::MD_ULAW;
+        else if (sec.name.contains(QStringLiteral("Signed PCM"), Qt::CaseInsensitive)
+                 || sec.name.contains(QStringLiteral("Signed 8"), Qt::CaseInsensitive))
+            fmt = AudioSampleFormat::MD_PCM8_Signed;
+        else if (sec.name.contains(QStringLiteral("DAC"), Qt::CaseInsensitive))
+            fmt = AudioSampleFormat::MD_DAC_PCM;
+        else if (sec.name.contains(QStringLiteral("GBA"), Qt::CaseInsensitive))
+            fmt = AudioSampleFormat::GBA_PCM8;
+        else {
+            switch (m_detectedRomType) {
+            case RomType::SNES: case RomType::SNES_SMC:
+            case RomType::SNES_HIROM: case RomType::SNES_HIROM_SMC:
+                fmt = AudioSampleFormat::SNES_BRR; break;
+            case RomType::NES:
+                fmt = AudioSampleFormat::NES_DPCM; break;
+            case RomType::MD: case RomType::X32:
+                fmt = AudioSampleFormat::MD_DAC_PCM; break;
+            case RomType::GBA:
+                fmt = AudioSampleFormat::GBA_PCM8; break;
+            default:
+                fmt = AudioSampleFormat::Raw_PCM8_Unsigned; break;
+            }
+        }
+    }
+
+    if (!m_audioPlayer) {
+        m_audioPlayer = new AudioPlayer(this);
+        connect(m_audioPlayer, &AudioPlayer::playbackStopped, this, [this]() {
+            statusBar()->showMessage(tr("Playback stopped"), 2000);
+        });
+    }
+
+    m_audioPlayer->loadFromRaw(sampleData, fmt);
+    const int rateOverride = m_audioDock ? m_audioDock->selectedSampleRate() : 0;
+    const double speed = m_audioDock ? m_audioDock->playbackSpeed() : 1.0;
+    m_audioPlayer->play(rateOverride, speed);
+
+    statusBar()->showMessage(tr("Playing sample: %1 (%2 ms)")
+                                 .arg(sec.name).arg(m_audioPlayer->durationMs()), 5000);
+}
+
+void MainWindow::stopAudioPlayback()
+{
+    if (m_audioPlayer && m_audioPlayer->isPlaying())
+        m_audioPlayer->stop();
+}
+
+void MainWindow::exportAudioSample()
+{
+    if (!hexEdit || !m_sectionModel)
+        return;
+
+    const qint64 curPos = hexEdit->cursorPosition() / 2;
+    const qint64 fileSize = hexEdit->dataSize();
+    const int idx = m_sectionModel->sectionIndexAtOffset(curPos);
+    if (idx < 0) return;
+
+    const Section &sec = m_sectionModel->at(idx);
+    if (sec.displayMode != SectionDisplay_Audio) {
+        statusBar()->showMessage(tr("No audio section at cursor position"), 3000);
+        return;
+    }
+
+    const qint64 secEnd = m_sectionModel->endOffsetOf(idx, fileSize);
+    const QByteArray sampleData = hexEdit->dataAt(sec.startOffset, secEnd - sec.startOffset);
+
+    AudioSampleFormat fmt = AudioSampleFormat::Raw_PCM8_Unsigned;
+    if (sec.name.contains(QStringLiteral("BRR"))) fmt = AudioSampleFormat::SNES_BRR;
+    else if (sec.name.contains(QStringLiteral("UMK3"), Qt::CaseInsensitive)
+             || sec.name.contains(QStringLiteral("IMA ADPCM"), Qt::CaseInsensitive)
+             || sec.name.contains(QStringLiteral("DPCM4"), Qt::CaseInsensitive)
+             || sec.name.contains(QStringLiteral("4-bit DPCM"), Qt::CaseInsensitive)) fmt = AudioSampleFormat::MD_DPCM4_6500;
+    else if (sec.name.contains(QStringLiteral("OKI"), Qt::CaseInsensitive)
+             || sec.name.contains(QStringLiteral("Dialogic"), Qt::CaseInsensitive)) fmt = AudioSampleFormat::MD_ADPCM_OKI;
+    else if (sec.name.contains(QStringLiteral("DPCM")))
+        fmt = (m_detectedRomType == RomType::MD || m_detectedRomType == RomType::X32)
+            ? AudioSampleFormat::MD_DPCM4_6500
+            : AudioSampleFormat::NES_DPCM;
+    else if (sec.name.contains(QStringLiteral("ulaw"), Qt::CaseInsensitive)
+             || sec.name.contains(QStringLiteral("µ-law"), Qt::CaseInsensitive)) fmt = AudioSampleFormat::MD_ULAW;
+    else if (sec.name.contains(QStringLiteral("Signed PCM"), Qt::CaseInsensitive)
+             || sec.name.contains(QStringLiteral("Signed 8"), Qt::CaseInsensitive)) fmt = AudioSampleFormat::MD_PCM8_Signed;
+    else if (sec.name.contains(QStringLiteral("DAC"))) fmt = AudioSampleFormat::MD_DAC_PCM;
+    else if (sec.name.contains(QStringLiteral("GBA"))) fmt = AudioSampleFormat::GBA_PCM8;
+
+    int rate = 0;
+    const auto pcm = AudioDetector::decodeToPCM16(sampleData, fmt, &rate);
+    if (pcm.isEmpty()) {
+        QMessageBox::warning(this, tr("Export Audio"), tr("Failed to decode sample data."));
+        return;
+    }
+
+    const QString path = QFileDialog::getSaveFileName(
+        this, tr("Export Audio Sample"), sec.name + QStringLiteral(".wav"), tr("WAV files (*.wav)"));
+    if (path.isEmpty()) return;
+
+    const QByteArray wav = AudioPlayer::createWavData(pcm, rate);
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly)) {
+        QMessageBox::warning(this, tr("Export Audio"), tr("Cannot write file: %1").arg(f.errorString()));
+        return;
+    }
+    f.write(wav);
+    statusBar()->showMessage(tr("Exported: %1").arg(path), 5000);
+}
+
+void MainWindow::importAudioSample()
+{
+    if (!hexEdit || !m_sectionModel)
+        return;
+
+    const qint64 curPos = hexEdit->cursorPosition() / 2;
+    const qint64 fileSize = hexEdit->dataSize();
+    const int idx = m_sectionModel->sectionIndexAtOffset(curPos);
+    if (idx < 0) return;
+
+    const Section &sec = m_sectionModel->at(idx);
+    if (sec.displayMode != SectionDisplay_Audio) {
+        statusBar()->showMessage(tr("No audio section at cursor position"), 3000);
+        return;
+    }
+
+    const qint64 secEnd = m_sectionModel->endOffsetOf(idx, fileSize);
+
+    AudioSampleFormat fmt = AudioSampleFormat::Raw_PCM8_Unsigned;
+    int targetRate = 8000;
+    if (sec.name.contains(QStringLiteral("BRR"))) { fmt = AudioSampleFormat::SNES_BRR; targetRate = 32000; }
+    else if (sec.name.contains(QStringLiteral("UMK3"), Qt::CaseInsensitive)
+             || sec.name.contains(QStringLiteral("IMA ADPCM"), Qt::CaseInsensitive)
+             || sec.name.contains(QStringLiteral("DPCM4"), Qt::CaseInsensitive)
+             || sec.name.contains(QStringLiteral("4-bit DPCM"), Qt::CaseInsensitive)) { fmt = AudioSampleFormat::MD_DPCM4_6500; targetRate = 6500; }
+    else if (sec.name.contains(QStringLiteral("OKI"), Qt::CaseInsensitive)
+             || sec.name.contains(QStringLiteral("Dialogic"), Qt::CaseInsensitive)) { fmt = AudioSampleFormat::MD_ADPCM_OKI; targetRate = 7575; }
+    else if (sec.name.contains(QStringLiteral("DPCM"))) {
+        if (m_detectedRomType == RomType::MD || m_detectedRomType == RomType::X32) {
+            fmt = AudioSampleFormat::MD_DPCM4_6500;
+            targetRate = 6500;
+        } else {
+            fmt = AudioSampleFormat::NES_DPCM;
+            targetRate = 8363;
+        }
+    }
+    else if (sec.name.contains(QStringLiteral("ulaw"), Qt::CaseInsensitive)
+             || sec.name.contains(QStringLiteral("µ-law"), Qt::CaseInsensitive)) { fmt = AudioSampleFormat::MD_ULAW; targetRate = 8000; }
+    else if (sec.name.contains(QStringLiteral("Signed PCM"), Qt::CaseInsensitive)
+             || sec.name.contains(QStringLiteral("Signed 8"), Qt::CaseInsensitive)) { fmt = AudioSampleFormat::MD_PCM8_Signed; targetRate = 8000; }
+    else if (sec.name.contains(QStringLiteral("DAC"))) { fmt = AudioSampleFormat::MD_DAC_PCM; targetRate = 8000; }
+    else if (sec.name.contains(QStringLiteral("GBA"))) { fmt = AudioSampleFormat::GBA_PCM8; targetRate = 13379; }
+
+    const QString path = QFileDialog::getOpenFileName(
+        this, tr("Import Audio Sample"), QString(), tr("WAV files (*.wav);;All files (*)"));
+    if (path.isEmpty()) return;
+
+    const qint64 maxLen = secEnd - sec.startOffset;
+    int sampleCount = 0;
+    QByteArray encoded = AudioPlayer::importWav(path, fmt, targetRate, &sampleCount);
+    if (encoded.isEmpty()) {
+        QMessageBox::warning(this, tr("Import Audio"), tr("Failed to import WAV file."));
+        return;
+    }
+
+    if (encoded.size() > maxLen) {
+        const QString msg2 = tr("Imported data (%1 bytes) exceeds section size (%2 bytes). Truncate?")
+                                .arg(encoded.size()).arg(maxLen);
+        if (QMessageBox::question(this, tr("Import Audio"), msg2) != QMessageBox::Yes)
+            return;
+        encoded.truncate(static_cast<int>(maxLen));
+    } else if (encoded.size() < maxLen) {
+        const char silenceByte = (fmt == AudioSampleFormat::MD_DAC_PCM
+                                  || fmt == AudioSampleFormat::Raw_PCM8_Unsigned
+                                  || fmt == AudioSampleFormat::MD_ULAW)
+                                     ? static_cast<char>(0x80) : '\0';
+        encoded.append(QByteArray(static_cast<int>(maxLen) - encoded.size(), silenceByte));
+    }
+
+    hexEdit->replace(sec.startOffset, encoded.size(), encoded);
+    statusBar()->showMessage(tr("Imported audio into section '%1'").arg(sec.name), 5000);
+}

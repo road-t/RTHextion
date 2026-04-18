@@ -45,6 +45,13 @@ void MainWindow::saveCurrentSession()
     m_currentSession->dockPointersVisible = m_pointersDock && m_pointersDock->isVisible();
     m_currentSession->dockChangesVisible = m_changesDock && m_changesDock->isVisible();
     m_currentSession->dockSectionsVisible = m_sectionsDock && m_sectionsDock->isVisible();
+    m_currentSession->dockAudioVisible = m_audioDock && m_audioDock->isVisible();
+    if (m_audioDock) {
+        m_currentSession->audioFormatIndex = m_audioDock->formatIndex();
+        m_currentSession->audioSampleRate = m_audioDock->sampleRateText();
+        m_currentSession->audioPlaybackSpeed = m_audioDock->playbackSpeed();
+    }
+    m_currentSession->dockGraphicsVisible = m_graphicsDock && m_graphicsDock->isVisible();
     m_currentSession->dockVisibilityInitialized = true;
     if (m_document)
         m_document->useTable = (useTableAct && useTableAct->isChecked());
@@ -154,6 +161,8 @@ void MainWindow::restoreSession(EditorSession *session)
             m_sectionsDock->setSuppressRebuild(false);
             m_sectionsDock->refresh();
         }
+        if (m_audioDock)
+            m_audioDock->setRomType(m_detectedRomType);
     }
 
     // Restore the per-session table dock content. applySnapshot rebuilds the
@@ -227,6 +236,27 @@ void MainWindow::restoreSession(EditorSession *session)
         m_pointersDock->setVisible(session->dockPointersVisible);
         m_changesDock->setVisible(session->dockChangesVisible);
         m_sectionsDock->setVisible(session->dockSectionsVisible);
+        if (m_audioDock) {
+            m_audioDock->setVisible(session->dockAudioVisible);
+            m_audioDock->setFormatIndex(session->audioFormatIndex);
+            if (!session->audioSampleRate.isEmpty())
+                m_audioDock->setSampleRateText(session->audioSampleRate);
+            m_audioDock->setPlaybackSpeed(session->audioPlaybackSpeed);
+        }
+        if (m_graphicsDock) {
+            m_graphicsDock->setVisible(session->dockGraphicsVisible);
+            // Sync dock fields with the section at cursor
+            if (hexEdit && hexEdit->sectionModel()) {
+                const int idx = hexEdit->sectionModel()->sectionIndexAtOffset(session->curOffset);
+                if (idx >= 0) {
+                    const Section &sec = hexEdit->sectionModel()->at(idx);
+                    if (sec.displayMode == SectionDisplay_Graphics) {
+                        m_graphicsDock->setCodec(sec.tileCodec);
+                        m_graphicsDock->setPaletteColors(sec.palette);
+                    }
+                }
+            }
+        }
     } else {
         m_tablesDock->show();
         m_pointersDock->show();

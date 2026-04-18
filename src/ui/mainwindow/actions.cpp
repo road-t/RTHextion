@@ -769,17 +769,12 @@ void MainWindow::createActions()
     panelModeTextAct->setChecked(true);
     asciiAreaGroup->addAction(panelModeTextAct);
     asciiAreaMenu->addAction(panelModeTextAct);
-/*
+
     panelModeGraphicsAct = new QAction(tr("Graphics"), this);
     panelModeGraphicsAct->setCheckable(true);
     asciiAreaGroup->addAction(panelModeGraphicsAct);
     asciiAreaMenu->addAction(panelModeGraphicsAct);
 
-    panelModeSoundAct = new QAction(tr("Sound"), this);
-    panelModeSoundAct->setCheckable(true);
-    asciiAreaGroup->addAction(panelModeSoundAct);
-    asciiAreaMenu->addAction(panelModeSoundAct);
-*/
     panelModeDisasmAct = new QAction(tr("Disassembly"), this);
     panelModeDisasmAct->setCheckable(true);
     asciiAreaGroup->addAction(panelModeDisasmAct);
@@ -821,17 +816,18 @@ void MainWindow::createActions()
                 auto &s = AppSettings::instance();
                 if (act == panelModeTextAct) {
                     hexEdit->setShowDisasm(false);
+                    hexEdit->setShowGraphicsPanel(false);
                     hexEdit->setAsciiArea(true);
                     s.setValue("PanelMode", QStringLiteral("text"));
                 } else if (act == panelModeGraphicsAct) {
                     hexEdit->setShowDisasm(false);
+                    hexEdit->setShowGraphicsPanel(true);
                     hexEdit->setAsciiArea(true);
                     s.setValue("PanelMode", QStringLiteral("graphics"));
-                } else if (act == panelModeSoundAct) {
-                    hexEdit->setShowDisasm(false);
-                    hexEdit->setAsciiArea(true);
-                    s.setValue("PanelMode", QStringLiteral("sound"));
+                    if (m_graphicsDock)
+                        m_graphicsDock->show();
                 } else if (act == panelModeDisasmAct) {
+                    hexEdit->setShowGraphicsPanel(false);
                     hexEdit->setAsciiArea(true);
                     hexEdit->setShowDisasm(true);
                     s.setValue("PanelMode", QStringLiteral("disasm"));
@@ -1151,6 +1147,20 @@ void MainWindow::createMenus()
     dockMenu->addAction(changesDockToggleAct);
     connect(m_changesDock, &QDockWidget::windowTitleChanged, this, [this]() {
         if (changesDockToggleAct) changesDockToggleAct->setText(tr("Changes"));
+    });
+
+    audioDockToggleAct = m_audioDock->toggleViewAction();
+    audioDockToggleAct->setText(tr("Audio"));
+    dockMenu->addAction(audioDockToggleAct);
+    connect(m_audioDock, &QDockWidget::windowTitleChanged, this, [this]() {
+        if (audioDockToggleAct) audioDockToggleAct->setText(tr("Audio"));
+    });
+
+    graphicsDockToggleAct = m_graphicsDock->toggleViewAction();
+    graphicsDockToggleAct->setText(tr("Graphics"));
+    dockMenu->addAction(graphicsDockToggleAct);
+    connect(m_graphicsDock, &QDockWidget::windowTitleChanged, this, [this]() {
+        if (graphicsDockToggleAct) graphicsDockToggleAct->setText(tr("Graphics"));
     });
 
     dockMenu->addSeparator();

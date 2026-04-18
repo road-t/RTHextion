@@ -18,11 +18,16 @@
 #include "PointersDockWidget.h"
 #include "ChangesDockWidget.h"
 #include "SectionsDockWidget.h"
+#include "AudioDockWidget.h"
+#include "GraphicsDockWidget.h"
 #include "SemiAutoTableDialog.h"
 #include "DumpScriptdialog.h"
 #include "InsertScriptDialog.h"
 #include "hexdocument.h"
 #include "editorsession.h"
+
+class AudioDetector;
+class AudioPlayer;
 
 QT_BEGIN_NAMESPACE
 class QAction;
@@ -89,6 +94,7 @@ private slots:
     void parseSections();
     void parseHeaderSections();
     void detectFunctions();
+    void detectFunctionsInRange(qint64 rangeStart, qint64 rangeEnd);
     void selectRangeInEditor(qint64 start, qint64 end, bool focus = true);
     void showPointersDialog();
     void pointersUpdated();
@@ -202,6 +208,13 @@ private:
     bool canRemoveSelectionFromSection() const;
     void removeSelectionFromSection();
     void parseHeaderSectionsImpl(bool pushToUndo);
+    void detectAudioSamples();
+    void detectAudioSamplesInRange(qint64 rangeStart, qint64 rangeEnd);
+    void splitSection(int sectionIndex, const QVector<qint64> &sizes);
+    void playAudioAtCursor();
+    void stopAudioPlayback();
+    void exportAudioSample();
+    void importAudioSample();
     bool shouldSwitchTableOnViewModeChange() const;
     void enforceBottomDockEqualWidth();
     void updateStatusBarVisibility();
@@ -391,6 +404,8 @@ private:
     QAction *pointersDockToggleAct = nullptr;
     QAction *changesDockToggleAct = nullptr;
     QAction *sectionsDockToggleAct = nullptr;
+    QAction *audioDockToggleAct = nullptr;
+    QAction *graphicsDockToggleAct = nullptr;
 
     HexEditor *hexEdit;
     OptionsDialog *optionsDialog;
@@ -404,6 +419,8 @@ private:
     PointersDockWidget *m_pointersDock  = nullptr;
     ChangesDockWidget  *m_changesDock   = nullptr;
     SectionsDockWidget *m_sectionsDock  = nullptr;
+    AudioDockWidget    *m_audioDock      = nullptr;
+    GraphicsDockWidget *m_graphicsDock   = nullptr;
     SectionListModel   *m_sectionModel  = nullptr;
 
     QComboBox *cbRomType = nullptr;
@@ -428,6 +445,7 @@ private:
     QString m_currentEncoding = QStringLiteral("ASCII");
     QString m_readyText;
     UpdateChecker *m_updateChecker = nullptr;
+    AudioPlayer *m_audioPlayer = nullptr;
     QVector<qint64> navigationHistory;
     int navigationHistoryIndex = -1;
     bool navigationJumpInProgress = false;

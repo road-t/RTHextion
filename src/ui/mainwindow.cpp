@@ -61,6 +61,7 @@
 #include "romchecksum.h"
 #include "encodingdetect.h"
 #include "updatechecker.h"
+#include "audioplayer.h"
 
 #include "mainwindow/internal.h"
 using namespace MainWindowInternal;
@@ -246,6 +247,10 @@ MainWindow::MainWindow()
 /*****************************************************************************/
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    // Stop any audio playback before closing to avoid callbacks into
+    // partially-destroyed objects.
+    stopAudioPlayback();
+
     // Capture the currently active tab BEFORE iterating — the setCurrentIndex
     // loop below changes the tab widget's current index and would otherwise
     // cause writeSettings() to save the wrong active tab.
@@ -1062,42 +1067,57 @@ void MainWindow::showVirtualFormatDialog(qint64 rangeFrom, qint64 rangeTo)
     if (dlg.exec() != QDialog::Accepted)
         return;
 
-    const QByteArray needle = dlg.character();
     const int lines = dlg.lines();
-    const bool ignoreRepeated = dlg.ignoreRepeated();
-    if (needle.isEmpty() || lines <= 0)
+    if (lines <= 0)
         return;
 
     // Determine search range
     const qint64 searchFrom = (rangeFrom >= 0) ? rangeFrom : 0;
     const qint64 searchTo   = (rangeTo >= 0)   ? rangeTo   : hexEdit->dataSize();
 
-    // Collect line break offsets
     QVector<qint64> newBreaks = hexEdit->lineBreaks();
-    qint64 from = searchFrom;
-    while (from < searchTo) {
-        qint64 pos = hexEdit->indexOf(needle, from);
-        if (pos < 0 || pos + needle.size() > searchTo)
-            break;
 
-        qint64 breakOffset = pos + needle.size() - 1;
+    if (dlg.splitByCount()) {
+        // Split every N bytes
+        const int count = dlg.countValue();
+        if (count <= 0)
+            return;
+        for (qint64 pos = searchFrom + count - 1; pos < searchTo; pos += count) {
+            for (int i = 0; i < lines; ++i)
+                newBreaks.append(pos);
+        }
+    } else {
+        // Split by character sequence
+        const QByteArray needle = dlg.character();
+        const bool ignoreRepeated = dlg.ignoreRepeated();
+        if (needle.isEmpty())
+            return;
 
-        if (ignoreRepeated) {
-            // Skip consecutive repeats of the needle — advance to the last one
-            while (true) {
-                qint64 nextPos = hexEdit->indexOf(needle, pos + needle.size());
-                if (nextPos == pos + needle.size() && nextPos + needle.size() <= searchTo) {
-                    pos = nextPos;
-                    breakOffset = pos + needle.size() - 1;
-                } else {
-                    break;
+        qint64 from = searchFrom;
+        while (from < searchTo) {
+            qint64 pos = hexEdit->indexOf(needle, from);
+            if (pos < 0 || pos + needle.size() > searchTo)
+                break;
+
+            qint64 breakOffset = pos + needle.size() - 1;
+
+            if (ignoreRepeated) {
+                // Skip consecutive repeats of the needle — advance to the last one
+                while (true) {
+                    qint64 nextPos = hexEdit->indexOf(needle, pos + needle.size());
+                    if (nextPos == pos + needle.size() && nextPos + needle.size() <= searchTo) {
+                        pos = nextPos;
+                        breakOffset = pos + needle.size() - 1;
+                    } else {
+                        break;
+                    }
                 }
             }
-        }
 
-        for (int i = 0; i < lines; ++i)
-            newBreaks.append(breakOffset);
-        from = pos + needle.size();
+            for (int i = 0; i < lines; ++i)
+                newBreaks.append(breakOffset);
+            from = pos + needle.size();
+        }
     }
 
     hexEdit->setLineBreaks(newBreaks);
@@ -1615,12 +1635,24 @@ void MainWindow::init()
     connect(m_sectionsDock, &SectionsDockWidget::showSectionsToggled, this, [this](bool checked) {
         hexEdit->setShowSections(checked);
     });
-    connect(m_sectionsDock, &SectionsDockWidget::addSectionRequested, this, [this](int parentIdx) {
-        addSectionFromSelection(parentIdx);
-    });
     connect(m_sectionsDock, &SectionsDockWidget::parseRequested, this, [this]() {
         parseSections();
     });
+    connect(m_sectionsDock, &SectionsDockWidget::detectAudioRequested, this, [this]() {
+        detectAudioSamples();
+    });
+    connect(m_sectionsDock, &SectionsDockWidget::findSamplesInSectionRequested, this,
+            [this](qint64 start, qint64 end) {
+                detectAudioSamplesInRange(start, end);
+            });
+    connect(m_sectionsDock, &SectionsDockWidget::findFunctionsInSectionRequested, this,
+            [this](qint64 start, qint64 end) {
+                detectFunctionsInRange(start, end);
+            });
+    connect(m_sectionsDock, &SectionsDockWidget::splitSectionRequested, this,
+            [this](int sectionIdx, const QVector<qint64> &sizes) {
+                splitSection(sectionIdx, sizes);
+            });
     connect(m_sectionsDock, &SectionsDockWidget::disasmCpuChanged, this, [this](int /*sectionIdx*/, RomType cpu) {
         if (!hexEdit) return;
         // If the section specifies a CPU, use it; otherwise fall back to platform default
@@ -1634,9 +1666,14 @@ void MainWindow::init()
         if (hexEdit)
             hexEdit->viewport()->update();
     });
-    // Auto-select the matching section in the tree as the cursor moves
-    connect(hexEdit, &HexEditor::currentAddressChanged,
-            m_sectionsDock, &SectionsDockWidget::highlightOffset);
+    connect(m_sectionModel, &SectionListModel::groupsChanged, this, [this]() {
+        const bool restoring = m_restoringSession || m_restoringProjectUi;
+        if (!restoring && m_document)
+            m_document->markDirty();
+    });
+    // Auto-select the matching section in the tree as the cursor moves.
+    // The actual connection is made per-editor in connectEditorSignals() so
+    // it follows tab switches correctly.
 
     // Start inline section rename on double-click of header row in hex editor
     connect(hexEdit, &HexEditor::sectionHeaderDoubleClicked, this, [this](int sectionIndex) {
@@ -1663,6 +1700,58 @@ void MainWindow::init()
     connect(m_tablesDock, &TablesDockWidget::tableContentChanged,
             this, syncTableNames);
     syncTableNames();
+
+    // ── Audio dock ──
+    m_audioDock = new AudioDockWidget(this);
+    addDockWidget(Qt::RightDockWidgetArea, m_audioDock);
+    m_audioDock->hide();  // hidden by default, shown via View → Dock
+    m_audioDock->setRomType(m_detectedRomType);
+
+    // ── Graphics dock ──
+    m_graphicsDock = new GraphicsDockWidget(this);
+    addDockWidget(Qt::RightDockWidgetArea, m_graphicsDock);
+    m_graphicsDock->hide();
+
+    // Codec changed in dock → update global + current section
+    connect(m_graphicsDock, &GraphicsDockWidget::codecChanged, this, [this](TileCodec codec) {
+        hexEdit->setGlobalTileCodec(codec);
+        if (auto *model = hexEdit->sectionModel()) {
+            int idx = model->sectionIndexAtOffset(hexEdit->cursorPosition() / 2);
+            if (idx >= 0) {
+                Section sec = model->at(idx);
+                if (sec.displayMode == SectionDisplay_Graphics) {
+                    sec.tileCodec = codec;
+                    // Reset custom palette when codec changes (bpp may differ)
+                    sec.palette.clear();
+                    model->updateSection(idx, sec);
+                    m_graphicsDock->setPaletteColors(sec.palette);
+                }
+            }
+        }
+    });
+
+    // Palette edited in dock → update current section
+    connect(m_graphicsDock, &GraphicsDockWidget::paletteChanged, this, [this](const QVector<QRgb> &pal) {
+        if (auto *model = hexEdit->sectionModel()) {
+            int idx = model->sectionIndexAtOffset(hexEdit->cursorPosition() / 2);
+            if (idx >= 0) {
+                Section sec = model->at(idx);
+                if (sec.displayMode == SectionDisplay_Graphics) {
+                    sec.palette = pal;
+                    model->updateSection(idx, sec);
+                    if (hexEdit) hexEdit->viewport()->update();
+                }
+            }
+        }
+    });
+
+    // Palette color selection → forward selected indices to editor
+    connect(m_graphicsDock, &GraphicsDockWidget::leftPalIndexChanged, this, [this](int idx) {
+        if (hexEdit) hexEdit->setGfxLeftPalIdx(idx);
+    });
+    connect(m_graphicsDock, &GraphicsDockWidget::rightPalIndexChanged, this, [this](int idx) {
+        if (hexEdit) hexEdit->setGfxRightPalIdx(idx);
+    });
 
     // Ctrl+1..9 shortcuts for switching table tabs
     for (int i = 1; i <= 9; ++i) {
@@ -1862,6 +1951,29 @@ void MainWindow::connectEditorSignals(HexEditor *editor)
     connect(editor, &HexEditor::contextMenuRequested, this, &MainWindow::hexEditContextMenu);
     connect(editor, &HexEditor::selectionChanged, this, &MainWindow::setSelection);
     connect(editor, &HexEditor::currentAddressChanged, this, &MainWindow::setAddress);
+    connect(editor, &HexEditor::currentAddressChanged,
+            m_sectionsDock, &SectionsDockWidget::highlightOffset);
+    // Sync graphics dock when cursor moves to a different section
+    connect(editor, &HexEditor::currentAddressChanged, this, [this](qint64 offset) {
+        if (!m_graphicsDock || !m_graphicsDock->isVisible())
+            return;
+        if (auto *model = hexEdit ? hexEdit->sectionModel() : nullptr) {
+            const int idx = model->sectionIndexAtOffset(offset);
+            if (idx >= 0) {
+                const Section &sec = model->at(idx);
+                if (sec.displayMode == SectionDisplay_Graphics) {
+                    m_graphicsDock->setCodec(sec.tileCodec);
+                    m_graphicsDock->setPaletteColors(sec.palette);
+                    return;
+                }
+            }
+            // Global mode — show global codec, no custom palette
+            if (hexEdit && hexEdit->showGraphicsPanel()) {
+                m_graphicsDock->setCodec(hexEdit->globalTileCodec());
+                m_graphicsDock->setPaletteColors({});
+            }
+        }
+    });
     connect(editor, &HexEditor::currentSizeChanged, this, &MainWindow::setSize);
     connect(editor, &HexEditor::lineBreaksChanged, this, [this, editor]() {
         const bool restoring = m_restoringSession || m_restoringProjectUi;
@@ -1875,6 +1987,12 @@ void MainWindow::connectEditorSignals(HexEditor *editor)
         if (m_currentSession)
             updateTabTitle(m_tabWidget->currentIndex());
     });
+    connect(editor, &HexEditor::audioPlaybackToggled, this, [this](qint64 /*bytePos*/) {
+        if (m_audioPlayer && m_audioPlayer->isPlaying())
+            stopAudioPlayback();
+        else
+            playAudioAtCursor();
+    });
 }
 
 void MainWindow::disconnectEditorSignals(HexEditor *editor)
@@ -1885,8 +2003,11 @@ void MainWindow::disconnectEditorSignals(HexEditor *editor)
     disconnect(editor, &HexEditor::contextMenuRequested, this, &MainWindow::hexEditContextMenu);
     disconnect(editor, SIGNAL(selectionChanged(qint64, qint64)), this, SLOT(setSelection(qint64, qint64)));
     disconnect(editor, SIGNAL(currentAddressChanged(qint64)), this, SLOT(setAddress(qint64)));
+    disconnect(editor, &HexEditor::currentAddressChanged,
+              m_sectionsDock, &SectionsDockWidget::highlightOffset);
     disconnect(editor, SIGNAL(currentSizeChanged(qint64)), this, SLOT(setSize(qint64)));
     disconnect(editor, &HexEditor::lineBreaksChanged, this, nullptr);
+    disconnect(editor, &HexEditor::audioPlaybackToggled, this, nullptr);
 }
 
 bool MainWindow::saveFile(const QString &fileName)

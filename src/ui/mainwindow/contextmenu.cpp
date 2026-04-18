@@ -11,6 +11,7 @@ using namespace MainWindowInternal;
 #include "FillWithDialog.h"
 #include "VirtualFormatDialog.h"
 #include "PointerListModel.h"
+#include "SectionListModel.h"
 
 void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
 {
@@ -22,6 +23,8 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
     const bool isOverwrite   = hexEdit->overwriteMode();
     const bool isReadOnly    = hexEdit->isReadOnly();
     const bool clickedAscii  = hexEdit->editAreaIsAscii();
+    const bool clickedDisasm = hexEdit->showDisasm()
+        || (m_sectionModel && m_sectionModel->displayModeAtOffset(bytePos) == SectionDisplay_Disasm);
     const bool canRemoveFromSection = hasSelection && canRemoveSelectionFromSection();
 
     const qint64 ptrOffset = currentPointerOffset();
@@ -163,12 +166,11 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         acts.cut->setShortcut(QKeySequence::Cut);
         acts.cut->setEnabled(hasSelection && !isReadOnly && !isOverwrite);
 
-        if (isHexArea)
+        if (isHexArea && !clickedDisasm)
             acts.copy = menu.addAction(tr("Copy hex values"));
         else
             acts.copy = menu.addAction(tr("Copy"));
         acts.copy->setShortcut(QKeySequence::Copy);
-        acts.copy->setEnabled(hasSelection);
         acts.copyToNewTab = menu.addAction(tr("Copy to a new tab"));
         acts.copyToNewTab->setEnabled(hasSelection);
         if (isHexArea)
@@ -230,8 +232,13 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
 
         if (chosen == acts.copy && acts.copy)
         {
-            const qint64 selBegin = hexEdit->getSelectionBegin();
-            const qint64 selEnd   = hexEdit->getSelectionEnd();
+            qint64 selBegin = hexEdit->getSelectionBegin();
+            qint64 selEnd   = hexEdit->getSelectionEnd();
+            if (selEnd - selBegin < 1) {
+                // No selection — copy the single byte at cursor
+                selBegin = bytePos;
+                selEnd   = bytePos + 1;
+            }
             const QByteArray raw = hexEdit->dataAt(selBegin, selEnd - selBegin);
 
             const qint64 selLast = qMax<qint64>(selBegin, selEnd - 1);
@@ -845,6 +852,20 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         addSectionAct = menu.addAction(tr("Add section"));
     }
 
+    // ── Audio actions ──
+    const bool cursorInAudio = m_sectionModel
+        && m_sectionModel->displayModeAtOffset(bytePos) == SectionDisplay_Audio;
+    QAction *playAudioAct = nullptr;
+    QAction *exportAudioAct = nullptr;
+    QAction *importAudioAct = nullptr;
+    if (cursorInAudio) {
+        menu.addSeparator();
+        playAudioAct = menu.addAction(tr("Play audio sample"));
+        exportAudioAct = menu.addAction(tr("Export audio sample (WAV)"));
+        if (!isReadOnly)
+            importAudioAct = menu.addAction(tr("Import audio sample (WAV)"));
+    }
+
     QAction *chosen = menu.exec(globalPos);
     if (handleClipboardAction(chosen, clipActs))
         return;
@@ -940,6 +961,18 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
     else if (addSectionAct && chosen == addSectionAct)
     {
         addSectionFromSelection(-1);
+    }
+    else if (playAudioAct && chosen == playAudioAct)
+    {
+        playAudioAtCursor();
+    }
+    else if (exportAudioAct && chosen == exportAudioAct)
+    {
+        exportAudioSample();
+    }
+    else if (importAudioAct && chosen == importAudioAct)
+    {
+        importAudioSample();
     }
     else if (chosen == quickSearchAct)
     {

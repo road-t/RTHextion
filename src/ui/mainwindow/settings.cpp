@@ -138,10 +138,10 @@ void MainWindow::readSettings()
         const QString pm = settings.value("PanelMode").toString();
         if (pm == QLatin1String("disasm"))
             panelModeDisasmAct->setChecked(true);
-        else if (pm == QLatin1String("graphics"))
+        else if (pm == QLatin1String("graphics")) {
             panelModeGraphicsAct->setChecked(true);
-        else if (pm == QLatin1String("sound"))
-            panelModeSoundAct->setChecked(true);
+            hexEdit->setShowGraphicsPanel(true);
+        }
         else
             panelModeTextAct->setChecked(true);
     }
@@ -195,6 +195,10 @@ void MainWindow::readSettings()
                 bool    dockPointersVisible     = true;
                 bool    dockChangesVisible      = true;
                 bool    dockSectionsVisible     = true;
+                bool    dockAudioVisible        = false;
+                int     audioFormatIndex        = 0;
+                QString audioSampleRate;
+                double  audioPlaybackSpeed      = 1.0;
                 bool    dockTablesCollapsed     = false;
                 int     dockTablesExpW          = -1;
                 int     dockTablesExpH          = -1;
@@ -226,6 +230,10 @@ void MainWindow::readSettings()
                 t.dockPointersVisible  = settings.value(pfx + QStringLiteral("/dockPointersVisible"),  true).toBool();
                 t.dockChangesVisible   = settings.value(pfx + QStringLiteral("/dockChangesVisible"),   true).toBool();
                 t.dockSectionsVisible  = settings.value(pfx + QStringLiteral("/dockSectionsVisible"),  true).toBool();
+                t.dockAudioVisible     = settings.value(pfx + QStringLiteral("/dockAudioVisible"),     false).toBool();
+                t.audioFormatIndex     = settings.value(pfx + QStringLiteral("/audioFormatIndex"),     0).toInt();
+                t.audioSampleRate      = settings.value(pfx + QStringLiteral("/audioSampleRate")).toString();
+                t.audioPlaybackSpeed   = settings.value(pfx + QStringLiteral("/audioPlaybackSpeed"),   1.0).toDouble();
                 t.dockTablesCollapsed   = settings.value(pfx + QStringLiteral("/dockTablesCollapsed"),       false).toBool();
                 t.dockTablesExpW        = settings.value(pfx + QStringLiteral("/dockTablesExpandedWidth"),   -1).toInt();
                 t.dockTablesExpH        = settings.value(pfx + QStringLiteral("/dockTablesExpandedHeight"),  -1).toInt();
@@ -283,6 +291,10 @@ void MainWindow::readSettings()
                 s->dockPointersVisible      = t.dockPointersVisible;
                 s->dockChangesVisible       = t.dockChangesVisible;
                 s->dockSectionsVisible      = t.dockSectionsVisible;
+                s->dockAudioVisible         = t.dockAudioVisible;
+                s->audioFormatIndex         = t.audioFormatIndex;
+                s->audioSampleRate          = t.audioSampleRate;
+                s->audioPlaybackSpeed       = t.audioPlaybackSpeed;
                 s->dockVisibilityInitialized = true;
                 s->dockTablesCollapsed      = t.dockTablesCollapsed;
                 s->dockTablesExpandedWidth  = t.dockTablesExpW;
@@ -330,6 +342,13 @@ void MainWindow::readSettings()
                 m_pointersDock->setVisible(m_currentSession->dockPointersVisible);
                 m_changesDock->setVisible(m_currentSession->dockChangesVisible);
                 m_sectionsDock->setVisible(m_currentSession->dockSectionsVisible);
+                if (m_audioDock) {
+                    m_audioDock->setVisible(m_currentSession->dockAudioVisible);
+                    m_audioDock->setFormatIndex(m_currentSession->audioFormatIndex);
+                    if (!m_currentSession->audioSampleRate.isEmpty())
+                        m_audioDock->setSampleRateText(m_currentSession->audioSampleRate);
+                    m_audioDock->setPlaybackSpeed(m_currentSession->audioPlaybackSpeed);
+                }
 
                 if (showPointersAct)
                     showPointersAct->setChecked(m_currentSession->showPointers);
@@ -657,10 +676,10 @@ void MainWindow::updateHexEditorSettings()
         const QString pm = s.value("PanelMode").toString();
         if (pm == QLatin1String("disasm"))
             panelModeDisasmAct->setChecked(true);
-        else if (pm == QLatin1String("graphics"))
+        else if (pm == QLatin1String("graphics")) {
             panelModeGraphicsAct->setChecked(true);
-        else if (pm == QLatin1String("sound"))
-            panelModeSoundAct->setChecked(true);
+            hexEdit->setShowGraphicsPanel(true);
+        }
         else
             panelModeTextAct->setChecked(true);
     }
@@ -731,6 +750,10 @@ void MainWindow::writeSettings()
         settings.setValue(pfx + QStringLiteral("/dockPointersVisible"), s->dockPointersVisible);
         settings.setValue(pfx + QStringLiteral("/dockChangesVisible"),  s->dockChangesVisible);
         settings.setValue(pfx + QStringLiteral("/dockSectionsVisible"), s->dockSectionsVisible);
+        settings.setValue(pfx + QStringLiteral("/dockAudioVisible"),    s->dockAudioVisible);
+        settings.setValue(pfx + QStringLiteral("/audioFormatIndex"),    s->audioFormatIndex);
+        settings.setValue(pfx + QStringLiteral("/audioSampleRate"),     s->audioSampleRate);
+        settings.setValue(pfx + QStringLiteral("/audioPlaybackSpeed"),  s->audioPlaybackSpeed);
         settings.setValue(pfx + QStringLiteral("/dockTablesCollapsed"),       s->dockTablesCollapsed);
 
         if (isProject) {
@@ -739,6 +762,7 @@ void MainWindow::writeSettings()
             settings.setValue(projectPfx + QStringLiteral("/dockPointersVisible"), s->dockPointersVisible);
             settings.setValue(projectPfx + QStringLiteral("/dockChangesVisible"), s->dockChangesVisible);
             settings.setValue(projectPfx + QStringLiteral("/dockSectionsVisible"), s->dockSectionsVisible);
+            settings.setValue(projectPfx + QStringLiteral("/dockAudioVisible"), s->dockAudioVisible);
         }
         settings.setValue(pfx + QStringLiteral("/dockTablesExpandedWidth"),   s->dockTablesExpandedWidth);
         settings.setValue(pfx + QStringLiteral("/dockTablesExpandedHeight"),  s->dockTablesExpandedHeight);
@@ -795,6 +819,7 @@ void MainWindow::saveProjectDockVisibilityState() const
     settings.setValue(pfx + QStringLiteral("/dockPointersVisible"), m_pointersDock ? m_pointersDock->isVisible() : true);
     settings.setValue(pfx + QStringLiteral("/dockChangesVisible"), m_changesDock ? m_changesDock->isVisible() : true);
     settings.setValue(pfx + QStringLiteral("/dockSectionsVisible"), m_sectionsDock ? m_sectionsDock->isVisible() : true);
+    settings.setValue(pfx + QStringLiteral("/dockAudioVisible"), m_audioDock ? m_audioDock->isVisible() : false);
 }
 
 void MainWindow::restoreProjectDockVisibilityState(const QString &projectPath)
@@ -808,6 +833,7 @@ void MainWindow::restoreProjectDockVisibilityState(const QString &projectPath)
     const bool pointersVisible = settings.value(pfx + QStringLiteral("/dockPointersVisible"), true).toBool();
     const bool changesVisible = settings.value(pfx + QStringLiteral("/dockChangesVisible"), true).toBool();
     const bool sectionsVisible = settings.value(pfx + QStringLiteral("/dockSectionsVisible"), true).toBool();
+    const bool audioVisible = settings.value(pfx + QStringLiteral("/dockAudioVisible"), false).toBool();
 
     if (m_tablesDock)
         m_tablesDock->setVisible(tablesVisible);
@@ -817,12 +843,15 @@ void MainWindow::restoreProjectDockVisibilityState(const QString &projectPath)
         m_changesDock->setVisible(changesVisible);
     if (m_sectionsDock)
         m_sectionsDock->setVisible(sectionsVisible);
+    if (m_audioDock)
+        m_audioDock->setVisible(audioVisible);
 
     if (m_currentSession) {
         m_currentSession->dockTablesVisible = tablesVisible;
         m_currentSession->dockPointersVisible = pointersVisible;
         m_currentSession->dockChangesVisible = changesVisible;
         m_currentSession->dockSectionsVisible = sectionsVisible;
+        m_currentSession->dockAudioVisible = audioVisible;
         m_currentSession->dockVisibilityInitialized = true;
     }
 }

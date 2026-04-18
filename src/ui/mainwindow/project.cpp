@@ -184,6 +184,8 @@ void MainWindow::openProjectFile(const QString &path)
         m_sectionsDock->setRomTypeName(QString::fromLatin1(romTypeName(doc.romType())));
         m_sectionsDock->setCurrentRomType(doc.romType());
     }
+    if (m_audioDock)
+        m_audioDock->setRomType(doc.romType());
 
     // 6. Alignment (virtual line breaks) — block signal to avoid marking project modified on load
     {
@@ -634,6 +636,8 @@ void MainWindow::loadFile(const QString &fileName)
         m_sectionsDock->setRomTypeName(QString::fromLatin1(romTypeName(rom)));
         m_sectionsDock->setCurrentRomType(rom);
     }
+    if (m_audioDock)
+        m_audioDock->setRomType(rom);
 
     // Do NOT auto-scan sections on file load: sections are now created only on explicit
     // "Parse" action via SectionsDockWidget context menu to avoid unexpected behavior.
@@ -697,6 +701,8 @@ void MainWindow::loadFile(const QString &fileName, RomType suggestedRomType)
             m_sectionsDock->setRomTypeName(QString::fromLatin1(romTypeName(suggestedRomType)));
             m_sectionsDock->setCurrentRomType(suggestedRomType);
         }
+        if (m_audioDock)
+            m_audioDock->setRomType(suggestedRomType);
     }
 }
 
