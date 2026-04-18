@@ -6,4 +6,7 @@ SUBDIRS = \
     tst_datas \
     tst_hexdocument \
     tst_hexedit \
-    tst_settings
+    tst_settings \
+    tst_disassembler \
+    tst_audio \
+    tst_graphics
