@@ -289,8 +289,8 @@ void PointersDialog::quickSearch(qint64 clickBytePos)
 
     validateRangeInputs();
 
-    // Match the editor's current endianness, search the whole file, and skip
-    // text-optimization heuristics — they are irrelevant for a direct address search.
+    // Match the editor's current endianness. Search direction and other
+    // options are restored from per-tab state by setDialogState().
     switch (_hexEdit->byteOrder) {
     case ByteOrder::BigEndian:
         ui->rbBE->setChecked(true);
@@ -302,9 +302,6 @@ void PointersDialog::quickSearch(qint64 clickBytePos)
         ui->rbLE->setChecked(true);
         break;
     }
-    ui->rbBoth->setChecked(true);           // search pointers in the entire file
-    ui->cbOptimize->setChecked(false);      // no text optimization
-    ui->cbExcludeSelection->setChecked(false);
 
     // Restore pointer size from MainWindow (respects user's persisted preference)
     {

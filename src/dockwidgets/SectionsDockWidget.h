@@ -4,6 +4,7 @@
 #include "BaseDockWidget.h"
 #include "romdetect.h"
 #include <QPointer>
+#include <QSet>
 #include <QTreeWidget>
 #include <QToolButton>
 
@@ -27,6 +28,8 @@ public:
 
     void setSuppressRebuild(bool suppress) { m_suppressRebuild = suppress; }
     void setShowSectionsChecked(bool checked);
+    QVector<int> expandedGroupIds() const;
+    void setExpandedGroupIds(const QVector<int> &groupIds);
 
     void retranslateUi() override;
 
@@ -73,6 +76,8 @@ private:
     qint64                      m_lastHighlightedOffset = -1;
     bool                        m_suppressRebuild = false;
     bool                        m_rebuildingTree  = false;
+    QSet<int>                   m_forcedExpandedGroupIds;
+    bool                        m_hasForcedExpandedGroupIds = false;
 };
 
 #endif // SECTIONSDOCKWIDGET_H

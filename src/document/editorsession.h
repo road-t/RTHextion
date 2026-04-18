@@ -85,6 +85,9 @@ public:
     int  dockSectionsExpandedHeight = -1;
     bool dockStateInitialized = false;
 
+    // Per-tab expansion state of section tree groups.
+    QVector<int> sectionsExpandedGroupIds;
+
     /// Set during session restore from settings to defer cursor centering
     /// until the tab's editor becomes visible.
     bool scrollPending = false;
@@ -97,7 +100,7 @@ public:
     bool    searchRelative      = false;
 
     // Per-tab Find Pointers dialog state (options not covered by ROM profile)
-    int  ptrSearchDir        = 0;     // 0 = before, 1 = after, 2 = both
+    int  ptrSearchDir        = 2;     // 0 = before, 1 = after, 2 = both (whole file)
     bool ptrExcludeSelection = false;
     bool ptrAlignedOnly      = false;
     bool ptrOptimize         = false;

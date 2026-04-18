@@ -82,6 +82,7 @@ void MainWindow::saveCurrentSession()
         m_currentSession->dockSectionsCollapsed      = m_sectionsDock->isCollapsed();
         m_currentSession->dockSectionsExpandedWidth  = m_sectionsDock->expandedWidth();
         m_currentSession->dockSectionsExpandedHeight = m_sectionsDock->expandedHeight();
+        m_currentSession->sectionsExpandedGroupIds   = m_sectionsDock->expandedGroupIds();
     }
     m_currentSession->dockStateInitialized = true;
 
@@ -158,6 +159,7 @@ void MainWindow::restoreSession(EditorSession *session)
             m_sectionsDock->setSuppressRebuild(true);
             m_sectionsDock->setRomTypeName(QString::fromLatin1(romTypeName(m_detectedRomType)));
             m_sectionsDock->setCurrentRomType(m_detectedRomType);
+            m_sectionsDock->setExpandedGroupIds(session->sectionsExpandedGroupIds);
             m_sectionsDock->setSuppressRebuild(false);
             m_sectionsDock->refresh();
         }

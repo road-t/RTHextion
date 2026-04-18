@@ -1,5 +1,52 @@
 #include "internal.h"
 #include "encoding.h"
+#include <QRegularExpression>
+
+namespace {
+struct DisasmOperandLink {
+    int start = 0;
+    int length = 0;
+    qint64 target = -1;
+};
+
+static QVector<DisasmOperandLink> disasmPointerLinksForOperands(
+    const QString &operands,
+    PointerListModel *pointerModel,
+    qint64 fileSize)
+{
+    QVector<DisasmOperandLink> links;
+    if (!pointerModel || operands.isEmpty() || fileSize <= 0)
+        return links;
+
+    static const QRegularExpression kHexValueRx(
+        QStringLiteral("(?:\\$|0x)([0-9A-Fa-f]{1,8})"),
+        QRegularExpression::CaseInsensitiveOption);
+
+    QRegularExpressionMatchIterator it = kHexValueRx.globalMatch(operands);
+    while (it.hasNext()) {
+        const QRegularExpressionMatch m = it.next();
+        if (!m.hasMatch())
+            continue;
+
+        bool ok = false;
+        const QString digits = m.captured(1);
+        const qint64 target = digits.toLongLong(&ok, 16);
+        if (!ok || target < 0 || target >= fileSize)
+            continue;
+        if (!pointerModel->hasOffset(target))
+            continue;
+
+        const int start = m.capturedStart(1);
+        const int len = m.capturedLength(1);
+        if (start < 0 || len <= 0)
+            continue;
+
+        links.append({start, len, target});
+    }
+
+    return links;
+}
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HexEditor event handlers: keyboard, mouse, paint, resize
@@ -867,7 +914,12 @@ void HexEditor::mousePressEvent(QMouseEvent *event)
                 resetSelection(cPos);
 
             setCursorPosition(cPos);
-            setSelection(cPos);
+            const bool isDisasmClick = _showDisasm
+                || (_sectionModel && _sectionModel->displayModeAtOffset(cPos / 2) == SectionDisplay_Disasm);
+            // In disasm mode, simple click should only move the cursor.
+            // Keep selection updates for Shift-click (range selection) and mouse drag.
+            if (!isDisasmClick || event->modifiers() == Qt::ShiftModifier)
+                setSelection(cPos);
 
             if (_showPointers)
             {
@@ -1008,6 +1060,57 @@ void HexEditor::mouseDoubleClickEvent(QMouseEvent *event)
         const bool isDisasm = _showDisasm
             || (_sectionModel && _sectionModel->displayModeAtOffset(_bPosCurrent) == SectionDisplay_Disasm);
         if (isDisasm) {
+            const int clickX = static_cast<int>(event->position().x()) + horizontalScrollBar()->value();
+            const int clickY = static_cast<int>(event->position().y());
+
+            if (_asciiArea && clickX >= _pxPosAsciiX && clickY >= 0) {
+                const int rowStridePx = _pxCharHeight + kHexRowExtraGapPx;
+                const int row = clickY / rowStridePx;
+                if (row >= 0 && row < _visualRowStartBytes.size()) {
+                    const qint64 rowOffset = _visualRowStartBytes[row];
+                    const DisasmInstruction *rowInstr = disasmInstructionAtOffset(rowOffset);
+                    if (rowInstr && !rowInstr->operands.isEmpty()) {
+                        QString displayOps = rowInstr->operands;
+                        const bool clickableBranch = rowInstr->isBranch
+                            && rowInstr->branchTarget >= 0
+                            && rowInstr->branchTarget < _chunks->size();
+                        bool usingSectionLabel = false;
+                        if (clickableBranch && _sectionModel) {
+                            const QString label = _sectionModel->sectionNameAtStartOffset(rowInstr->branchTarget);
+                            if (!label.isEmpty()) {
+                                displayOps = label;
+                                usingSectionLabel = true;
+                            }
+                        }
+
+                        if (!usingSectionLabel) {
+                            const QVector<DisasmOperandLink> links = disasmPointerLinksForOperands(
+                                displayOps, &_pointers, _chunks->size());
+                            if (!links.isEmpty()) {
+                                const QFontMetrics fm = QFontMetrics(font());
+                                int opsStartX = _pxPosAsciiX + kAsciiAreaLeftPaddingPx;
+                                opsStartX += fm.horizontalAdvance(rowInstr->mnemonic);
+                                opsStartX += fm.horizontalAdvance(QLatin1Char(' '));
+
+                                for (const auto &link : links) {
+                                    const int prefixW = fm.horizontalAdvance(displayOps.left(link.start));
+                                    const int linkW = fm.horizontalAdvance(displayOps.mid(link.start, link.length));
+                                    const int linkStartX = opsStartX + prefixW;
+                                    const int linkEndX = linkStartX + linkW;
+                                    if (clickX >= linkStartX && clickX < linkEndX) {
+                                        setCursorPosition(link.target * 2);
+                                        ensureVisibleTop();
+                                        if (verticalScrollBar()->value() > 0)
+                                            verticalScrollBar()->setValue(verticalScrollBar()->value() - 1);
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             const DisasmInstruction *instr = disasmInstructionAtOffset(_bPosCurrent);
             if (instr && instr->isBranch && instr->branchTarget >= 0
                 && instr->branchTarget < _chunks->size())
@@ -1721,29 +1824,74 @@ void HexEditor::paintEvent(QPaintEvent *event)
                                         }
                                     }
 
-                                    const int opW = paintFm.horizontalAdvance(displayOps);
-                                    QRect opRect(textX, baseY, opW, _pxCharHeight);
-                                    if (instrSel) {
-                                        painter.fillRect(opRect, _brushSelection.color());
-                                        painter.setPen(_penSelection);
+                                    const QVector<DisasmOperandLink> pointerLinks =
+                                        (!instrSel && !usingSectionLabel)
+                                            ? disasmPointerLinksForOperands(displayOps, &_pointers, _chunks->size())
+                                            : QVector<DisasmOperandLink>();
+
+                                    if (instrSel || (clickableBranch && !usingSectionLabel) || pointerLinks.isEmpty()) {
+                                        const int opW = paintFm.horizontalAdvance(displayOps);
+                                        QRect opRect(textX, baseY, opW, _pxCharHeight);
+                                        if (instrSel) {
+                                            painter.fillRect(opRect, _brushSelection.color());
+                                            painter.setPen(_penSelection);
+                                        } else {
+                                            if (c != _asciiAreaColor)
+                                                painter.fillRect(opRect, c);
+                                            if (usingSectionLabel)
+                                                painter.fillRect(opRect, _brushPointers.color());
+                                            painter.setPen(QPen(instr->isBranch
+                                                ? palette().color(QPalette::Link) : _asciiFontColor));
+                                        }
+                                        if (clickableBranch && !instrSel) {
+                                            QFont uf = painter.font();
+                                            uf.setUnderline(true);
+                                            painter.setFont(uf);
+                                        }
+                                        painter.drawText(opRect, Qt::AlignLeft | Qt::AlignVCenter, displayOps);
+                                        if (clickableBranch && !instrSel) {
+                                            QFont uf = painter.font();
+                                            uf.setUnderline(false);
+                                            painter.setFont(uf);
+                                        }
                                     } else {
-                                        if (c != _asciiAreaColor)
-                                            painter.fillRect(opRect, c);
-                                        if (usingSectionLabel)
-                                            painter.fillRect(opRect, _brushPointers.color());
-                                        painter.setPen(QPen(instr->isBranch
-                                            ? palette().color(QPalette::Link) : _asciiFontColor));
-                                    }
-                                    if (clickableBranch && !instrSel) {
-                                        QFont uf = painter.font();
-                                        uf.setUnderline(true);
-                                        painter.setFont(uf);
-                                    }
-                                    painter.drawText(opRect, Qt::AlignLeft | Qt::AlignVCenter, displayOps);
-                                    if (clickableBranch && !instrSel) {
-                                        QFont uf = painter.font();
-                                        uf.setUnderline(false);
-                                        painter.setFont(uf);
+                                        int drawPos = 0;
+                                        int segX = textX;
+                                        const QPen savedPen = painter.pen();
+                                        const QFont savedFont = painter.font();
+
+                                        auto drawOpsSegment = [&](int start, int len, bool linked) {
+                                            if (len <= 0)
+                                                return;
+                                            const QString seg = displayOps.mid(start, len);
+                                            const int segW = paintFm.horizontalAdvance(seg);
+                                            QRect segRect(segX, baseY, segW, _pxCharHeight);
+
+                                            if (c != _asciiAreaColor)
+                                                painter.fillRect(segRect, c);
+                                            if (linked)
+                                                painter.fillRect(segRect, _brushPointers.color());
+
+                                            painter.setPen(linked ? QPen(palette().color(QPalette::Link))
+                                                                  : QPen(_asciiFontColor));
+                                            QFont f = savedFont;
+                                            f.setUnderline(linked);
+                                            painter.setFont(f);
+                                            painter.drawText(segRect, Qt::AlignLeft | Qt::AlignVCenter, seg);
+                                            segX += segW;
+                                        };
+
+                                        for (const auto &link : pointerLinks) {
+                                            if (link.start > drawPos)
+                                                drawOpsSegment(drawPos, link.start - drawPos, false);
+                                            drawOpsSegment(link.start, link.length, true);
+                                            drawPos = link.start + link.length;
+                                        }
+                                        if (drawPos < displayOps.size())
+                                            drawOpsSegment(drawPos, displayOps.size() - drawPos, false);
+
+                                        painter.setPen(savedPen);
+                                        painter.setFont(savedFont);
                                     }
                                 }
                             }

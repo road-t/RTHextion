@@ -206,7 +206,7 @@ private:
     void detectFunctionPointersOnly();
     int deepestSectionIndexForRange(qint64 selBegin, qint64 selEnd) const;
     bool canRemoveSelectionFromSection() const;
-    void removeSelectionFromSection();
+    void removeSelectionFromSection(const QString &newSectionName = QString());
     void parseHeaderSectionsImpl(bool pushToUndo);
     void detectAudioSamples();
     void detectAudioSamplesInRange(qint64 rangeStart, qint64 rangeEnd);

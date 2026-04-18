@@ -208,6 +208,11 @@ void MainWindow::readSettings()
                 bool    dockChangesCollapsed    = false;
                 int     dockChangesExpW         = -1;
                 int     dockChangesExpH         = -1;
+                int     ptrSearchDir            = 2;
+                bool    ptrExcludeSelection     = false;
+                bool    ptrAlignedOnly          = false;
+                bool    ptrOptimize             = false;
+                QVector<int> sectionsExpandedGroupIds;
             };
             QVector<TabData> tabs;
             for (int i = 0; i < tabCount; ++i) {
@@ -243,6 +248,17 @@ void MainWindow::readSettings()
                 t.dockChangesCollapsed  = settings.value(pfx + QStringLiteral("/dockChangesCollapsed"),      false).toBool();
                 t.dockChangesExpW       = settings.value(pfx + QStringLiteral("/dockChangesExpandedWidth"),  -1).toInt();
                 t.dockChangesExpH       = settings.value(pfx + QStringLiteral("/dockChangesExpandedHeight"), -1).toInt();
+                t.ptrSearchDir          = settings.value(pfx + QStringLiteral("/ptrSearchDir"), 2).toInt();
+                t.ptrExcludeSelection   = settings.value(pfx + QStringLiteral("/ptrExcludeSelection"), false).toBool();
+                t.ptrAlignedOnly        = settings.value(pfx + QStringLiteral("/ptrAlignedOnly"), false).toBool();
+                t.ptrOptimize           = settings.value(pfx + QStringLiteral("/ptrOptimize"), false).toBool();
+                const QStringList expandedIds = settings.value(pfx + QStringLiteral("/sectionsExpandedGroups")).toStringList();
+                for (const QString &id : expandedIds) {
+                    bool ok = false;
+                    const int gid = id.toInt(&ok);
+                    if (ok)
+                        t.sectionsExpandedGroupIds.append(gid);
+                }
                 tabs.append(t);
             }
 
@@ -305,6 +321,11 @@ void MainWindow::readSettings()
                 s->dockChangesCollapsed      = t.dockChangesCollapsed;
                 s->dockChangesExpandedWidth  = t.dockChangesExpW;
                 s->dockChangesExpandedHeight = t.dockChangesExpH;
+                s->ptrSearchDir              = t.ptrSearchDir;
+                s->ptrExcludeSelection       = t.ptrExcludeSelection;
+                s->ptrAlignedOnly            = t.ptrAlignedOnly;
+                s->ptrOptimize               = t.ptrOptimize;
+                s->sectionsExpandedGroupIds  = t.sectionsExpandedGroupIds;
                 s->dockStateInitialized = true;
             }
 
@@ -772,6 +793,15 @@ void MainWindow::writeSettings()
         settings.setValue(pfx + QStringLiteral("/dockChangesCollapsed"),      s->dockChangesCollapsed);
         settings.setValue(pfx + QStringLiteral("/dockChangesExpandedWidth"),  s->dockChangesExpandedWidth);
         settings.setValue(pfx + QStringLiteral("/dockChangesExpandedHeight"), s->dockChangesExpandedHeight);
+        settings.setValue(pfx + QStringLiteral("/ptrSearchDir"), s->ptrSearchDir);
+        settings.setValue(pfx + QStringLiteral("/ptrExcludeSelection"), s->ptrExcludeSelection);
+        settings.setValue(pfx + QStringLiteral("/ptrAlignedOnly"), s->ptrAlignedOnly);
+        settings.setValue(pfx + QStringLiteral("/ptrOptimize"), s->ptrOptimize);
+        QStringList expandedIds;
+        expandedIds.reserve(s->sectionsExpandedGroupIds.size());
+        for (int gid : s->sectionsExpandedGroupIds)
+            expandedIds.append(QString::number(gid));
+        settings.setValue(pfx + QStringLiteral("/sectionsExpandedGroups"), expandedIds);
 
         ++savedTabCount;
     }

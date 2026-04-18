@@ -413,7 +413,7 @@ bool MainWindow::canRemoveSelectionFromSection() const
     return selBegin > s.startOffset && selBegin < secEnd;
 }
 
-void MainWindow::removeSelectionFromSection()
+void MainWindow::removeSelectionFromSection(const QString &newSectionName)
 {
     if (!canRemoveSelectionFromSection())
         return;
@@ -422,9 +422,12 @@ void MainWindow::removeSelectionFromSection()
 
     // In the new model, "removing from section" = creating a new section at selBegin
     // which effectively splits the existing section at that point.
-    const int n = m_sectionModel->count() + 1;
     Section newSec;
-    newSec.name = tr("Section %1").arg(n);
+    const QString trimmedName = newSectionName.trimmed();
+    if (!trimmedName.isEmpty())
+        newSec.name = trimmedName;
+    else
+        newSec.name = tr("Section %1").arg(m_sectionModel->count() + 1);
     newSec.startOffset = selBegin;
     newSec.color = SectionListModel::randomPastelColor();
     m_sectionModel->addSection(newSec);

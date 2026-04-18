@@ -27,6 +27,25 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         || (m_sectionModel && m_sectionModel->displayModeAtOffset(bytePos) == SectionDisplay_Disasm);
     const bool canRemoveFromSection = hasSelection && canRemoveSelectionFromSection();
 
+    auto addToSectionWithPrompt = [this, canRemoveFromSection]() {
+        if (!canRemoveFromSection)
+            return;
+        bool ok = false;
+        const QString name = QInputDialog::getText(
+            this,
+            tr("Add to section"),
+            tr("New section name:"),
+            QLineEdit::Normal,
+            tr("Section %1").arg(m_sectionModel ? (m_sectionModel->count() + 1) : 1),
+            &ok);
+        if (!ok)
+            return;
+        const QString trimmed = name.trimmed();
+        if (trimmed.isEmpty())
+            return;
+        removeSelectionFromSection(trimmed);
+    };
+
     const qint64 ptrOffset = currentPointerOffset();
 
     struct PointerLengthOption {
@@ -508,7 +527,7 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         QAction *fillWithAct1 = nullptr;
         QAction *vfFormatAct1 = nullptr;
         QAction *vfRemoveAct1 = nullptr;
-        QAction *removeFromSectionAct1 = nullptr;
+        QAction *addToSectionAct1 = nullptr;
         if (hasSelection) {
             menu.addSeparator();
             editScriptAct1 = menu.addAction(tr("Edit script..."));
@@ -516,8 +535,8 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
                 fillWithAct1 = menu.addAction(tr("Fill with") + "...");
             vfFormatAct1 = menu.addAction(tr("Virtually format") + "...");
             vfRemoveAct1 = menu.addAction(tr("Remove virtual formatting"));
-            removeFromSectionAct1 = menu.addAction(tr("Remove from section"));
-            removeFromSectionAct1->setEnabled(canRemoveFromSection);
+            addToSectionAct1 = menu.addAction(tr("Add to section"));
+            addToSectionAct1->setEnabled(canRemoveFromSection);
         }
 
         QAction *chosen = menu.exec(globalPos);
@@ -608,9 +627,9 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
             return;
         }
 
-        if (removeFromSectionAct1 && chosen == removeFromSectionAct1)
+        if (addToSectionAct1 && chosen == addToSectionAct1)
         {
-            removeSelectionFromSection();
+            addToSectionWithPrompt();
             return;
         }
 
@@ -673,7 +692,7 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         QAction *fillWithAct2 = nullptr;
         QAction *vfFormatAct2 = nullptr;
         QAction *vfRemoveAct2 = nullptr;
-        QAction *removeFromSectionAct2 = nullptr;
+        QAction *addToSectionAct2 = nullptr;
         if (hasSelection) {
             menu.addSeparator();
             editScriptAct2 = menu.addAction(tr("Edit script..."));
@@ -681,8 +700,8 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
                 fillWithAct2 = menu.addAction(tr("Fill with") + "...");
             vfFormatAct2 = menu.addAction(tr("Virtually format") + "...");
             vfRemoveAct2 = menu.addAction(tr("Remove virtual formatting"));
-            removeFromSectionAct2 = menu.addAction(tr("Remove from section"));
-            removeFromSectionAct2->setEnabled(canRemoveFromSection);
+            addToSectionAct2 = menu.addAction(tr("Add to section"));
+            addToSectionAct2->setEnabled(canRemoveFromSection);
         }
 
         QAction *chosen = menu.exec(globalPos);
@@ -733,9 +752,9 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
             return;
         }
 
-        if (removeFromSectionAct2 && chosen == removeFromSectionAct2)
+        if (addToSectionAct2 && chosen == addToSectionAct2)
         {
-            removeSelectionFromSection();
+            addToSectionWithPrompt();
             return;
         }
 
@@ -834,7 +853,7 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
     QAction *fillWithAct3 = nullptr;
     QAction *vfFormatAct3 = nullptr;
     QAction *vfRemoveAct3 = nullptr;
-    QAction *removeFromSectionAct3 = nullptr;
+    QAction *addToSectionAct3 = nullptr;
     if (hasSelection) {
         menu.addSeparator();
         editScriptAct3 = menu.addAction(tr("Edit script..."));
@@ -842,14 +861,8 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
             fillWithAct3 = menu.addAction(tr("Fill with") + "...");
         vfFormatAct3 = menu.addAction(tr("Virtually format") + "...");
         vfRemoveAct3 = menu.addAction(tr("Remove virtual formatting"));
-        removeFromSectionAct3 = menu.addAction(tr("Remove from section"));
-        removeFromSectionAct3->setEnabled(canRemoveFromSection);
-    }
-
-    QAction *addSectionAct = nullptr;
-    if (hasSelection) {
-        menu.addSeparator();
-        addSectionAct = menu.addAction(tr("Add section"));
+        addToSectionAct3 = menu.addAction(tr("Add to section"));
+        addToSectionAct3->setEnabled(canRemoveFromSection);
     }
 
     // ── Audio actions ──
@@ -954,13 +967,9 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
     {
         removeVirtualFormatting(hexEdit->getSelectionBegin(), hexEdit->getSelectionEnd());
     }
-    else if (removeFromSectionAct3 && chosen == removeFromSectionAct3)
+    else if (addToSectionAct3 && chosen == addToSectionAct3)
     {
-        removeSelectionFromSection();
-    }
-    else if (addSectionAct && chosen == addSectionAct)
-    {
-        addSectionFromSelection(-1);
+        addToSectionWithPrompt();
     }
     else if (playAudioAct && chosen == playAudioAct)
     {

@@ -127,6 +127,34 @@ void SectionsDockWidget::setShowSectionsChecked(bool checked)
     m_showSectionsBtn->setChecked(checked);
 }
 
+QVector<int> SectionsDockWidget::expandedGroupIds() const
+{
+    QVector<int> result;
+    if (!m_tree)
+        return result;
+
+    std::function<void(QTreeWidgetItem *)> collect = [&](QTreeWidgetItem *item) {
+        const int gid = item->data(0, kRoleGroupId).toInt();
+        if (gid >= 0 && item->isExpanded())
+            result.append(gid);
+        for (int i = 0; i < item->childCount(); ++i)
+            collect(item->child(i));
+    };
+
+    if (QTreeWidgetItem *root = m_tree->topLevelItem(0))
+        collect(root);
+
+    return result;
+}
+
+void SectionsDockWidget::setExpandedGroupIds(const QVector<int> &groupIds)
+{
+    m_forcedExpandedGroupIds.clear();
+    for (int gid : groupIds)
+        m_forcedExpandedGroupIds.insert(gid);
+    m_hasForcedExpandedGroupIds = true;
+}
+
 void SectionsDockWidget::retranslateUi()
 {
     setWindowTitle(tr("Sections"));
@@ -307,9 +335,20 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
                 this, tr("Group"), tr("Group name:"),
                 QLineEdit::Normal, tr("Group"), &ok);
             if (ok && !name.isEmpty()) {
+                int parentGroupId = -1;
+                if (!selectedIndices.isEmpty()) {
+                    parentGroupId = m_model->at(selectedIndices.first()).groupId;
+                    for (int idx : selectedIndices) {
+                        if (m_model->at(idx).groupId != parentGroupId) {
+                            parentGroupId = -1;
+                            break;
+                        }
+                    }
+                }
                 SectionGroup ng;
                 ng.name = name;
                 ng.color = SectionListModel::randomPastelColor();
+                ng.parentGroupId = parentGroupId;
                 const int newGid = m_model->addGroup(ng);
                 QVector<Section> secs = m_model->sections();
                 for (int idx : selectedIndices)
@@ -538,6 +577,7 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
             SectionGroup ng;
             ng.name = name;
             ng.color = SectionListModel::randomPastelColor();
+            ng.parentGroupId = section.groupId;
             const int newGid = m_model->addGroup(ng);
             Section s = m_model->at(sectionIdx);
             s.groupId = newGid;
@@ -595,14 +635,10 @@ void SectionsDockWidget::rebuildTree()
     const QSignalBlocker blocker(m_tree);
 
     // ── Save current expansion state before clearing ──────────────────────
-    // expandedGroupIds: groups that were explicitly expanded
-    // prevGroupIds:     all groups that existed (to detect new groups)
     QSet<int> expandedGroupIds;
-    QSet<int> prevGroupIds;
     std::function<void(QTreeWidgetItem *)> collectState = [&](QTreeWidgetItem *item) {
         const int gid = item->data(0, kRoleGroupId).toInt();
         if (gid >= 0) {
-            prevGroupIds.insert(gid);
             if (item->isExpanded())
                 expandedGroupIds.insert(gid);
         }
@@ -611,6 +647,9 @@ void SectionsDockWidget::rebuildTree()
     };
     if (QTreeWidgetItem *oldRoot = m_tree->topLevelItem(0))
         collectState(oldRoot);
+
+    if (m_hasForcedExpandedGroupIds)
+        expandedGroupIds = m_forcedExpandedGroupIds;
 
     m_tree->clear();
 
@@ -710,6 +749,8 @@ void SectionsDockWidget::rebuildTree()
         addSectionItem(romRoot, si);
 
     m_tree->resizeColumnToContents(0);
+    m_hasForcedExpandedGroupIds = false;
+    m_forcedExpandedGroupIds.clear();
     m_rebuildingTree = false;
 
     // Re-sync tree selection with the current cursor position so that
