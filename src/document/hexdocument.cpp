@@ -123,16 +123,18 @@ void HexDocument::restorePointers(PointerListModel *model) const
 void HexDocument::snapshotSections(SectionListModel *model)
 {
     sectionSnapshot.clear();
+    groupSnapshot.clear();
     if (!model)
         return;
     sectionSnapshot = model->sections();
+    groupSnapshot = model->groups();
 }
 
 void HexDocument::restoreSections(SectionListModel *model) const
 {
     if (!model)
         return;
-    model->setSections(sectionSnapshot);
+    model->setSectionsAndGroups(sectionSnapshot, groupSnapshot);
 }
 
 // ---------------------------------------------------------------------------
@@ -351,6 +353,20 @@ bool HexDocument::saveProject(const QString &path,
 
     // Sections
     out << "\nshow_sections: " << (showSections ? "true" : "false") << "\n";
+    if (!groupSnapshot.isEmpty())
+    {
+        out << "\nsection_groups:\n";
+        for (const auto &g : groupSnapshot)
+        {
+            out << "  - name: " << yamlEscape(g.name) << "\n";
+            if (g.color.isValid())
+                out << "    color: " << g.color.name(QColor::HexArgb) << "\n";
+            out << "    tree_order: " << g.treeOrder << "\n";
+            if (g.parentGroupId >= 0)
+                out << "    parent_group: " << g.parentGroupId << "\n";
+        }
+    }
+
     if (!sectionSnapshot.isEmpty())
     {
         out << "\nsections:\n";
@@ -358,13 +374,22 @@ bool HexDocument::saveProject(const QString &path,
         {
             out << "  - name: " << yamlEscape(s.name) << "\n";
             out << "    start: 0x" << QString::number(s.startOffset, 16).toUpper() << "\n";
-            out << "    end: 0x" << QString::number(s.endOffset, 16).toUpper() << "\n";
-            out << "    color: " << s.color.name() << "\n";
+            out << "    color: " << s.color.name(QColor::HexArgb) << "\n";
             out << "    display: " << s.displayMode << "\n";
             if (s.displayMode == SectionDisplay_Disasm && s.disasmCpu != RomType::Unknown)
                 out << "    disasm_cpu: " << static_cast<int>(s.disasmCpu) << "\n";
-            if (s.parentIndex >= 0)
-                out << "    parent: " << s.parentIndex << "\n";
+            if (s.displayMode == SectionDisplay_Graphics) {
+                out << "    tile_codec: " << static_cast<int>(s.tileCodec) << "\n";
+                out << "    tile_cols: " << s.tileCols << "\n";
+                if (!s.palette.isEmpty()) {
+                    out << "    palette:";
+                    for (const QRgb c : s.palette)
+                        out << " " << QString::number(c & 0xFFFFFF, 16).rightJustified(6, QLatin1Char('0'));
+                    out << "\n";
+                }
+            }
+            if (s.groupId >= 0)
+                out << "    group: " << s.groupId << "\n";
         }
     }
 
@@ -414,7 +439,7 @@ bool HexDocument::loadProject(const QString &path)
     m_alignmentOffsets.clear();
     originalFileSize = -1;
 
-    enum class Section { Root, Pointers, TableEntries, Original, Tables, TablesEntries, Alignment, Sections };
+    enum class Section { Root, Pointers, TableEntries, Original, Tables, TablesEntries, Alignment, Sections, SectionGroups };
     Section section = Section::Root;
 
     // Temp for building a pointer entry
@@ -486,6 +511,12 @@ bool HexDocument::loadProject(const QString &path)
         if (stripped == QLatin1String("alignment:"))
         {
             switchSection(Section::Alignment);
+            continue;
+        }
+
+        if (stripped == QLatin1String("section_groups:"))
+        {
+            switchSection(Section::SectionGroups);
             continue;
         }
 
@@ -715,6 +746,51 @@ bool HexDocument::loadProject(const QString &path)
         }
 
         // --- Sections section: each entry is "  - name: ...\n    start: ...\n    end: ...\n    color: ..." ---
+        // --- Section groups ---
+        if (section == Section::SectionGroups)
+        {
+            if (stripped.startsWith(QLatin1String("- name:")))
+            {
+                ::SectionGroup g;
+                g.name = yamlUnescape(stripped.mid(7).trimmed());
+                groupSnapshot.append(g);
+                continue;
+            }
+            if (!groupSnapshot.isEmpty())
+            {
+                auto &cur = groupSnapshot.last();
+                if (stripped.startsWith(QLatin1String("color:")))
+                {
+                    cur.color = QColor(stripped.mid(6).trimmed());
+                    continue;
+                }
+                if (stripped.startsWith(QLatin1String("tree_order:")))
+                {
+                    bool ok = false;
+                    const int to = stripped.mid(11).trimmed().toInt(&ok);
+                    if (ok) cur.treeOrder = to;
+                    continue;
+                }
+                if (stripped.startsWith(QLatin1String("parent_group:")))
+                {
+                    bool ok = false;
+                    const int pg = stripped.mid(13).trimmed().toInt(&ok);
+                    if (ok && pg >= 0) cur.parentGroupId = pg;
+                    continue;
+                }
+            }
+            if (!stripped.startsWith(QLatin1Char('-')) && !stripped.startsWith(QLatin1String("color"))
+                && !stripped.startsWith(QLatin1String("tree_order"))
+                && !stripped.startsWith(QLatin1String("parent_group")))
+            {
+                section = Section::Root;
+            }
+            else
+            {
+                continue;
+            }
+        }
+
         if (section == Section::Sections)
         {
             if (stripped.startsWith(QLatin1String("- name:")))
@@ -738,10 +814,7 @@ bool HexDocument::loadProject(const QString &path)
                 }
                 if (stripped.startsWith(QLatin1String("end:")))
                 {
-                    QString v = stripped.mid(4).trimmed();
-                    bool ok = false;
-                    cur.endOffset = v.startsWith(QLatin1String("0x"), Qt::CaseInsensitive)
-                        ? v.mid(2).toLongLong(&ok, 16) : v.toLongLong(&ok);
+                    // Legacy: "end:" is ignored in the new model (section ends at next start)
                     continue;
                 }
                 if (stripped.startsWith(QLatin1String("color:")))
@@ -751,9 +824,14 @@ bool HexDocument::loadProject(const QString &path)
                 }
                 if (stripped.startsWith(QLatin1String("parent:")))
                 {
+                    // Legacy: "parent:" is ignored in the new model
+                    continue;
+                }
+                if (stripped.startsWith(QLatin1String("group:")))
+                {
                     bool ok = false;
-                    const int pi = stripped.mid(7).trimmed().toInt(&ok);
-                    if (ok) cur.parentIndex = pi;
+                    const int gi = stripped.mid(6).trimmed().toInt(&ok);
+                    if (ok) cur.groupId = gi;
                     continue;
                 }
                 if (stripped.startsWith(QLatin1String("display:")))
@@ -770,16 +848,43 @@ bool HexDocument::loadProject(const QString &path)
                     if (ok) cur.disasmCpu = static_cast<RomType>(dc);
                     continue;
                 }
+                if (stripped.startsWith(QLatin1String("tile_codec:")))
+                {
+                    bool ok = false;
+                    const int tc = stripped.mid(11).trimmed().toInt(&ok);
+                    if (ok) cur.tileCodec = static_cast<TileCodec>(tc);
+                    continue;
+                }
+                if (stripped.startsWith(QLatin1String("tile_cols:")))
+                {
+                    bool ok = false;
+                    const int tc = stripped.mid(10).trimmed().toInt(&ok);
+                    if (ok && tc > 0) cur.tileCols = tc;
+                    continue;
+                }
+                if (stripped.startsWith(QLatin1String("palette:")))
+                {
+                    const QStringList colors = stripped.mid(8).trimmed().split(QLatin1Char(' '), Qt::SkipEmptyParts);
+                    cur.palette.clear();
+                    for (const QString &c : colors) {
+                        bool ok;
+                        const uint v = c.toUInt(&ok, 16);
+                        if (ok) cur.palette.append(qRgb((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF));
+                    }
+                    continue;
+                }
             }
 
-            // Unrecognised line — leave sections section
             if (!stripped.startsWith(QLatin1Char('-')) && !stripped.startsWith(QLatin1String("start"))
                 && !stripped.startsWith(QLatin1String("end")) && !stripped.startsWith(QLatin1String("color"))
-                && !stripped.startsWith(QLatin1String("parent")) && !stripped.startsWith(QLatin1String("display"))
-                && !stripped.startsWith(QLatin1String("disasm_cpu")))
+                && !stripped.startsWith(QLatin1String("parent")) && !stripped.startsWith(QLatin1String("group"))
+                && !stripped.startsWith(QLatin1String("display"))
+                && !stripped.startsWith(QLatin1String("disasm_cpu"))
+                && !stripped.startsWith(QLatin1String("tile_codec"))
+                && !stripped.startsWith(QLatin1String("tile_cols"))
+                && !stripped.startsWith(QLatin1String("palette")))
             {
                 section = Section::Root;
-                // Fall through to root parsing
             }
             else
             {
@@ -980,6 +1085,15 @@ bool HexDocument::loadProject(const QString &path)
             entry.table->buildFallbackDecodeEntries();
     }
 
+    // Fix legacy audio/graphics section colors: old projects may have saved without
+    // proper alpha channel.  Restore semi-transparent color.
+    for (auto &s : sectionSnapshot) {
+        if (s.displayMode == SectionDisplay_Audio && s.color.alpha() > 200)
+            s.color.setAlpha(0x40);
+        if (s.displayMode == SectionDisplay_Graphics && s.color.alpha() > 200)
+            s.color.setAlpha(0x40);
+    }
+
     // If we loaded a legacy single table but no multi-tables, migrate it
     if (tables.isEmpty() && translationTable && translationTable->size() > 0)
     {
@@ -989,6 +1103,17 @@ bool HexDocument::loadProject(const QString &path)
         translationTable = nullptr;  // ownership transferred
         tables.append(dte);
         activeTableIndex = useTable ? 0 : -1;
+    }
+
+    // If treeOrder values are all zero (old project or not set), assign defaults:
+    // groups in definition order (0, 1, 2, ...).
+    {
+        bool anyNonZero = false;
+        for (const auto &g : groupSnapshot) if (g.treeOrder != 0) { anyNonZero = true; break; }
+        if (!anyNonZero && !groupSnapshot.isEmpty()) {
+            for (int i = 0; i < groupSnapshot.size(); ++i)
+                groupSnapshot[i].treeOrder = i;
+        }
     }
 
     f.close();

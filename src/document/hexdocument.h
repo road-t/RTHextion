@@ -112,6 +112,7 @@ public:
     // ---- Sections ----
 
     QVector<Section> sectionSnapshot;
+    QVector<SectionGroup> groupSnapshot;
 
     // Dock layout / columns state — saved to project but NOT dirty-tracked
     // (pure UI geometry; losing it is harmless).

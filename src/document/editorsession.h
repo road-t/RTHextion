@@ -60,6 +60,14 @@ public:
     bool dockPointersVisible = true;
     bool dockChangesVisible = true;
     bool dockSectionsVisible = true;
+    bool dockAudioVisible = false;
+    bool dockGraphicsVisible = false;
+
+    // Per-tab audio dock parameters
+    int  audioFormatIndex = 0;     // combo index in AudioDockWidget (0 = Auto)
+    QString audioSampleRate;       // sample rate text (e.g. "8000")
+    double audioPlaybackSpeed = 1.0;
+
     bool dockVisibilityInitialized = false;
 
     // Per-tab dock collapse/size state (captured on tab switch, applied on tab switch)
