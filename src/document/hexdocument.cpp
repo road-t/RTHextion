@@ -78,6 +78,7 @@ void HexDocument::setPointerSize(int v)
 void HexDocument::setPointerSnapshot(const QVector<QPair<qint64, qint64>> &v)
 {
     m_pointerSnapshot = v;
+    m_pointerNameSnapshot.clear();
     markDirty();
 }
 
@@ -93,6 +94,7 @@ void HexDocument::setAlignmentOffsets(const QVector<qint64> &v)
 void HexDocument::snapshotPointers(PointerListModel *model)
 {
     m_pointerSnapshot.clear();
+    m_pointerNameSnapshot.clear();
 
     if (!model)
         return;
@@ -106,6 +108,9 @@ void HexDocument::snapshotPointers(PointerListModel *model)
         const qint64 target = model->getOffset(ptrOfs);
         const int size = model->getPointerSize(ptrOfs);
         m_pointerSnapshot.append({ptrOfs, PointerListModel::encodePtrValue(target, size)});
+        const QString targetName = model->offsetName(target);
+        if (!targetName.isEmpty())
+            m_pointerNameSnapshot.insert(target, targetName);
     }
 }
 
@@ -118,6 +123,8 @@ void HexDocument::restorePointers(PointerListModel *model) const
 
     if (!m_pointerSnapshot.isEmpty())
         model->addPointersBatch(m_pointerSnapshot);
+    if (!m_pointerNameSnapshot.isEmpty())
+        model->setOffsetNames(m_pointerNameSnapshot);
 }
 
 void HexDocument::snapshotSections(SectionListModel *model)
@@ -317,8 +324,12 @@ bool HexDocument::saveProject(const QString &path,
         for (const auto &p : m_pointerSnapshot)
         {
             out << "  - offset: 0x" << QString::number(p.first, 16).toUpper() << "\n";
-            out << "    target: 0x" << QString::number(PointerListModel::decodePtrTarget(p.second), 16).toUpper() << "\n";
+            const qint64 target = PointerListModel::decodePtrTarget(p.second);
+            out << "    target: 0x" << QString::number(target, 16).toUpper() << "\n";
             out << "    size: " << PointerListModel::decodePtrSize(p.second) << "\n";
+            const QString name = m_pointerNameSnapshot.value(target);
+            if (!name.isEmpty())
+                out << "    name: " << yamlEscape(name) << "\n";
         }
     }
 
@@ -430,6 +441,7 @@ bool HexDocument::loadProject(const QString &path)
     m_byteOrder = ByteOrder::LittleEndian;
     m_pointerOffset = defaultPointerOffset(RomType::Unknown);
     m_pointerSnapshot.clear();
+    m_pointerNameSnapshot.clear();
     dockLayoutState.clear();
     tablesColumnsState.clear();
     cursorPosition = 0;
@@ -446,6 +458,7 @@ bool HexDocument::loadProject(const QString &path)
     qint64 ptrOffset = -1;
     qint64 ptrTarget = -1;
     int    ptrSize   = 4;
+    QString ptrName;
 
     // Temp for table entries
     bool hasEmbeddedTable = false;
@@ -456,11 +469,14 @@ bool HexDocument::loadProject(const QString &path)
         if (ptrOffset >= 0 && ptrTarget >= 0)
         {
             m_pointerSnapshot.append({ptrOffset, PointerListModel::encodePtrValue(ptrTarget, ptrSize)});
+            if (!ptrName.trimmed().isEmpty())
+                m_pointerNameSnapshot.insert(ptrTarget, ptrName.trimmed());
         }
 
         ptrOffset = -1;
         ptrTarget = -1;
         ptrSize = 4;
+        ptrName.clear();
     };
 
     auto switchSection = [&](Section newSection)
@@ -930,6 +946,11 @@ bool HexDocument::loadProject(const QString &path)
             {
                 ptrSize = val.toInt();
                 if (ptrSize < 2 || ptrSize > 4) ptrSize = 4;
+                continue;
+            }
+            else if (key == QLatin1String("name"))
+            {
+                ptrName = yamlUnescape(val);
                 continue;
             }
 

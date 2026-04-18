@@ -96,15 +96,16 @@ void PointersDockWidget::setHexEdit(HexEditor *hexEdit)
     m_hexEdit = hexEdit;
     m_model = m_hexEdit ? m_hexEdit->pointers() : nullptr;
     if (m_model)
-        m_model->setSectionNames(QStringList() << tr("#") << tr("Offset") << tr("Pointer") << tr("Data"));
+        m_model->setSectionNames(QStringList() << tr("#") << tr("Offset") << tr("Pointer") << tr("Name") << tr("Data"));
     m_view->setModel(m_model);
 
     // Column widths: narrow row# col, two fixed, last stretches
     m_view->setColumnWidth(0, 30);
     m_view->setColumnWidth(1, 80);
     m_view->setColumnWidth(2, 80);
+    m_view->setColumnWidth(3, 140);
     if (m_model)
-        m_view->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Stretch);
+        m_view->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Stretch);
 
     if (m_hexEdit)
         connect(m_hexEdit, &HexEditor::selectionChanged,
@@ -162,7 +163,7 @@ void PointersDockWidget::retranslateUi()
     m_deleteAct->setText(tr("Delete"));
     m_cleanAllAct->setText(tr("Drop all"));
     if (m_model)
-        m_model->setSectionNames(QStringList() << tr("#") << tr("Offset") << tr("Pointer") << tr("Data"));
+        m_model->setSectionNames(QStringList() << tr("#") << tr("Offset") << tr("Pointer") << tr("Name") << tr("Data"));
 }
 
 void PointersDockWidget::onHexSelectionChanged(qint64 start, qint64 end)

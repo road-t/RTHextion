@@ -99,6 +99,7 @@ public:
 
     const QVector<QPair<qint64, qint64>> &pointerSnapshot() const { return m_pointerSnapshot; }
     void setPointerSnapshot(const QVector<QPair<qint64, qint64>> &v);
+    const QMap<qint64, QString> &pointerNameSnapshot() const { return m_pointerNameSnapshot; }
 
     // ---- Cursor position (saved but does NOT dirty the project) ----
 
@@ -158,6 +159,7 @@ private:
     int       m_pointerSize = 4;
 
     QVector<QPair<qint64, qint64>> m_pointerSnapshot;
+    QMap<qint64, QString> m_pointerNameSnapshot;
 
     QVector<qint64> m_alignmentOffsets;
 

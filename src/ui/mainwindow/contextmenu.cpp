@@ -95,6 +95,27 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         hexEdit->viewport()->update();
     };
 
+    auto renameOffsetWithPrompt = [&](qint64 targetOffset)
+    {
+        if (!model || targetOffset < 0)
+            return;
+
+        bool ok = false;
+        const QString currentName = model->offsetName(targetOffset);
+        const QString name = QInputDialog::getText(
+            this,
+            tr("Rename offset"),
+            tr("Offset name:"),
+            QLineEdit::Normal,
+            currentName,
+            &ok);
+        if (!ok)
+            return;
+
+        if (model->setOffsetName(targetOffset, name))
+            refreshPointersUi();
+    };
+
     auto selectedPointerOffsetsForDrop = [&]() -> QVector<qint64>
     {
         QVector<qint64> result;
@@ -473,8 +494,175 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         return;
     }
 
-    // 1) Right click on a pointer entry (full pointer length is clickable).
-    if (pointerStart >= 0 && hexEdit->showPointers())
+    // 2) Right click on offset that has incoming pointers (PRIORITY: checked first).
+    if (model->hasOffset(bytePos) && hexEdit->showPointers())
+    {
+        QMenu menu(this);
+        QAction *quickSearchAct2 = menu.addAction(tr("Quick pointer search"));
+        QAction *findPtrAct2     = menu.addAction(tr("Find pointers") + QString("..."));
+        menu.addSeparator();
+
+        const QList<qint64> ptrs = model->getPointers(bytePos);
+        QList<QAction *> ptrActs;
+        ptrActs.reserve(ptrs.size());
+        QAction *jumpToPointerAct = nullptr;
+
+        if (ptrs.size() == 1)
+        {
+            jumpToPointerAct = menu.addAction(
+                tr("Jump to pointer") + QStringLiteral(": 0x%1")
+                    .arg(ptrs[0], 8, 16, QChar('0')).toUpper());
+        }
+        else
+        {
+            QMenu *subJmp = menu.addMenu(tr("Jump to pointer"));
+            for (const qint64 ptr : ptrs)
+            {
+                QAction *ptrAct = subJmp->addAction(
+                    QStringLiteral("0x%1").arg(ptr, 8, 16, QChar('0')).toUpper());
+                ptrActs.append(ptrAct);
+            }
+        }
+
+        menu.addSeparator();
+        QAction *dropAllAct = menu.addAction(tr("Drop pointers"));
+        QAction *renameOffsetAct = menu.addAction(tr("Rename offset"));
+        QAction *dropSelectionPtrsAct = nullptr;
+        QVector<qint64> dropSelectionPtrs;
+        if (hasSelection)
+        {
+            dropSelectionPtrs = selectedPointerOffsetsForDrop();
+            dropSelectionPtrsAct = menu.addAction(tr("Drop all pointers"));
+            dropSelectionPtrsAct->setEnabled(!dropSelectionPtrs.isEmpty());
+        }
+        QAction *editScriptAct2 = nullptr;
+        QMap<QAction *, PointerLengthOption> addPointerActs;
+        if (!hasSelection)
+            addPointerActs = addPointerLengthMenu(menu);
+
+        auto clipActs = addClipboardActions(menu);
+
+        QAction *fillWithAct2 = nullptr;
+        QAction *vfFormatAct2 = nullptr;
+        QAction *vfRemoveAct2 = nullptr;
+        QAction *addToSectionAct2 = nullptr;
+        if (hasSelection) {
+            menu.addSeparator();
+            editScriptAct2 = menu.addAction(tr("Edit script..."));
+            if (!isReadOnly)
+                fillWithAct2 = menu.addAction(tr("Fill with") + "...");
+            vfFormatAct2 = menu.addAction(tr("Virtually format") + "...");
+            vfRemoveAct2 = menu.addAction(tr("Remove virtual formatting"));
+            addToSectionAct2 = menu.addAction(tr("Add to section"));
+            addToSectionAct2->setEnabled(canRemoveFromSection);
+        }
+
+        QAction *chosen = menu.exec(globalPos);
+        if (!chosen)
+            return;
+
+        if (handleClipboardAction(chosen, clipActs))
+            return;
+        if (handleFindPtrAction(chosen, quickSearchAct2, findPtrAct2))
+            return;
+
+        if (editScriptAct2 && chosen == editScriptAct2)
+        {
+            dumpScript();
+            return;
+        }
+
+        if (fillWithAct2 && chosen == fillWithAct2)
+        {
+            const qint64 selBegin = hexEdit->getSelectionBegin();
+            const qint64 selLen   = hexEdit->getSelectionEnd() - selBegin;
+            const QVector<TableTab> tables = m_tablesDock ? m_tablesDock->allTables() : QVector<TableTab>();
+            FillWithDialog dlg(selLen, tables, this);
+            if (dlg.exec() == QDialog::Accepted) {
+                const QByteArray unit = dlg.fillByte();
+                const int len = dlg.fillLength();
+                QByteArray fill;
+                fill.reserve(len);
+                for (int i = 0; i < len; i += unit.size())
+                    fill.append(unit.left(qMin(unit.size(), len - i)));
+                fill.truncate(len);
+                hexEdit->replace(selBegin, len, fill);
+                hexEdit->setCursorPosition(2 * (selBegin + len));
+                hexEdit->ensureVisible();
+            }
+            return;
+        }
+
+        if (vfFormatAct2 && chosen == vfFormatAct2)
+        {
+            showVirtualFormatDialog(hexEdit->getSelectionBegin(), hexEdit->getSelectionEnd());
+            return;
+        }
+
+        if (vfRemoveAct2 && chosen == vfRemoveAct2)
+        {
+            removeVirtualFormatting(hexEdit->getSelectionBegin(), hexEdit->getSelectionEnd());
+            return;
+        }
+
+        if (addToSectionAct2 && chosen == addToSectionAct2)
+        {
+            addToSectionWithPrompt();
+            return;
+        }
+
+        if (addPointerActs.contains(chosen))
+        {
+            const PointerLengthOption opt = addPointerActs.value(chosen);
+            if (hexEdit->addPointerUndoable(bytePos, opt.target, opt.size))
+                refreshPointersUi();
+            return;
+        }
+
+        const int ptrIdx = ptrActs.indexOf(chosen);
+        if (jumpToPointerAct && chosen == jumpToPointerAct)
+        {
+            hexEdit->setCursorPosition(ptrs[0] * 2);
+            hexEdit->ensureVisible();
+            return;
+        }
+
+        if (ptrIdx >= 0)
+        {
+            const qint64 ptrOffset = ptrs[ptrIdx];
+            hexEdit->setCursorPosition(ptrOffset * 2);
+            hexEdit->ensureVisible();
+            return;
+        }
+
+        if (chosen == dropAllAct)
+        {
+            QMessageBox confirm(QMessageBox::Question,
+                                QString(),
+                                tr("Drop all pointers to this offset?"),
+                                QMessageBox::Yes | QMessageBox::Cancel,
+                                this);
+            if (confirm.exec() == QMessageBox::Yes)
+            {
+                if (hexEdit->removePointersToOffsetUndoable(bytePos) > 0)
+                    refreshPointersUi();
+            }
+        }
+        else if (chosen == renameOffsetAct)
+        {
+            renameOffsetWithPrompt(bytePos);
+        }
+        else if (dropSelectionPtrsAct && chosen == dropSelectionPtrsAct)
+        {
+            if (hexEdit->removePointersUndoable(dropSelectionPtrs) > 0)
+                refreshPointersUi();
+        }
+        return;
+    }
+
+    // 1) Right click on a pointer entry (full pointer length is clickable) —
+    //    only if NOT also an offset target (offset takes priority).
+    if (pointerStart >= 0 && hexEdit->showPointers() && !model->hasOffset(bytePos))
     {
         QMenu menu(this);
         QAction *quickSearchAct1 = menu.addAction(tr("Quick pointer search"));
@@ -637,167 +825,6 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         {
             const PointerLengthOption opt = addPointerActs.value(chosen);
             if (hexEdit->addPointerUndoable(bytePos, opt.target, opt.size))
-                refreshPointersUi();
-        }
-        return;
-    }
-
-    // 2) Right click on offset that has incoming pointers.
-    if (model->hasOffset(bytePos) && hexEdit->showPointers())
-    {
-        QMenu menu(this);
-        QAction *quickSearchAct2 = menu.addAction(tr("Quick pointer search"));
-        QAction *findPtrAct2     = menu.addAction(tr("Find pointers") + QString("..."));
-        menu.addSeparator();
-
-        const QList<qint64> ptrs = model->getPointers(bytePos);
-        QList<QAction *> ptrActs;
-        ptrActs.reserve(ptrs.size());
-        QAction *jumpToPointerAct = nullptr;
-
-        if (ptrs.size() == 1)
-        {
-            jumpToPointerAct = menu.addAction(
-                tr("Jump to pointer") + QStringLiteral(": 0x%1")
-                    .arg(ptrs[0], 8, 16, QChar('0')).toUpper());
-        }
-        else
-        {
-            QMenu *subJmp = menu.addMenu(tr("Jump to pointer"));
-            for (const qint64 ptr : ptrs)
-            {
-                QAction *ptrAct = subJmp->addAction(
-                    QStringLiteral("0x%1").arg(ptr, 8, 16, QChar('0')).toUpper());
-                ptrActs.append(ptrAct);
-            }
-        }
-
-        menu.addSeparator();
-        QAction *dropAllAct = menu.addAction(tr("Drop pointers"));
-        QAction *dropSelectionPtrsAct = nullptr;
-        QVector<qint64> dropSelectionPtrs;
-        if (hasSelection)
-        {
-            dropSelectionPtrs = selectedPointerOffsetsForDrop();
-            dropSelectionPtrsAct = menu.addAction(tr("Drop all pointers"));
-            dropSelectionPtrsAct->setEnabled(!dropSelectionPtrs.isEmpty());
-        }
-        QAction *editScriptAct2 = nullptr;
-        QMap<QAction *, PointerLengthOption> addPointerActs;
-        if (!hasSelection)
-            addPointerActs = addPointerLengthMenu(menu);
-
-        auto clipActs = addClipboardActions(menu);
-
-        QAction *fillWithAct2 = nullptr;
-        QAction *vfFormatAct2 = nullptr;
-        QAction *vfRemoveAct2 = nullptr;
-        QAction *addToSectionAct2 = nullptr;
-        if (hasSelection) {
-            menu.addSeparator();
-            editScriptAct2 = menu.addAction(tr("Edit script..."));
-            if (!isReadOnly)
-                fillWithAct2 = menu.addAction(tr("Fill with") + "...");
-            vfFormatAct2 = menu.addAction(tr("Virtually format") + "...");
-            vfRemoveAct2 = menu.addAction(tr("Remove virtual formatting"));
-            addToSectionAct2 = menu.addAction(tr("Add to section"));
-            addToSectionAct2->setEnabled(canRemoveFromSection);
-        }
-
-        QAction *chosen = menu.exec(globalPos);
-        if (!chosen)
-            return;
-
-        if (handleClipboardAction(chosen, clipActs))
-            return;
-        if (handleFindPtrAction(chosen, quickSearchAct2, findPtrAct2))
-            return;
-
-        if (editScriptAct2 && chosen == editScriptAct2)
-        {
-            dumpScript();
-            return;
-        }
-
-        if (fillWithAct2 && chosen == fillWithAct2)
-        {
-            const qint64 selBegin = hexEdit->getSelectionBegin();
-            const qint64 selLen   = hexEdit->getSelectionEnd() - selBegin;
-            const QVector<TableTab> tables = m_tablesDock ? m_tablesDock->allTables() : QVector<TableTab>();
-            FillWithDialog dlg(selLen, tables, this);
-            if (dlg.exec() == QDialog::Accepted) {
-                const QByteArray unit = dlg.fillByte();
-                const int len = dlg.fillLength();
-                QByteArray fill;
-                fill.reserve(len);
-                for (int i = 0; i < len; i += unit.size())
-                    fill.append(unit.left(qMin(unit.size(), len - i)));
-                fill.truncate(len);
-                hexEdit->replace(selBegin, len, fill);
-                hexEdit->setCursorPosition(2 * (selBegin + len));
-                hexEdit->ensureVisible();
-            }
-            return;
-        }
-
-        if (vfFormatAct2 && chosen == vfFormatAct2)
-        {
-            showVirtualFormatDialog(hexEdit->getSelectionBegin(), hexEdit->getSelectionEnd());
-            return;
-        }
-
-        if (vfRemoveAct2 && chosen == vfRemoveAct2)
-        {
-            removeVirtualFormatting(hexEdit->getSelectionBegin(), hexEdit->getSelectionEnd());
-            return;
-        }
-
-        if (addToSectionAct2 && chosen == addToSectionAct2)
-        {
-            addToSectionWithPrompt();
-            return;
-        }
-
-        if (addPointerActs.contains(chosen))
-        {
-            const PointerLengthOption opt = addPointerActs.value(chosen);
-            if (hexEdit->addPointerUndoable(bytePos, opt.target, opt.size))
-                refreshPointersUi();
-            return;
-        }
-
-        const int ptrIdx = ptrActs.indexOf(chosen);
-        if (jumpToPointerAct && chosen == jumpToPointerAct)
-        {
-            hexEdit->setCursorPosition(ptrs[0] * 2);
-            hexEdit->ensureVisible();
-            return;
-        }
-
-        if (ptrIdx >= 0)
-        {
-            const qint64 ptrOffset = ptrs[ptrIdx];
-            hexEdit->setCursorPosition(ptrOffset * 2);
-            hexEdit->ensureVisible();
-            return;
-        }
-
-        if (chosen == dropAllAct)
-        {
-            QMessageBox confirm(QMessageBox::Question,
-                                QString(),
-                                tr("Drop all pointers to this offset?"),
-                                QMessageBox::Yes | QMessageBox::Cancel,
-                                this);
-            if (confirm.exec() == QMessageBox::Yes)
-            {
-                if (hexEdit->removePointersToOffsetUndoable(bytePos) > 0)
-                    refreshPointersUi();
-            }
-        }
-        else if (dropSelectionPtrsAct && chosen == dropSelectionPtrsAct)
-        {
-            if (hexEdit->removePointersUndoable(dropSelectionPtrs) > 0)
                 refreshPointersUi();
         }
         return;

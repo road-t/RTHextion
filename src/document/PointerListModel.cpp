@@ -15,7 +15,43 @@ int PointerListModel::rowCount(const QModelIndex &parent) const
 int PointerListModel::columnCount(const QModelIndex &parent) const
 {
     Q_UNUSED(parent)
-    return 4;
+    return 5;
+}
+
+bool PointerListModel::setData(const QModelIndex &index, const QVariant &value, int role)
+{
+    if (!_pointers.empty() && index.isValid() && index.row() < _rowOrder.count()
+        && role == Qt::EditRole && index.column() == 3)
+    {
+        const qint64 ptrOffset = _rowOrder[index.row()];
+        const qint64 targetOffset = decodePtrTarget(_pointers.value(ptrOffset, -1));
+        if (targetOffset < 0)
+            return false;
+
+        const QString newName = value.toString().trimmed();
+        const QString oldName = _offsetNames.value(targetOffset);
+        if (newName == oldName)
+            return false;
+
+        if (newName.isEmpty())
+            _offsetNames.remove(targetOffset);
+        else
+            _offsetNames.insert(targetOffset, newName);
+
+        emit dataChanged(this->index(index.row(), 3), this->index(index.row(), 3));
+        emit pointersChanged();
+        return true;
+    }
+
+    return false;
+}
+
+Qt::ItemFlags PointerListModel::flags(const QModelIndex &index) const
+{
+    Qt::ItemFlags f = QAbstractTableModel::flags(index);
+    if (index.isValid() && index.column() == 3)
+        f |= Qt::ItemIsEditable;
+    return f;
 }
 
 QVariant PointerListModel::headerData(int section, Qt::Orientation orientation, int role) const
@@ -50,7 +86,7 @@ QVariant PointerListModel::data(const QModelIndex &index, int role) const
     if (role == ValueRole)
         return decodePtrTarget(value);
 
-    if (role != Qt::DisplayRole)
+    if (role != Qt::DisplayRole && role != Qt::EditRole)
         return QVariant();
 
     if (index.column() == 0)
@@ -72,6 +108,12 @@ QVariant PointerListModel::data(const QModelIndex &index, int role) const
     }
 
     if (index.column() == 3)
+    {
+        const qint64 targetOffset = decodePtrTarget(value);
+        return _offsetNames.value(targetOffset);
+    }
+
+    if (index.column() == 4)
         return getOffsetText(key);
 
     return QVariant();
@@ -102,7 +144,7 @@ void PointerListModel::refreshData()
     if (_rowOrder.isEmpty())
         return;
 
-    emit dataChanged(index(0, 0), index(_rowOrder.count() - 1, 3));
+    emit dataChanged(index(0, 0), index(_rowOrder.count() - 1, 4));
 }
 
 void PointerListModel::clear()
@@ -110,6 +152,7 @@ void PointerListModel::clear()
     beginResetModel();
     _pointers.clear();
     _offsets.clear();
+    _offsetNames.clear();
     _rowOrder.clear();
     endResetModel();
     emit pointersChanged();
@@ -173,6 +216,9 @@ bool PointerListModel::dropPointer(const qint64 offset)
         beginResetModel();
         _offsets.remove(pointedOffset, offset);
 
+        if (!_offsets.contains(pointedOffset))
+            _offsetNames.remove(pointedOffset);
+
         _pointers.remove(offset);
         rebuildRowOrder();
         endResetModel();
@@ -199,6 +245,9 @@ quint32 PointerListModel::dropPointersBatch(const QVector<qint64> &ptrOffsets)
             const qint64 pointedOffset = decodePtrTarget(_pointers.value(offset));
             _offsets.remove(pointedOffset, offset);
 
+            if (!_offsets.contains(pointedOffset))
+                _offsetNames.remove(pointedOffset);
+
             _pointers.remove(offset);
             ++dropped;
         }
@@ -224,6 +273,7 @@ quint32 PointerListModel::dropOffset(const qint64 offset)
             _pointers.remove(key);
 
         _offsets.remove(offset);
+        _offsetNames.remove(offset);
         rebuildRowOrder();
         endResetModel();
         emit pointersChanged();
@@ -239,7 +289,7 @@ QList<qint64> PointerListModel::getPointers(qint64 dataOffset)
     return _offsets.values(dataOffset);
 }
 
-qint64 PointerListModel::getOffset(qint64 ptrOffset)
+qint64 PointerListModel::getOffset(qint64 ptrOffset) const
 {
     const qint64 stored = _pointers.value(ptrOffset, -1);
     return (stored == -1) ? -1 : decodePtrTarget(stored);
@@ -314,6 +364,57 @@ QString PointerListModel::getOffsetText(qint64 offset) const
     }
 
     return txt;
+}
+
+QString PointerListModel::getPointerTooltip(qint64 ptrOffset) const
+{
+    const qint64 targetOffset = getOffset(ptrOffset);
+    if (targetOffset >= 0)
+    {
+        const QString name = offsetName(targetOffset);
+        if (!name.isEmpty())
+            return name;
+    }
+    return getOffsetText(ptrOffset);
+}
+
+QString PointerListModel::offsetName(qint64 offset) const
+{
+    return _offsetNames.value(offset);
+}
+
+bool PointerListModel::setOffsetName(qint64 offset, const QString &name)
+{
+    const QString trimmed = name.trimmed();
+    const QString oldName = _offsetNames.value(offset);
+    if (trimmed == oldName)
+        return false;
+
+    if (trimmed.isEmpty())
+        _offsetNames.remove(offset);
+    else
+        _offsetNames.insert(offset, trimmed);
+
+    if (!_rowOrder.isEmpty())
+    {
+        for (int row = 0; row < _rowOrder.size(); ++row)
+        {
+            const qint64 ptrOffset = _rowOrder[row];
+            const qint64 targetOffset = decodePtrTarget(_pointers.value(ptrOffset, -1));
+            if (targetOffset == offset)
+                emit dataChanged(index(row, 3), index(row, 3));
+        }
+    }
+    emit pointersChanged();
+    return true;
+}
+
+void PointerListModel::setOffsetNames(const QMap<qint64, QString> &names)
+{
+    _offsetNames = names;
+    if (!_rowOrder.isEmpty())
+        emit dataChanged(index(0, 3), index(_rowOrder.count() - 1, 3));
+    emit pointersChanged();
 }
 
 void PointerListModel::setHexEdit(HexEditor *hexEdit)

@@ -43,6 +43,8 @@ public:
     int rowCount(const QModelIndex &parent = QModelIndex()) const;
     int columnCount(const QModelIndex &parent = QModelIndex()) const;
     QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const;
+    bool setData(const QModelIndex &index, const QVariant &value, int role = Qt::EditRole) override;
+    Qt::ItemFlags flags(const QModelIndex &index) const override;
     QVariant headerData(int section, Qt::Orientation orientation, int role = Qt::DisplayRole) const;
     void sort(int column, Qt::SortOrder order = Qt::AscendingOrder);
     bool setSectionNames(QStringList names);
@@ -58,11 +60,16 @@ public:
      *  via encodePtrValue(target, ptrSize). */
     quint32 addPointersBatch(const QVector<QPair<qint64, qint64>> &pointers);
     QList<qint64> getPointers(qint64 dataOffset);
-    qint64 getOffset(qint64 ptrOffset);
+    qint64 getOffset(qint64 ptrOffset) const;
     int getPointerSize(qint64 ptrOffset) const;
     QString getOffsetText(qint64 offset) const;
+    QString getPointerTooltip(qint64 ptrOffset) const;
     bool isPointer(qint64 offset);
     bool hasOffset(qint64 offset);
+    QString offsetName(qint64 offset) const;
+    bool setOffsetName(qint64 offset, const QString &name);
+    QMap<qint64, QString> offsetNames() const { return _offsetNames; }
+    void setOffsetNames(const QMap<qint64, QString> &names);
     bool empty();
     void refreshData();
 
@@ -81,6 +88,7 @@ private:
 
     QMap<qint64, qint64> _pointers;
     QMultiMap<qint64, qint64> _offsets;
+    QMap<qint64, QString> _offsetNames;
     QVector<qint64> _rowOrder;
     int _sortColumn = 1;  // Default sort by Offset column (column 1)
     Qt::SortOrder _sortOrder = Qt::AscendingOrder;

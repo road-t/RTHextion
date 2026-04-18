@@ -42,7 +42,7 @@ PointersDialog::PointersDialog(HexEditor *hexEdit, QWidget *parent) :
 
     plModel = _hexEdit->pointers();
 
-    plModel->setSectionNames(QStringList() << tr("offset") << tr("Pointer") << tr("Data"));
+    plModel->setSectionNames(QStringList() << tr("#") << tr("Offset") << tr("Pointer") << tr("Name") << tr("Data"));
 
     ui->leRangeBegin->setInputMask("");
     ui->leRangeEnd->setInputMask("");
@@ -186,7 +186,7 @@ void PointersDialog::setHexEdit(HexEditor *he)
     plModel = _hexEdit ? _hexEdit->pointers() : nullptr;
     
     if (plModel)
-        plModel->setSectionNames(QStringList() << tr("Offset") << tr("Pointer") << tr("Data"));
+        plModel->setSectionNames(QStringList() << tr("#") << tr("Offset") << tr("Pointer") << tr("Name") << tr("Data"));
     
     // Force range-combo rebuild on next showEvent by invalidating the cached
     // table pointer (tb may belong to a different tab's TranslationTable).
@@ -941,7 +941,7 @@ void PointersDialog::changeEvent(QEvent *event)
     if (event->type() == QEvent::LanguageChange)
     {
         ui->retranslateUi(this);
-        plModel->setSectionNames(QStringList() << tr("Offset") << tr("Pointer") << tr("Data"));
+        plModel->setSectionNames(QStringList() << tr("#") << tr("Offset") << tr("Pointer") << tr("Name") << tr("Data"));
         if (!searchActive)
             ui->bbControls->button(QDialogButtonBox::Ok)->setText(tr("Find"));
     }

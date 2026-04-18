@@ -9,18 +9,28 @@ struct DisasmOperandLink {
     qint64 target = -1;
 };
 
-static QVector<DisasmOperandLink> disasmPointerLinksForOperands(
+struct DisasmOperandRender {
+    QString text;
+    QVector<DisasmOperandLink> links;
+};
+
+static DisasmOperandRender disasmRenderOperandsWithNames(
     const QString &operands,
     PointerListModel *pointerModel,
     qint64 fileSize)
 {
-    QVector<DisasmOperandLink> links;
+    DisasmOperandRender out;
+    out.text = operands;
     if (!pointerModel || operands.isEmpty() || fileSize <= 0)
-        return links;
+        return out;
 
     static const QRegularExpression kHexValueRx(
         QStringLiteral("(?:\\$|0x)([0-9A-Fa-f]{1,8})"),
         QRegularExpression::CaseInsensitiveOption);
+
+    QString rendered;
+    rendered.reserve(operands.size());
+    int sourcePos = 0;
 
     QRegularExpressionMatchIterator it = kHexValueRx.globalMatch(operands);
     while (it.hasNext()) {
@@ -28,23 +38,50 @@ static QVector<DisasmOperandLink> disasmPointerLinksForOperands(
         if (!m.hasMatch())
             continue;
 
+        const int tokenStart = m.capturedStart(0);
+        const int tokenLen = m.capturedLength(0);
+        if (tokenStart < 0 || tokenLen <= 0)
+            continue;
+
+        if (tokenStart > sourcePos)
+            rendered += operands.mid(sourcePos, tokenStart - sourcePos);
+
+        const QString token = m.captured(0);
+
         bool ok = false;
         const QString digits = m.captured(1);
         const qint64 target = digits.toLongLong(&ok, 16);
-        if (!ok || target < 0 || target >= fileSize)
+        if (!ok || target < 0 || target >= fileSize) {
+            rendered += token;
+            sourcePos = tokenStart + tokenLen;
             continue;
-        if (!pointerModel->hasOffset(target))
-            continue;
+        }
 
-        const int start = m.capturedStart(1);
-        const int len = m.capturedLength(1);
-        if (start < 0 || len <= 0)
+        if (!pointerModel->hasOffset(target)) {
+            rendered += token;
+            sourcePos = tokenStart + tokenLen;
             continue;
+        }
 
-        links.append({start, len, target});
+        const QString name = pointerModel->offsetName(target);
+        if (!name.isEmpty()) {
+            const int start = rendered.size();
+            rendered += name;
+            out.links.append({start, static_cast<int>(name.size()), target});
+        } else {
+            const int start = rendered.size() + m.capturedStart(1) - tokenStart;
+            rendered += token;
+            out.links.append({start, static_cast<int>(digits.size()), target});
+        }
+
+        sourcePos = tokenStart + tokenLen;
     }
 
-    return links;
+    if (sourcePos < operands.size())
+        rendered += operands.mid(sourcePos);
+
+    out.text = rendered;
+    return out;
 }
 }
 
@@ -824,7 +861,7 @@ bool HexEditor::viewportEvent(QEvent *event)
             const qint64 ptrStart = pointerStartAt(bytePos, kPointerByteSize);
             if (ptrStart >= 0)
             {
-                QToolTip::showText(helpEvent->globalPos(), _pointers.getOffsetText(ptrStart), viewport());
+                QToolTip::showText(helpEvent->globalPos(), _pointers.getPointerTooltip(ptrStart), viewport());
                 return true;
             }
             else if (_pointers.hasOffset(bytePos))
@@ -927,7 +964,7 @@ void HexEditor::mousePressEvent(QMouseEvent *event)
 
                 if (ptrStart >= 0)
                 {
-                    QToolTip::showText(mapToGlobal(event->pos()), _pointers.getOffsetText(ptrStart));
+                    QToolTip::showText(mapToGlobal(event->pos()), _pointers.getPointerTooltip(ptrStart));
                 }
                 else if (_pointers.hasOffset(_bPosCurrent))
                 {
@@ -1084,17 +1121,17 @@ void HexEditor::mouseDoubleClickEvent(QMouseEvent *event)
                         }
 
                         if (!usingSectionLabel) {
-                            const QVector<DisasmOperandLink> links = disasmPointerLinksForOperands(
+                            const DisasmOperandRender rendered = disasmRenderOperandsWithNames(
                                 displayOps, &_pointers, _chunks->size());
-                            if (!links.isEmpty()) {
+                            if (!rendered.links.isEmpty()) {
                                 const QFontMetrics fm = QFontMetrics(font());
                                 int opsStartX = _pxPosAsciiX + kAsciiAreaLeftPaddingPx;
                                 opsStartX += fm.horizontalAdvance(rowInstr->mnemonic);
                                 opsStartX += fm.horizontalAdvance(QLatin1Char(' '));
 
-                                for (const auto &link : links) {
-                                    const int prefixW = fm.horizontalAdvance(displayOps.left(link.start));
-                                    const int linkW = fm.horizontalAdvance(displayOps.mid(link.start, link.length));
+                                for (const auto &link : rendered.links) {
+                                    const int prefixW = fm.horizontalAdvance(rendered.text.left(link.start));
+                                    const int linkW = fm.horizontalAdvance(rendered.text.mid(link.start, link.length));
                                     const int linkStartX = opsStartX + prefixW;
                                     const int linkEndX = linkStartX + linkW;
                                     if (clickX >= linkStartX && clickX < linkEndX) {
@@ -1159,7 +1196,12 @@ void HexEditor::contextMenuEvent(QContextMenuEvent *event)
         }
     }
 
-    emit contextMenuRequested(event->globalPos(), _bPosCurrent);
+    qint64 clickedBytePos = _bPosCurrent;
+    const qint64 nibblePos = cursorPosition(event->pos());
+    if (nibblePos >= 0)
+        clickedBytePos = nibblePos / 2;
+
+    emit contextMenuRequested(event->globalPos(), clickedBytePos);
 }
 
 
@@ -1824,9 +1866,15 @@ void HexEditor::paintEvent(QPaintEvent *event)
                                         }
                                     }
 
+                                    const DisasmOperandRender renderedOps =
+                                        (!usingSectionLabel)
+                                            ? disasmRenderOperandsWithNames(displayOps, &_pointers, _chunks->size())
+                                            : DisasmOperandRender{displayOps, QVector<DisasmOperandLink>()};
+                                    displayOps = renderedOps.text;
+
                                     const QVector<DisasmOperandLink> pointerLinks =
                                         (!instrSel && !usingSectionLabel)
-                                            ? disasmPointerLinksForOperands(displayOps, &_pointers, _chunks->size())
+                                            ? renderedOps.links
                                             : QVector<DisasmOperandLink>();
 
                                     if (instrSel || (clickableBranch && !usingSectionLabel) || pointerLinks.isEmpty()) {
