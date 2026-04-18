@@ -111,7 +111,26 @@ void HexEditor::ensureDisasmBoundaries()
     if (fileData.isEmpty())
         return;
 
-    _disasmBoundaries = _disasm->scanBoundaries(fileData, 0, fileData.size());
+    // Per-section scanning when disasm sections exist, so that instruction
+    // boundaries align to each section start rather than to file offset 0.
+    if (_sectionModel && hasSectionDisasmMode()) {
+        const qint64 fSize = fileData.size();
+        for (int si = 0; si < _sectionModel->count(); ++si) {
+            const auto &s = _sectionModel->at(si);
+            if (s.displayMode != SectionDisplay_Disasm)
+                continue;
+            const qint64 start = qBound<qint64>(0, s.startOffset, fSize);
+            const qint64 end = qBound<qint64>(0, _sectionModel->endOffsetOf(si, fSize), fSize);
+            if (start < end) {
+                const auto bndrs = _disasm->scanBoundaries(
+                    fileData, start, static_cast<int>(end - start));
+                _disasmBoundaries.append(bndrs);
+            }
+        }
+    } else {
+        _disasmBoundaries = _disasm->scanBoundaries(fileData, 0, fileData.size());
+    }
+
     _disasmCache.clear();
     _disasmCacheStart = _disasmCacheEnd = -1;
 }
@@ -137,17 +156,63 @@ bool HexEditor::isDisasmAt(qint64 offset) const
         && _sectionModel->displayModeAtOffset(offset) == SectionDisplay_Disasm;
 }
 
+bool HexEditor::isAudioAt(qint64 offset) const
+{
+    return _sectionModel
+        && _sectionModel->displayModeAtOffset(offset) == SectionDisplay_Audio;
+}
+
+bool HexEditor::isGraphicsAt(qint64 offset) const
+{
+    if (_showGraphicsPanel)
+        return true;
+    return _sectionModel
+        && _sectionModel->displayModeAtOffset(offset) == SectionDisplay_Graphics;
+}
+
+// ── Global graphics panel mode ─────────────────────────────────
+
+bool HexEditor::showGraphicsPanel() const { return _showGraphicsPanel; }
+
+void HexEditor::setShowGraphicsPanel(bool mode)
+{
+    if (_showGraphicsPanel == mode)
+        return;
+    _showGraphicsPanel = mode;
+    viewport()->update();
+}
+
+void HexEditor::setGlobalTileCodec(TileCodec codec)
+{
+    _globalTileCodec = codec;
+    if (_showGraphicsPanel)
+        viewport()->update();
+}
+
+void HexEditor::setGlobalTileCols(int cols)
+{
+    _globalTileCols = qMax(1, cols);
+    if (_showGraphicsPanel)
+        viewport()->update();
+}
+
+TileCodec HexEditor::globalTileCodec() const { return _globalTileCodec; }
+int       HexEditor::globalTileCols()  const { return _globalTileCols; }
+
 
 quint64 HexEditor::computeLayoutFingerprint() const
 {
     if (!_sectionModel) return 0;
     const int count = _sectionModel->count();
     if (count == 0) return 0;
+    const qint64 fileSize = _chunks ? _chunks->size() : 0;
     quint64 fp = quint64(count);
+    // Layout depends on bytes-per-line (row count and graphics tail padding).
+    fp = fp * 131 + quint64(qMax(1, _bytesPerLine));
     for (int i = 0; i < count; ++i) {
         const auto &s = _sectionModel->at(i);
         fp = fp * 131 + quint64(s.startOffset);
-        fp = fp * 131 + quint64(s.endOffset);
+        fp = fp * 131 + quint64(_sectionModel->endOffsetOf(i, fileSize));
         fp = fp * 131 + quint64(s.displayMode);
     }
     return fp;
@@ -163,14 +228,35 @@ void HexEditor::rebuildSectionAwareLayout()
     }
 
     // Fast path: if sections + collapse state haven't changed, reuse cached layout.
+    // Skip fast path when _savedLineBreaksValid — the user may have added/removed
+    // individual breaks that need to be merged into _lineBreaks.
     const quint64 fp = computeLayoutFingerprint();
-    if (fp != 0 && fp == _layoutFingerprint && !_lineBreaks.isEmpty()) {
+    if (fp != 0 && fp == _layoutFingerprint && !_lineBreaks.isEmpty()
+        && !_savedLineBreaksValid) {
         readBuffers();
         viewport()->update();
         return;
     }
 
-    const QVector<qint64> baseBreaks = _savedLineBreaksValid ? _savedLineBreaks : _lineBreaks;
+    QVector<qint64> baseBreaks = _savedLineBreaksValid ? _savedLineBreaks : _lineBreaks;
+    const qint64 fileSize = _chunks ? _chunks->size() : 0;
+
+    // Strip stale section-header double-breaks.  After a merge the header
+    // doubles of removed sections remain in baseBreaks; remove them so a
+    // merged section appears contiguous.
+    if (_sectionModel && _sectionModel->count() > 0) {
+        QSet<qint64> curSecBreaks;
+        for (int si = 0; si < _sectionModel->count(); ++si) {
+            const auto &sec = _sectionModel->at(si);
+            curSecBreaks.insert(sec.startOffset == 0 ? qint64(-1) : sec.startOffset - 1);
+        }
+        QHash<qint64, int> freq;
+        for (qint64 b : std::as_const(baseBreaks))
+            freq[b]++;
+        baseBreaks.erase(std::remove_if(baseBreaks.begin(), baseBreaks.end(),
+            [&](qint64 b) { return freq[b] >= 2 && !curSecBreaks.contains(b); }),
+            baseBreaks.end());
+    }
 
     if (!hasSectionDisasmMode()) {
         // Even without disasm sections we must apply section-header gaps
@@ -202,6 +288,40 @@ void HexEditor::rebuildSectionAwareLayout()
                     }
                 }
             }
+
+            // Graphics sections: pad with empty rows so visible data rows are
+            // aligned to full 8-pixel tile height.
+            if (_bytesPerLine > 0) {
+                for (int si = 0; si < _sectionModel->count(); ++si) {
+                    const auto &sec = _sectionModel->at(si);
+                    if (sec.displayMode != SectionDisplay_Graphics)
+                        continue;
+
+                    const qint64 start = qBound<qint64>(0, sec.startOffset, fileSize);
+                    const qint64 end = qBound<qint64>(0, _sectionModel->endOffsetOf(si, fileSize), fileSize);
+                    if (end <= start)
+                        continue;
+
+                    const qint64 bytes = end - start;
+                    const int dataRows = static_cast<int>((bytes + _bytesPerLine - 1) / _bytesPerLine);
+
+                    const int bpt = tileCodecBytesPerTile(sec.tileCodec);
+                    const int tileCols = graphicsAutoTileCols(sec.tileCodec);
+                    int padRows = 0;
+                    if (bpt > 0 && tileCols > 0) {
+                        const int totalTiles = static_cast<int>((bytes + bpt - 1) / bpt);
+                        const int tileRows = (totalTiles + tileCols - 1) / tileCols;
+                        const int virtualRows = tileRows * 8;
+                        padRows = qMax(0, virtualRows - dataRows);
+                    }
+                    if (padRows <= 0)
+                        continue;
+
+                    const qint64 padPos = end - 1;
+                    for (int j = 0; j < padRows; ++j)
+                        breaks.append(padPos);
+                }
+            }
         }
 
         std::sort(breaks.begin(), breaks.end());
@@ -228,18 +348,16 @@ void HexEditor::rebuildSectionAwareLayout()
         _savedLineBreaksValid = true;
     }
 
-    ensureDisasmBoundaries();
-
-    const qint64 fileSize = _chunks->size();
     QVector<qint64> points;
     points.reserve((_sectionModel ? _sectionModel->count() : 0) * 2 + 2);
     points.append(0);
     points.append(fileSize);
 
     if (_sectionModel) {
-        for (const auto &s : _sectionModel->sections()) {
+        for (int si = 0; si < _sectionModel->count(); ++si) {
+            const auto &s = _sectionModel->at(si);
             const qint64 start = qBound<qint64>(0, s.startOffset, fileSize);
-            const qint64 end   = qBound<qint64>(0, s.endOffset, fileSize);
+            const qint64 end   = qBound<qint64>(0, _sectionModel->endOffsetOf(si, fileSize), fileSize);
             if (start < end) {
                 points.append(start);
                 points.append(end);
@@ -258,6 +376,24 @@ void HexEditor::rebuildSectionAwareLayout()
             continue;
         if (_sectionModel && _sectionModel->displayModeAtOffset(start) == SectionDisplay_Disasm)
             disasmRanges.append({start, end});
+    }
+
+    // Scan instruction boundaries per-section so the disassembler starts
+    // fresh at each section start (avoids bytes before a section being
+    // swallowed into a multi-byte instruction that crosses the boundary).
+    _disasmBoundaries.clear();
+    _disasmCache.clear();
+    _disasmCacheStart = _disasmCacheEnd = -1;
+    if (_disasm && Disassembler::isSupported(_disasmRomType)) {
+        const QByteArray fileData = data();
+        if (!fileData.isEmpty()) {
+            for (const auto &range : disasmRanges) {
+                const auto bndrs = _disasm->scanBoundaries(
+                    fileData, range.first,
+                    static_cast<int>(range.second - range.first));
+                _disasmBoundaries.append(bndrs);
+            }
+        }
     }
 
     QVector<qint64> breaks;
@@ -330,6 +466,40 @@ void HexEditor::rebuildSectionAwareLayout()
                 }
             }
         }
+
+        // Graphics sections: pad with empty rows so visible data rows are
+        // aligned to full 8-pixel tile height.
+        if (_bytesPerLine > 0) {
+            for (int si = 0; si < _sectionModel->count(); ++si) {
+                const auto &sec = _sectionModel->at(si);
+                if (sec.displayMode != SectionDisplay_Graphics)
+                    continue;
+
+                const qint64 start = qBound<qint64>(0, sec.startOffset, fileSize);
+                const qint64 end = qBound<qint64>(0, _sectionModel->endOffsetOf(si, fileSize), fileSize);
+                if (end <= start)
+                    continue;
+
+                const qint64 bytes = end - start;
+                const int dataRows = static_cast<int>((bytes + _bytesPerLine - 1) / _bytesPerLine);
+
+                const int bpt = tileCodecBytesPerTile(sec.tileCodec);
+                const int tileCols = graphicsAutoTileCols(sec.tileCodec);
+                int padRows = 0;
+                if (bpt > 0 && tileCols > 0) {
+                    const int totalTiles = static_cast<int>((bytes + bpt - 1) / bpt);
+                    const int tileRows = (totalTiles + tileCols - 1) / tileCols;
+                    const int virtualRows = tileRows * 8;
+                    padRows = qMax(0, virtualRows - dataRows);
+                }
+                if (padRows <= 0)
+                    continue;
+
+                const qint64 padPos = end - 1;
+                for (int j = 0; j < padRows; ++j)
+                    breaks.append(padPos);
+            }
+        }
     }
 
     std::sort(breaks.begin(), breaks.end());
@@ -381,10 +551,26 @@ const DisasmInstruction *HexEditor::disasmInstructionAtOffset(qint64 fileOffset)
     if (idx < 0 || !_disasm)
         return nullptr;
 
-    // Disassemble a window of ~256 instructions around the target
+    // Disassemble a window of ~256 instructions around the target,
+    // clipped to the current section to avoid misalignment.
     const int margin = 128;
-    const int startIdx = qMax(0, idx - margin);
-    const int endIdx = qMin(_disasmBoundaries.size() - 1, idx + margin);
+    int startIdx = qMax(0, idx - margin);
+    int endIdx = qMin(_disasmBoundaries.size() - 1, idx + margin);
+
+    // Clip the cache window to the section that contains fileOffset so
+    // the continuous disassembly does not cross a section boundary.
+    if (_sectionModel) {
+        const int secIdx = _sectionModel->sectionIndexAtOffset(fileOffset);
+        if (secIdx >= 0) {
+            const qint64 secStart = _sectionModel->at(secIdx).startOffset;
+            const qint64 secEnd = _sectionModel->endOffsetOf(secIdx, _chunks->size());
+            while (startIdx < idx && _disasmBoundaries[startIdx].offset < secStart)
+                ++startIdx;
+            while (endIdx > idx && _disasmBoundaries[endIdx].offset >= secEnd)
+                --endIdx;
+        }
+    }
+
     const qint64 startOfs = _disasmBoundaries[startIdx].offset;
     const auto &lastB = _disasmBoundaries[endIdx];
     const qint64 endOfs = lastB.offset + lastB.size;
@@ -447,7 +633,6 @@ void HexEditor::setSectionModel(SectionListModel *model)
 
     if (_sectionModel) {
         connect(_sectionModel, &SectionListModel::sectionsChanged, this, [this]() {
-            _layoutFingerprint = 0;
             rebuildSectionAwareLayout();
         });
     }

@@ -20,12 +20,33 @@ void HexEditor::keyPressEvent(QKeyEvent *event)
 
     // Virtual line break: Enter adds a break before the current byte
     if (event->key() == Qt::Key_Return && event->modifiers() == Qt::NoModifier) {
-        qint64 brk = _cursorPosition / 2;
-        if (brk > 0) {
+        const qint64 brk = _cursorPosition / 2;
+        if (brk > 0)
             addLineBreak(brk - 1);
-        }
         event->accept();
         return;
+    }
+
+    // Virtual line break removal: Backspace removes break before cursor, Delete removes break at cursor.
+    // Handled here (before the read-only guard) so breaks can be removed regardless of edit mode.
+    if (event->modifiers() == Qt::NoModifier
+        && (event->key() == Qt::Key_Backspace || event->key() == Qt::Key_Delete))
+    {
+        const QVector<qint64> currentBreaks = lineBreaks();
+        if (!currentBreaks.isEmpty()) {
+            const qint64 brkOffset = (event->key() == Qt::Key_Delete)
+                                     ? _bPosCurrent       // Delete: break after cursor byte
+                                     : _bPosCurrent - 1;  // Backspace: break before cursor byte
+            if (brkOffset >= 0) {
+                auto it = std::lower_bound(currentBreaks.constBegin(), currentBreaks.constEnd(), brkOffset);
+                if (it != currentBreaks.constEnd() && *it == brkOffset) {
+                    removeLineBreak(brkOffset);
+                    event->accept();
+                    return;
+                }
+            }
+        }
+        // No line break at that offset — fall through to normal data-edit handling below.
     }
 
     // Pre-compute visual row info for navigation
@@ -34,6 +55,25 @@ void HexEditor::keyPressEvent(QKeyEvent *event)
     const qint64 navVisRow = visualRowForByte(navByte);
     const qint64 navRowStart = byteOffsetForVisualRow(navVisRow);
     const int navCol = static_cast<int>(navByte - navRowStart);
+
+    // Graphics tile shift: Shift+Arrow when cursor is in graphics area
+    if (isGraphicsAt(_bPosCurrent)
+        && (event->modifiers() & Qt::ShiftModifier)
+        && !(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier)))
+    {
+        if (event->key() == Qt::Key_Left) {
+            --_gfxTileShift;
+            viewport()->update();
+            event->accept();
+            return;
+        }
+        if (event->key() == Qt::Key_Right) {
+            ++_gfxTileShift;
+            viewport()->update();
+            event->accept();
+            return;
+        }
+    }
 
     // Cursor movements
     if (event->matches(QKeySequence::MoveToNextChar))
@@ -240,12 +280,14 @@ void HexEditor::keyPressEvent(QKeyEvent *event)
     // Edit Commands
     if (!_readOnly && !_showOriginal)
     {
-        // Helper: block data modification when cursor or selection touches a disasm section.
+        // Helper: block data modification when cursor or selection touches a disasm, audio, or graphics section.
         const auto editBlockedByDisasm = [this]() {
-            if (isDisasmAt(_bPosCurrent))
+            if (isDisasmAt(_bPosCurrent) || isAudioAt(_bPosCurrent) || isGraphicsAt(_bPosCurrent))
                 return true;
             if (hasSelection()
-                && (isDisasmAt(getSelectionBegin()) || isDisasmAt(getSelectionEnd() - 1)))
+                && (isDisasmAt(getSelectionBegin()) || isDisasmAt(getSelectionEnd() - 1)
+                    || isAudioAt(getSelectionBegin()) || isAudioAt(getSelectionEnd() - 1)
+                    || isGraphicsAt(getSelectionBegin()) || isGraphicsAt(getSelectionEnd() - 1)))
                 return true;
             return false;
         };
@@ -372,21 +414,9 @@ void HexEditor::keyPressEvent(QKeyEvent *event)
                     /* Backspace */
                     if ((event->key() == Qt::Key_Backspace) && (event->modifiers() == Qt::NoModifier))
                     {
-                        // First check for a virtual line break to remove
-                        bool removedBreak = false;
-                        const QVector<qint64> currentBreaks = lineBreaks();
-                        if (!currentBreaks.isEmpty()) {
-                            qint64 brkOffset = _bPosCurrent - 1;
-                            if (brkOffset >= 0) {
-                                auto it = std::lower_bound(currentBreaks.constBegin(), currentBreaks.constEnd(), brkOffset);
-                                if (it != currentBreaks.constEnd() && *it == brkOffset) {
-                                    removeLineBreak(brkOffset);
-                                    removedBreak = true;
-                                }
-                            }
-                        }
-
-                        if (!removedBreak && !editBlockedByDisasm()) {
+                        // Line break removal is handled above before the read-only check.
+                        // Here we only handle data deletion.
+                        if (!editBlockedByDisasm()) {
                         if (!_overwriteMode)
                         {
                             // In INSERT mode backspace only removes line breaks (handled above).
@@ -419,7 +449,7 @@ void HexEditor::keyPressEvent(QKeyEvent *event)
                             setCursorPosition(2 * _bPosCurrent);
                             resetSelection(2 * _bPosCurrent);
                         }
-                        } // !removedBreak
+                        } // !editBlockedByDisasm
                     }
                     else
 
@@ -430,6 +460,11 @@ void HexEditor::keyPressEvent(QKeyEvent *event)
                     else if (event->matches(QKeySequence::Redo)) // REDO
                     {
                         redo();
+                    }
+                    else if (event->key() == Qt::Key_Space && isAudioAt(_bPosCurrent))
+                    {
+                        // Space in audio section → toggle playback
+                        emit audioPlaybackToggled(_bPosCurrent);
                     }
                     else if (event->text() != "")
                     {
@@ -704,6 +739,24 @@ void HexEditor::mouseMoveEvent(QMouseEvent *event)
 
         if (actPos >= 0)
         {
+            // Continuous graphics drawing while dragging with pressed mouse button.
+            if (_gfxClickPixX >= 0 && _gfxClickPixY >= 0) {
+                Qt::MouseButton drawButton = Qt::NoButton;
+                if (event->buttons() & Qt::LeftButton)
+                    drawButton = Qt::LeftButton;
+                else if (event->buttons() & Qt::RightButton)
+                    drawButton = Qt::RightButton;
+
+                if (drawButton != Qt::NoButton) {
+                    setCursorPosition(actPos);
+                    resetSelection(actPos);
+                    gfxSetPixel(drawButton);
+                    _gfxClickPixX = -1;
+                    _gfxClickPixY = -1;
+                    return;
+                }
+            }
+
             setCursorPosition(actPos);
             setSelection(actPos);
         }
@@ -781,6 +834,16 @@ void HexEditor::mousePressEvent(QMouseEvent *event)
     }
 
     qint64 cPos = cursorPosition(event->pos());
+
+    // Graphics pixel drawing: if click was in the graphics area, paint the pixel
+    if (cPos >= 0 && _gfxClickPixX >= 0 && _gfxClickPixY >= 0) {
+        setCursorPosition(cPos);
+        resetSelection(cPos);
+        gfxSetPixel(event->button());
+        _gfxClickPixX = -1;
+        _gfxClickPixY = -1;
+        return;
+    }
 
     // Empty buffer bootstrap: first click in editable area creates one byte
     // so overwrite-mode typing can immediately replace it.
@@ -963,6 +1026,36 @@ void HexEditor::mouseDoubleClickEvent(QMouseEvent *event)
 
 void HexEditor::contextMenuEvent(QContextMenuEvent *event)
 {
+    const int posX = event->pos().x() + horizontalScrollBar()->value();
+    const int rowStridePx = _pxCharHeight + kHexRowExtraGapPx;
+    const int row = static_cast<int>(event->pos().y()) / rowStridePx;
+
+    if (_asciiArea && posX >= _pxPosAsciiX && row >= 0 && row < _visualRowStartBytes.size()) {
+        const auto rowBytesThisRow = [this](int r) -> int {
+            if (r < 0 || r >= _visualRowStartBytes.size())
+                return 0;
+            return (r + 1 < _visualRowStartBytes.size())
+                ? static_cast<int>(_visualRowStartBytes[r + 1] - _visualRowStartBytes[r])
+                : _bytesPerLine;
+        };
+
+        const qint64 rowAbsOfs = _visualRowStartBytes[row];
+        bool suppressMenu = isGraphicsAt(rowAbsOfs);
+        if (!suppressMenu && rowBytesThisRow(row) <= 0 && _sectionModel) {
+            int prev = row - 1;
+            while (prev >= 0 && rowBytesThisRow(prev) <= 0)
+                --prev;
+            if (prev >= 0) {
+                const qint64 prevOfs = _visualRowStartBytes[prev];
+                suppressMenu = (_sectionModel->displayModeAtOffset(prevOfs) == SectionDisplay_Graphics);
+            }
+        }
+        if (suppressMenu) {
+            event->accept();
+            return;
+        }
+    }
+
     emit contextMenuRequested(event->globalPos(), _bPosCurrent);
 }
 
@@ -1554,6 +1647,8 @@ void HexEditor::paintEvent(QPaintEvent *event)
                     const bool effectiveRaw = (secMode == SectionDisplay_Raw);
                     const bool effectiveDisasm = (secMode == SectionDisplay_Disasm)
                         || (secMode == SectionDisplay_Default && _showDisasm);
+                    const bool effectiveGraphics = (secMode == SectionDisplay_Graphics)
+                        || (secMode == SectionDisplay_Default && _showGraphicsPanel);
                     // Per-section table: 1-based index into _allTables
                     TranslationTable *secTable = nullptr;
                     if (secMode > 0 && secMode <= _allTables.size())
@@ -1658,6 +1753,99 @@ void HexEditor::paintEvent(QPaintEvent *event)
                             _asciiCursorRect = QRect(r.x() - 1, r.y() - 2, _pxCharWidth + 2, r.height() + 2);
 
                         pxPosAsciiX2 += symWidthPx;
+                    }
+                    else if (secMode == SectionDisplay_Audio)
+                    {
+                    // ── Audio waveform: monolithic full-width vertical display ──
+                    // The entire ASCII area is one waveform strip.  Time flows
+                    // top→bottom; each byte maps to a sub-row.  Amplitude maps
+                    // left→right across the full ASCII-area width.
+                    const uint8_t byteVal = static_cast<uint8_t>(rawByte);
+                    const int cellTop = pxPosY - _pxCharHeight + _pxSelectionSub + 2;
+                    const int cellH = _pxCharHeight;
+                    const int waveLeft = _pxPosAsciiX + kAsciiAreaLeftPaddingPx - pxOfsX;
+                    const int waveW = bytesThisRow * _pxCharWidth;
+                    const int effN = qMax(1, bytesThisRow);
+
+                    // Sub-row for this byte within the visual row
+                    const int subY = cellTop + (colIdx * cellH) / effN;
+                    const int nextSubY = cellTop + ((colIdx + 1) * cellH) / effN;
+                    const int subH = qMax(1, nextSubY - subY);
+
+                    // On first audio column: fill entire waveform background
+                    if (colIdx == 0)
+                        painter.fillRect(waveLeft, cellTop, waveW, cellH, _asciiAreaColor);
+
+                    // Per-byte selection/section highlight on its sub-row
+                    r.setRect(waveLeft, subY, waveW, subH);
+                    if (isSelectedByte)
+                        painter.fillRect(r, _brushSelection.color());
+                    else if (c != _asciiAreaColor)
+                        painter.fillRect(r, c);
+
+                    // Waveform color
+                    QColor waveColor;
+                    if (isSelectedByte)
+                        waveColor = _penSelection.color();
+                    else if (isHighlightedByte)
+                        waveColor = _penHighlighted.color();
+                    else
+                        waveColor = QColor(0x40, 0xA0, 0xFF);
+
+                    // Map amplitude across full waveform width
+                    const int midX = waveLeft + waveW / 2;
+                    const int ampX = waveLeft + (byteVal * (waveW - 1)) / 255;
+                    const int subMidY = subY + subH / 2;
+
+                    // Filled area from centre to amplitude
+                    {
+                        QColor fillColor = waveColor;
+                        fillColor.setAlpha(80);
+                        const int x1 = qMin(midX, ampX);
+                        const int x2 = qMax(midX, ampX);
+                        if (x2 > x1)
+                            painter.fillRect(x1, subY, x2 - x1, subH, fillColor);
+                    }
+
+                    // Waveform line connecting consecutive samples
+                    {
+                        QPen wavePen(waveColor);
+                        wavePen.setWidth(1);
+                        const QPen oldPen = painter.pen();
+                        painter.setPen(wavePen);
+                        if (_lastAudioAmpY >= 0) {
+                            const int prevMidY = subMidY - subH;
+                            painter.drawLine(_lastAudioAmpY, prevMidY, ampX, subMidY);
+                        }
+                        painter.setPen(oldPen);
+                    }
+                    _lastAudioAmpY = ampX;
+
+                    // Dotted centre line (once per row)
+                    if (colIdx == 0) {
+                        QPen midPen(QColor(waveColor.red(), waveColor.green(),
+                                           waveColor.blue(), 30));
+                        midPen.setStyle(Qt::DotLine);
+                        const QPen oldPen = painter.pen();
+                        painter.setPen(midPen);
+                        painter.drawLine(midX, cellTop, midX, cellTop + cellH);
+                        painter.setPen(oldPen);
+                    }
+
+                    // Cursor: horizontal band spanning full waveform width
+                    if ((bPosLine + colIdx) == cursorLeadBufIdx)
+                        _asciiCursorRect = QRect(waveLeft - 1, subY - 1, waveW + 2, subH + 2);
+
+                    pxPosAsciiX2 += _pxCharWidth;
+                    }
+                    else if (effectiveGraphics)
+                    {
+                    // ── Tile graphics view (per-section or global) ──
+                    paintGraphicsSection(painter, pxOfsX, rowStridePx,
+                                         pxPosY, colIdx, bPosLine,
+                                         _bPosFirst + bPosLine, bytesThisRow,
+                                         isSelectedByte, isHighlightedByte,
+                                         c, pxPosAsciiX2);
                     }
                     else if (secTable)
                     {
@@ -1788,6 +1976,14 @@ void HexEditor::paintEvent(QPaintEvent *event)
         painter.setPen(viewport()->palette().color(QPalette::WindowText));
     }
 
+    // Paint continuous graphics tile canvas over ASCII area (after all rows)
+    if (_asciiArea) {
+        const int rowStridePx = _pxCharHeight + kHexRowExtraGapPx;
+        const int pxPosStartY = _pxCharHeight;
+        paintGraphicsArea(painter, pxOfsX, rowStridePx, pxPosStartY);
+        paintGraphicsCursor(painter, pxOfsX, rowStridePx, pxPosStartY);
+    }
+
     // Draw hex area grid (vertical lines every 4 bytes)
     if (_showHexGrid && event->rect() != _asciiCursorRect && event->rect() != _hexCursorRect)
     {
@@ -1830,9 +2026,12 @@ void HexEditor::paintEvent(QPaintEvent *event)
             if (_cursorMultiByteSpan <= 1)
                 painter.drawRect(_hexCursorRect);
 
-            // draw cursor rect in ASCII area (skip for disasm — mnemonic text, not per-byte)
-            if (_asciiArea && !isDisasmAt(_bPosCurrent))
-                painter.drawRect(_asciiCursorRect);
+            // draw cursor rect in ASCII area (skip for disasm — not per-byte text)
+            if (_asciiArea && !isDisasmAt(_bPosCurrent)) {
+                if (!isGraphicsAt(_bPosCurrent))
+                    painter.drawRect(_asciiCursorRect);
+                // Graphics cursor is drawn by paintGraphicsCursor above
+            }
 
             painter.setPen(QPen(_hexFontColor));
         }
@@ -1894,17 +2093,7 @@ void HexEditor::resizeEvent(QResizeEvent *)
 
 bool HexEditor::focusNextPrevChild(bool next)
 {
-    if (_addressArea)
-    {
-        if ((next && _editAreaIsAscii) || (!next && !_editAreaIsAscii))
-            return QWidget::focusNextPrevChild(next);
-        else
-            return false;
-    }
-    else
-    {
-        return QWidget::focusNextPrevChild(next);
-    }
+    return QWidget::focusNextPrevChild(next);
 }
 
 // ********************************************************************** Handle selections

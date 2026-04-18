@@ -366,7 +366,11 @@ void HexEditor::setBytesPerLine(int count)
     _hexCharsInLine = count * 3 - 1;
     updateAsciiAreaMaxWidth();
 
-    adjust();
+    if (_sectionModel && _sectionModel->count() > 0)
+        rebuildSectionAwareLayout();
+    else
+        adjust();
+
     setCursorPosition(_cursorPosition);
     viewport()->update();
 }
@@ -592,10 +596,67 @@ qint64 HexEditor::cursorPosition(QPoint pos)
 {
     // Calc cursor position depending on a graphical position
     qint64 result = -1;
+    _gfxClickPixX = -1;
+    _gfxClickPixY = -1;
 
     auto posX = pos.x() + horizontalScrollBar()->value();
-    auto posY = pos.y() - 3;
+    const int rawPosY = pos.y();
+    auto posY = rawPosY - 3;
     const int rowStridePx = _pxCharHeight + kHexRowExtraGapPx;
+
+    const auto rowBytesThisRow = [this](int r) -> int {
+        if (r < 0 || r >= _visualRowStartBytes.size())
+            return 0;
+        return (r + 1 < _visualRowStartBytes.size())
+            ? static_cast<int>(_visualRowStartBytes[r + 1] - _visualRowStartBytes[r])
+            : _bytesPerLine;
+    };
+
+    const auto isPadRowOfSection = [this, &rowBytesThisRow](int r, int secIdx) -> bool {
+        if (!_sectionModel || secIdx < 0 || r < 0 || r >= _visualRowStartBytes.size())
+            return false;
+        if (rowBytesThisRow(r) > 0)
+            return false;
+
+        int prevDataRow = r - 1;
+        while (prevDataRow >= 0 && rowBytesThisRow(prevDataRow) <= 0)
+            --prevDataRow;
+        if (prevDataRow < 0)
+            return false;
+
+        const qint64 prevOfs = _visualRowStartBytes[prevDataRow];
+        if (_sectionModel->displayModeAtOffset(prevOfs) != SectionDisplay_Graphics)
+            return false;
+        if (_sectionModel->sectionIndexAtOffset(prevOfs) != secIdx)
+            return false;
+
+        const qint64 fileSize = _chunks ? _chunks->size() : 0;
+        const Section &sec = _sectionModel->at(secIdx);
+        const qint64 dataStart = sec.startOffset;
+        const qint64 dataEnd = _sectionModel->endOffsetOf(secIdx, fileSize);
+        const qint64 bytes = qMax<qint64>(0, dataEnd - dataStart);
+        const int dataRows = static_cast<int>((bytes + _bytesPerLine - 1) / _bytesPerLine);
+
+        const int bpt = tileCodecBytesPerTile(sec.tileCodec);
+        const int tileCols = graphicsAutoTileCols(sec.tileCodec);
+        int padRows = 0;
+        if (bpt > 0 && tileCols > 0) {
+            const int totalTiles = static_cast<int>((bytes + bpt - 1) / bpt);
+            const int tileRows = (totalTiles + tileCols - 1) / tileCols;
+            const int virtualRows = tileRows * 8;
+            padRows = qMax(0, virtualRows - dataRows);
+        }
+        if (padRows <= 0)
+            return false;
+
+        int emptiesFromPrev = 0;
+        for (int rr = prevDataRow + 1; rr <= r; ++rr) {
+            if (rowBytesThisRow(rr) > 0)
+                return false;
+            ++emptiesFromPrev;
+        }
+        return emptiesFromPrev <= padRows;
+    };
 
     const int hexStridePx = 3 * _pxCharWidth + kHexColumnExtraGapPx;
     const int hexAreaWidthPx = (_bytesPerLine > 0) ? ((_bytesPerLine - 1) * hexStridePx + 2 * _pxCharWidth) : 0;
@@ -625,8 +686,142 @@ qint64 HexEditor::cursorPosition(QPoint pos)
 
         result = _bPosFirst * 2 + static_cast<qint64>(rowByteStart) * 2 + x;
     }
-    else if (_asciiArea && (posX >= _pxPosAsciiX) && (posX < (_pxPosAsciiX + kAsciiAreaLeftPaddingPx + static_cast<int>(_asciiAreaMaxWidth))))
+    else if (_asciiArea && (posX >= _pxPosAsciiX))
     {
+        int row = posY / rowStridePx;
+        if (row < 0 || row >= _visualRowStartBytes.size())
+            return -1;
+        const qint64 rowAbsOfs = _visualRowStartBytes[row];
+        const int bytesThisRowAtClick = rowBytesThisRow(row);
+
+        bool rowIsGraphics = isGraphicsAt(rowAbsOfs);
+        int inheritedSecIdx = -1;
+        if (bytesThisRowAtClick <= 0 && _sectionModel) {
+            int prev = row - 1;
+            while (prev >= 0 && rowBytesThisRow(prev) <= 0)
+                --prev;
+            if (prev >= 0) {
+                const qint64 prevOfs = _visualRowStartBytes[prev];
+                if (_sectionModel->displayModeAtOffset(prevOfs) == SectionDisplay_Graphics) {
+                    const int prevSecIdx = _sectionModel->sectionIndexAtOffset(prevOfs);
+                    if (prevSecIdx >= 0 && isPadRowOfSection(row, prevSecIdx)) {
+                        rowIsGraphics = true;
+                        inheritedSecIdx = prevSecIdx;
+                    }
+                }
+            }
+        }
+
+        // ── Graphics area click (takes priority over regular ASCII area) ──
+        if (rowIsGraphics)
+        {
+            _editAreaIsAscii = false; // direct keyboard input to hex area
+
+            // Graphics canvas rows are painted from exact row top without the -3 tweak.
+            const int gfxRow = rawPosY / rowStridePx;
+            if (gfxRow < 0 || gfxRow >= _visualRowStartBytes.size())
+                return -1;
+            row = gfxRow;
+            const qint64 gfxRowAbsOfs = _visualRowStartBytes[row];
+            const int gfxBytesThisRow = rowBytesThisRow(row);
+
+            // Header/structural empty rows are not drawable. Only explicit pad
+            // rows inherited from the previous graphics section are allowed.
+            if (gfxBytesThisRow <= 0 && inheritedSecIdx < 0)
+                return -1;
+
+            const qint64 fileSize = _chunks ? _chunks->size() : 0;
+
+            // Determine section or global settings
+            TileCodec codec = _globalTileCodec;
+            qint64 dataStart = 0;
+            qint64 dataEnd   = fileSize;
+            int secIdx = inheritedSecIdx;
+            if (_sectionModel) {
+                int secMode = _sectionModel->displayModeAtOffset(gfxRowAbsOfs);
+                if (secMode == SectionDisplay_Graphics || secIdx >= 0) {
+                    if (secIdx < 0)
+                        secIdx = _sectionModel->sectionIndexAtOffset(gfxRowAbsOfs);
+                    if (secIdx >= 0) {
+                        const Section &sec = _sectionModel->at(secIdx);
+                        codec = sec.tileCodec;
+                        dataStart = sec.startOffset;
+                        dataEnd   = _sectionModel->endOffsetOf(secIdx, fileSize);
+                    }
+                }
+            }
+
+            // If a row is empty and inherited from the previous graphics section,
+            // ensure section resolution cannot jump to a following section.
+            if (gfxBytesThisRow <= 0 && inheritedSecIdx >= 0)
+                secIdx = inheritedSecIdx;
+
+            // Apply tile shift
+            dataStart = qMax(qint64(0), qMin(dataStart + _gfxTileShift, dataEnd - 1));
+
+            const int bpt = tileCodecBytesPerTile(codec);
+            const int tileCols = graphicsAutoTileCols(codec);
+
+            // Compute pixel size (must match paintGraphicsArea)
+            const int pixW = qMax(2, (rowStridePx * 17) / 20); // width only
+
+            const int gfxAreaX = _pxPosAsciiX + kAsciiAreaLeftPaddingPx;
+            const int xPx = qMax(0, posX - gfxAreaX);
+            const int pixCol = xPx / pixW;      // pixel column in the canvas
+            const int tileCol = pixCol / 8;
+            const int pixX = pixCol % 8;
+
+            // 1 section row == 1 tile pixel row (full row height).
+
+            int visRowInSection = static_cast<int>((gfxRowAbsOfs - dataStart) / _bytesPerLine);
+
+            // Tail padding rows after section data: continue row index by
+            // visual row distance from the previous real data row.
+            if (_sectionModel && secIdx >= 0 && gfxBytesThisRow <= 0 && gfxRowAbsOfs >= dataEnd - 1) {
+                int prevDataRow = row - 1;
+                while (prevDataRow >= 0) {
+                    if (rowBytesThisRow(prevDataRow) > 0) {
+                        const qint64 prevOfs = _visualRowStartBytes[prevDataRow];
+                        if (_sectionModel->displayModeAtOffset(prevOfs) == SectionDisplay_Graphics
+                            && _sectionModel->sectionIndexAtOffset(prevOfs) == secIdx)
+                            break;
+                    }
+                    --prevDataRow;
+                }
+                if (prevDataRow >= 0) {
+                    const qint64 prevOfs = _visualRowStartBytes[prevDataRow];
+                    const int prevVis = static_cast<int>((prevOfs - dataStart) / _bytesPerLine);
+                    visRowInSection = prevVis + (row - prevDataRow);
+                }
+            }
+
+            const int tileRow = visRowInSection / 8;
+            const int pixY = visRowInSection % 8;
+
+            if (tileCol < tileCols && bpt > 0) {
+                const qint64 tileFileOfs = dataStart
+                    + static_cast<qint64>(tileRow) * tileCols * bpt
+                    + tileCol * bpt;
+                if (tileFileOfs + bpt > dataEnd)
+                    return -1; // do not edit outside existing tiles
+                const int byteOfs = byteInTileForPixel(codec, pixX, pixY);
+                const qint64 targetByte = qMin(tileFileOfs + byteOfs, fileSize - 1);
+
+                // Store highlight info + clicked pixel position
+                _gfxHighlightTileCol = tileCol;
+                _gfxHighlightTileRow = tileRow;
+                _gfxClickPixX = pixX;
+                _gfxClickPixY = pixY;
+                _gfxClickPadRow = (gfxBytesThisRow <= 0);
+
+                result = targetByte * 2;
+            } else {
+                return -1;
+            }
+        }
+        // ── Regular ASCII area click ──
+        else if (posX < (_pxPosAsciiX + kAsciiAreaLeftPaddingPx + static_cast<int>(_asciiAreaMaxWidth)))
+        {
         _editAreaIsAscii = true;
         ensureTableDisplayCache();
         ensureEncodingDisplayCache();
@@ -635,7 +830,6 @@ qint64 HexEditor::cursorPosition(QPoint pos)
             return (baseWidth > _pxCharWidth) ? kAsciiColumnGapWidePx : kAsciiColumnGapSinglePx;
         };
 
-        const int row = posY / rowStridePx;
         if (row < 0 || row >= _visualRowStartBytes.size())
             return -1;
 
@@ -722,7 +916,8 @@ qint64 HexEditor::cursorPosition(QPoint pos)
             return -1;
 
         result = _bPosFirst * 2 + static_cast<qint64>(rowByteStart) * 2 + byteCol * 2;
-    }
+        } // end regular ASCII area click
+    } // end ascii/graphics area
 
     return result;
 }

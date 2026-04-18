@@ -135,6 +135,11 @@ void HexEditor::removeLineBreakDirect(qint64 offset)
 
 void HexEditor::addLineBreak(qint64 offset)
 {
+    // No-op if a break already exists at this offset (prevents duplicates in the undo stack)
+    const QVector<qint64> currentBreaks = lineBreaks();
+    auto it = std::lower_bound(currentBreaks.constBegin(), currentBreaks.constEnd(), offset);
+    if (it != currentBreaks.constEnd() && *it == offset)
+        return;
     ++_lineBreakCmdCount;  // pre-update before indexChanged fires
     _lineBreakChangeInProgress = true;
     _undoStack->push(new LineBreakAddCommand(this, offset));
@@ -420,7 +425,20 @@ void HexEditor::adjust()
     // set horizontalScrollBar()
     int pxWidth;
     if (_asciiArea)
+    {
         pxWidth = _pxPosAsciiX + kAsciiAreaLeftPaddingPx + static_cast<int>(_asciiAreaMaxWidth);
+
+        // If any graphics mode is active, the tile canvas may be wider
+        // than the normal ASCII area.  Account for that.
+        if (_showGraphicsPanel || (_sectionModel && _chunks)) {
+            // Use the widest possible auto-computed tile columns
+            const int rowStridePx = _pxCharHeight + kHexRowExtraGapPx;
+            const int gfxWidth = _pxPosAsciiX + kAsciiAreaLeftPaddingPx
+                               + _gfxAutoTileCols * 8 * rowStridePx;
+            if (gfxWidth > pxWidth)
+                pxWidth = gfxWidth;
+        }
+    }
     else
         pxWidth = _pxPosAsciiX - _pxGapHexAscii; // no gap wasted when ASCII area is hidden
 

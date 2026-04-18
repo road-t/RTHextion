@@ -13,6 +13,7 @@ class Disassembler;
 struct DisasmInstruction;
 struct InsnBoundary;
 enum class RomType : int;
+enum class TileCodec : int;
 
 #include "chunks.h"
 #include "commands.h"
@@ -458,6 +459,9 @@ signals:
         sectionIndex is the flat index in SectionListModel. */
     void sectionHeaderDoubleClicked(int sectionIndex);
 
+    /*! Emitted when space is pressed in an audio section for play/pause. */
+    void audioPlaybackToggled(qint64 bytePos);
+
     /*! \cond docNever */
 public:
     ~HexEditor();
@@ -587,7 +591,17 @@ public:
     bool showSections();
     void setShowSections(bool mode);
     void setSectionModel(SectionListModel *model);
+    SectionListModel *sectionModel() const { return _sectionModel; }
     void setAllTables(const QVector<TranslationTable*> &tables);
+
+    bool showGraphicsPanel() const;
+    void setShowGraphicsPanel(bool mode);
+    void setGlobalTileCodec(TileCodec codec);
+    void setGlobalTileCols(int cols);
+    TileCodec globalTileCodec() const;
+    int       globalTileCols() const;
+    void setGfxLeftPalIdx(int idx)  { _gfxLeftPalIdx = idx; }
+    void setGfxRightPalIdx(int idx) { _gfxRightPalIdx = idx; }
 
     QColor pointersColor();
     void setPointersColor(const QColor &color);
@@ -779,6 +793,7 @@ private:
     bool _showPointers;
     bool _showSections = true;
     SectionListModel *_sectionModel = nullptr;
+    int _lastAudioAmpY = -1;  // for connecting waveform line between bytes in audio mode
     bool _hexCaps;
     bool _dynamicBytesPerLine;
     bool _separatorDragging = false;            // true while dragging hex/ascii separator
@@ -851,6 +866,23 @@ private:
     bool _showDisasm = false;
     Disassembler *_disasm = nullptr;
     RomType _disasmRomType {};                      // ROM type for disassembly
+
+    // Global graphics panel mode
+    bool _showGraphicsPanel = false;
+    TileCodec _globalTileCodec {};                  // default TileCodec::Linear1bpp (=0)
+    int       _globalTileCols  = 16;
+
+    // Graphics pixel highlight: tile that contains the cursor byte
+    int _gfxHighlightTileCol = -1;  // tile column in the tile canvas
+    int _gfxHighlightTileRow = -1;  // tile row (in section terms)
+    int _gfxAutoTileCols     = 1;   // last auto-computed tileCols for scrollbar
+    int _gfxTileShift        = 0;   // byte offset shift for tile alignment (Shift+Arrow)
+    int _gfxClickPixX        = -1;  // last clicked pixel X within tile
+    int _gfxClickPixY        = -1;  // last clicked pixel Y within tile
+    bool _gfxClickPadRow     = false; // last graphics click was in added empty pad row
+    int _gfxLeftPalIdx       = 0;   // palette index for left mouse button drawing
+    int _gfxRightPalIdx      = 1;   // palette index for right mouse button drawing
+
     QVector<InsnBoundary> _disasmBoundaries; // lightweight instruction boundaries
     QVector<qint64> _savedLineBreaks;               // project/user line breaks saved while derived disasm layout is active
     bool _savedLineBreaksValid = false;             // distinguishes "saved empty layout" from "no saved layout"
@@ -867,8 +899,30 @@ private:
     void ensureDisasmBoundaries();    ///< populate boundaries only (no line break change)
     bool hasSectionDisasmMode() const;
     bool isDisasmAt(qint64 offset) const;
+    bool isAudioAt(qint64 offset) const;
+    bool isGraphicsAt(qint64 offset) const;
     const DisasmInstruction *disasmInstructionAtOffset(qint64 fileOffset) const;
     int disasmBoundaryIndex(qint64 fileOffset) const;
+
+    // ── Graphics tile rendering (per-section) ──
+    void initGraphicsPalette(int bpp, QVector<QRgb> &palette) const;
+    void decodeTile(TileCodec codec, const uint8_t *src, int bytesAvail,
+                    const QVector<QRgb> &palette, QRgb *dest8x8) const;
+    void paintGraphicsSection(QPainter &painter, int pxOfsX, int rowStridePx,
+                              int pxPosStartY, int colIdx, int bPosLine,
+                              qint64 rowAbsOffset, int bytesThisRow,
+                              bool isSelectedByte, bool isHighlightedByte,
+                              const QColor &bgColor, int &pxPosAsciiX2);
+    void paintGraphicsArea(QPainter &painter, int pxOfsX, int rowStridePx,
+                           int pxPosStartY);
+    void paintGraphicsCursor(QPainter &painter, int pxOfsX, int rowStridePx,
+                             int pxPosStartY);
+    int  graphicsAutoTileCols(TileCodec codec) const;
+    static int byteInTileForPixel(TileCodec codec, int px, int py);
+    static void setTilePixel(TileCodec codec, uint8_t *tile, int px, int py, int colorIndex);
+    static void tilePixelRangeForByte(TileCodec codec, int byteInTile, int &py, int &px0, int &pxCount);
+    void gfxSetPixel(Qt::MouseButton button);
+    mutable QImage _tileCanvasBuffer;  ///< reused buffer for tile row rendering
     /*! \endcond docNever */
 };
 
