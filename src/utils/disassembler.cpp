@@ -668,12 +668,25 @@ QVector<DetectedFunction> Disassembler::scanFunctions(
                                          ? sortedTargets[i + 1]
                                          : fileEnd;
 
-        // Find the first RET-end after funcStart — RTS ends the function.
-        auto it = std::lower_bound(retEndOffsets.begin(), retEndOffsets.end(), funcStart + 1);
-        if (it == retEndOffsets.end())
-            continue;
+        // Find the LAST RTS-end that is still before the next function.
+        // This avoids cutting a function short at an early-return branch
+        // while the main body continues further down.
+        auto hi = std::lower_bound(retEndOffsets.begin(), retEndOffsets.end(), nextFuncStart);
+        // hi points to the first retEnd >= nextFuncStart; step back to last < nextFuncStart
+        if (hi != retEndOffsets.begin())
+            --hi;
+        else
+            hi = retEndOffsets.end(); // nothing before nextFuncStart
 
-        qint64 funcEnd = *it;
+        if (hi == retEndOffsets.end() || *hi <= funcStart) {
+            // Fallback: use the first RTS after funcStart (old behaviour)
+            auto lo = std::lower_bound(retEndOffsets.begin(), retEndOffsets.end(), funcStart + 1);
+            if (lo == retEndOffsets.end())
+                continue;
+            hi = lo;
+        }
+
+        const qint64 funcEnd = *hi;
 
         DetectedFunction df;
         df.startOffset = funcStart;
