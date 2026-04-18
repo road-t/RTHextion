@@ -7,8 +7,8 @@
 #include <QTreeWidget>
 #include <QToolButton>
 
+class QDropEvent;
 class SectionListModel;
-class SectionTree;
 
 class SectionsDockWidget : public BaseDockWidget
 {
@@ -19,14 +19,13 @@ public:
     ~SectionsDockWidget() override;
 
     void setModel(SectionListModel *model);
+    void setFileSize(qint64 size);
     void setRomTypeName(const QString &name);
     void setCurrentRomType(RomType type);
     void setTableNames(const QStringList &names);
     void refresh();
 
-    /// Suppress or allow rebuildTree() calls (useful during batch operations).
     void setSuppressRebuild(bool suppress) { m_suppressRebuild = suppress; }
-
     void setShowSectionsChecked(bool checked);
 
     void retranslateUi() override;
@@ -37,10 +36,12 @@ signals:
     void virtualFormattingRequested(qint64 startOffset, qint64 endOffset);
     void removeVirtualFormattingRequested(qint64 startOffset, qint64 endOffset);
     void showSectionsToggled(bool checked);
-    // parentIndex == -1: add at ROM root; >= 0: add as child of that section
-    void addSectionRequested(int parentIndex);
     void disasmCpuChanged(int sectionIdx, RomType cpu);
     void parseRequested();
+    void detectAudioRequested();
+    void findSamplesInSectionRequested(qint64 startOffset, qint64 endOffset);
+    void findFunctionsInSectionRequested(qint64 startOffset, qint64 endOffset);
+    void splitSectionRequested(int sectionIndex, const QVector<qint64> &sizes);
 
 public slots:
     void highlightOffset(qint64 offset);
@@ -48,27 +49,30 @@ public slots:
 
 protected:
     void onPaletteChanged() override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private slots:
     void onItemClicked(QTreeWidgetItem *item, int column);
+    void onItemDoubleClicked(QTreeWidgetItem *item, int column);
     void onTreeContextMenu(const QPoint &pos);
-    void onDropped();
     void onItemChanged(QTreeWidgetItem *item, int column);
 
 private:
     void rebuildTree();
-    void syncModelFromTree();
+    void handleDrop(QDropEvent *event);
     QIcon colorSwatchIcon(const QColor &color) const;
 
-    QPointer<SectionTree> m_tree        = nullptr;
-    QToolButton      *m_showSectionsBtn = nullptr;
-    QToolButton      *m_addBtn          = nullptr;
-    QPointer<SectionListModel> m_model  = nullptr;
-    QString           m_romTypeName;
-    QStringList       m_tableNames;
-    RomType           m_currentRomType = RomType::Unknown;
-    bool              m_suppressRebuild = false;
-    bool              m_rebuildingTree = false;
+    QPointer<QTreeWidget>       m_tree;
+    QToolButton                *m_showSectionsBtn = nullptr;
+
+    QPointer<SectionListModel>  m_model;
+    QString                     m_romTypeName;
+    QStringList                 m_tableNames;
+    RomType                     m_currentRomType = RomType::Unknown;
+    qint64                      m_fileSize = 0;
+    qint64                      m_lastHighlightedOffset = -1;
+    bool                        m_suppressRebuild = false;
+    bool                        m_rebuildingTree  = false;
 };
 
 #endif // SECTIONSDOCKWIDGET_H
