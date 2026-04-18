@@ -10,6 +10,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QRadioButton>
 #include <QRegularExpressionValidator>
 #include <QSpinBox>
 #include <QStackedWidget>
@@ -20,6 +21,8 @@ static QString s_vfLastSymbolText;
 static int s_vfLastSymbolComboIndex = -1;
 static int s_vfLastLines = 1;
 static bool s_vfLastIgnoreRepeated = false;
+static bool s_vfLastSplitByCount = false;
+static int s_vfLastCount = 16;
 
 VirtualFormatDialog::VirtualFormatDialog(const QVector<TableTab> &tables,
                                          int activeTableIndex,
@@ -30,15 +33,26 @@ VirtualFormatDialog::VirtualFormatDialog(const QVector<TableTab> &tables,
     setWindowTitle(tr("Virtual formatting"));
     setModal(true);
 
+    auto *mainLayout = new QVBoxLayout(this);
+
+    // --- Split mode radio buttons ---
+    _rbByChar  = new QRadioButton(tr("Split by character sequence"));
+    _rbByCount = new QRadioButton(tr("Split by byte count"));
+    _rbByChar->setChecked(!s_vfLastSplitByCount);
+    _rbByCount->setChecked(s_vfLastSplitByCount);
+    mainLayout->addWidget(_rbByChar);
+    mainLayout->addWidget(_rbByCount);
+
     auto *form = new QFormLayout;
 
-    // --- Table combo ---
+    // --- Table combo (for character mode) ---
     _cbTable = new QComboBox;
     _cbTable->addItem(QStringLiteral("Hex"));
     _cbTable->addItem(QStringLiteral("Raw"));
     for (const TableTab &tab : _tables)
         _cbTable->addItem(tab.name);
-    form->addRow(tr("Table"), _cbTable);
+    _lblTable = new QLabel(tr("Table"));
+    form->addRow(_lblTable, _cbTable);
 
     // --- Symbol (stacked: line edit / combo) ---
     _symbolStack = new QStackedWidget;
@@ -50,19 +64,31 @@ VirtualFormatDialog::VirtualFormatDialog(const QVector<TableTab> &tables,
     _symbolStack->addWidget(_cbSymbol);            // page 1
 
     _symbolStack->setCurrentIndex(0);
-    form->addRow(tr("Character"), _symbolStack);
+    _lblCharacter = new QLabel(tr("Character"));
+    form->addRow(_lblCharacter, _symbolStack);
 
-    // --- Lines spin ---
+    // --- Count spin (for count mode) ---
+    _spCount = new QSpinBox;
+    _spCount->setMinimum(1);
+    _spCount->setMaximum(999999);
+    _spCount->setValue(s_vfLastCount);
+    _lblCount = new QLabel(tr("Byte count"));
+    form->addRow(_lblCount, _spCount);
+
+    // --- Line feeds spin ---
     _spLines = new QSpinBox;
     _spLines->setMinimum(1);
     _spLines->setMaximum(100);
     _spLines->setValue(s_vfLastLines);
-    form->addRow(tr("Lines"), _spLines);
+    _lblLines = new QLabel(tr("Line feeds"));
+    form->addRow(_lblLines, _spLines);
 
     // --- Ignore repeated checkbox ---
     _cbIgnoreRepeated = new QCheckBox(tr("Ignore repeated"));
     _cbIgnoreRepeated->setChecked(s_vfLastIgnoreRepeated);
     form->addRow(QString(), _cbIgnoreRepeated);
+
+    mainLayout->addLayout(form);
 
     // --- Buttons ---
     auto *btnLayout = new QHBoxLayout;
@@ -72,20 +98,15 @@ VirtualFormatDialog::VirtualFormatDialog(const QVector<TableTab> &tables,
     _pbCancel = new QPushButton(tr("Cancel"));
     btnLayout->addWidget(_pbOk);
     btnLayout->addWidget(_pbCancel);
-
-    auto *mainLayout = new QVBoxLayout(this);
-    mainLayout->addLayout(form);
     mainLayout->addLayout(btnLayout);
-
-    // Store label ptrs for retranslation
-    // QFormLayout stores labels as items; retrieve them
-    _lblTable     = qobject_cast<QLabel *>(form->labelForField(_cbTable));
-    _lblCharacter = qobject_cast<QLabel *>(form->labelForField(_symbolStack));
-    _lblLines     = qobject_cast<QLabel *>(form->labelForField(_spLines));
 
     // Init symbol field for default (Hex)
     onTableChanged(0);
 
+    // Initial mode setup
+    onModeChanged();
+
+    connect(_rbByChar,  &QRadioButton::toggled, this, &VirtualFormatDialog::onModeChanged);
     connect(_cbTable, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &VirtualFormatDialog::onTableChanged);
     connect(_pbOk,     &QPushButton::clicked, this, &VirtualFormatDialog::onOk);
@@ -93,6 +114,8 @@ VirtualFormatDialog::VirtualFormatDialog(const QVector<TableTab> &tables,
     connect(_leSymbol, &QLineEdit::textChanged, this, &VirtualFormatDialog::updateOkEnabled);
     connect(_cbSymbol, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &VirtualFormatDialog::updateOkEnabled);
+    connect(_spCount, QOverload<int>::of(&QSpinBox::valueChanged),
+            this, [this](int) { updateOkEnabled(); });
 
     // Preselect: active table if given, otherwise last used selection
     const int comboTarget = (activeTableIndex >= 0 && activeTableIndex < _tables.size())
@@ -114,23 +137,36 @@ VirtualFormatDialog::VirtualFormatDialog(const QVector<TableTab> &tables,
     mainLayout->setSizeConstraint(QLayout::SetFixedSize);
 }
 
+void VirtualFormatDialog::onModeChanged()
+{
+    const bool byChar = _rbByChar->isChecked();
+    _lblTable->setVisible(byChar);
+    _cbTable->setVisible(byChar);
+    _lblCharacter->setVisible(byChar);
+    _symbolStack->setVisible(byChar);
+    _cbIgnoreRepeated->setVisible(byChar);
+    _lblCount->setVisible(!byChar);
+    _spCount->setVisible(!byChar);
+    updateOkEnabled();
+}
+
 void VirtualFormatDialog::onTableChanged(int index)
 {
     if (index == 0) {
-        // Hex: exactly 2 hex chars
+        // Hex: any number of hex char pairs
         _symbolStack->setCurrentIndex(0);
         _leSymbol->clear();
-        _leSymbol->setMaxLength(2);
+        _leSymbol->setMaxLength(512);
         _leSymbol->setValidator(
-            new QRegularExpressionValidator(QRegularExpression(QStringLiteral("[0-9A-Fa-f]{0,2}")), _leSymbol));
-        _leSymbol->setPlaceholderText(QStringLiteral("FF"));
+            new QRegularExpressionValidator(QRegularExpression(QStringLiteral("[0-9A-Fa-f ]*")), _leSymbol));
+        _leSymbol->setPlaceholderText(QStringLiteral("FF 00 AB"));
     } else if (index == 1) {
-        // Raw: single character
+        // Raw: any text
         _symbolStack->setCurrentIndex(0);
         _leSymbol->clear();
-        _leSymbol->setMaxLength(1);
+        _leSymbol->setMaxLength(256);
         _leSymbol->setValidator(nullptr);
-        _leSymbol->setPlaceholderText(QStringLiteral("A"));
+        _leSymbol->setPlaceholderText(QStringLiteral("text"));
     } else {
         // Table: show combo with all table values
         _symbolStack->setCurrentIndex(1);
@@ -172,13 +208,19 @@ void VirtualFormatDialog::buildSymbolCombo()
 
 void VirtualFormatDialog::updateOkEnabled()
 {
+    if (_rbByCount->isChecked()) {
+        _pbOk->setEnabled(_spCount->value() > 0);
+        return;
+    }
+
     bool hasChar = false;
     const int index = _cbTable->currentIndex();
     if (index == 0) {
-        // Hex: need exactly 2 chars
-        hasChar = _leSymbol->text().length() == 2;
+        // Hex: need at least one complete byte pair (2 hex chars, ignoring spaces)
+        const QString stripped = _leSymbol->text().remove(' ');
+        hasChar = stripped.length() >= 2 && (stripped.length() % 2 == 0);
     } else if (index == 1) {
-        // Raw: need 1 char
+        // Raw: need at least 1 char
         hasChar = !_leSymbol->text().isEmpty();
     } else {
         // Table: need valid selection
@@ -189,38 +231,44 @@ void VirtualFormatDialog::updateOkEnabled()
 
 void VirtualFormatDialog::onOk()
 {
-    const int index = _cbTable->currentIndex();
+    _isSplitByCount = _rbByCount->isChecked();
 
-    if (index == 0) {
-        // Hex
-        const QString text = _leSymbol->text();
-        if (text.length() != 2)
+    if (_isSplitByCount) {
+        _countResult = _spCount->value();
+        if (_countResult <= 0)
             return;
-        bool ok = false;
-        const int val = text.toInt(&ok, 16);
-        if (!ok)
-            return;
-        _result = QByteArray(1, static_cast<char>(val));
-    } else if (index == 1) {
-        // Raw
-        const QString text = _leSymbol->text();
-        if (text.isEmpty())
-            return;
-        _result = QByteArray(1, text.at(0).toLatin1());
     } else {
-        // Table
-        if (_cbSymbol->currentIndex() < 0)
-            return;
-        _result = _cbSymbol->currentData().toByteArray();
-    }
+        const int index = _cbTable->currentIndex();
 
-    if (_result.isEmpty())
-        return;
+        if (index == 0) {
+            // Hex: arbitrary length, strip spaces and decode
+            const QString stripped = _leSymbol->text().remove(' ');
+            if (stripped.length() < 2 || (stripped.length() % 2 != 0))
+                return;
+            _result = QByteArray::fromHex(stripped.toLatin1());
+        } else if (index == 1) {
+            // Raw: use the full text as Latin-1 bytes
+            const QString text = _leSymbol->text();
+            if (text.isEmpty())
+                return;
+            _result = text.toLatin1();
+        } else {
+            // Table
+            if (_cbSymbol->currentIndex() < 0)
+                return;
+            _result = _cbSymbol->currentData().toByteArray();
+        }
+
+        if (_result.isEmpty())
+            return;
+    }
 
     // Remember selections for next invocation
     s_vfLastTableIndex = _cbTable->currentIndex();
     s_vfLastLines = _spLines->value();
     s_vfLastIgnoreRepeated = _cbIgnoreRepeated->isChecked();
+    s_vfLastSplitByCount = _isSplitByCount;
+    s_vfLastCount = _spCount->value();
     if (_symbolStack->currentIndex() == 0) {
         s_vfLastSymbolText = _leSymbol->text();
         s_vfLastSymbolComboIndex = -1;
@@ -235,6 +283,16 @@ void VirtualFormatDialog::onOk()
 QByteArray VirtualFormatDialog::character() const
 {
     return _result;
+}
+
+bool VirtualFormatDialog::splitByCount() const
+{
+    return _isSplitByCount;
+}
+
+int VirtualFormatDialog::countValue() const
+{
+    return _countResult;
 }
 
 int VirtualFormatDialog::lines() const
@@ -257,10 +315,13 @@ void VirtualFormatDialog::changeEvent(QEvent *event)
 void VirtualFormatDialog::retranslateUi()
 {
     setWindowTitle(tr("Virtual formatting"));
+    _rbByChar->setText(tr("Split by character sequence"));
+    _rbByCount->setText(tr("Split by byte count"));
     _pbOk->setText(tr("OK"));
     _pbCancel->setText(tr("Cancel"));
     if (_lblTable)     _lblTable->setText(tr("Table"));
     if (_lblCharacter) _lblCharacter->setText(tr("Character"));
-    if (_lblLines)     _lblLines->setText(tr("Lines"));
+    if (_lblCount)     _lblCount->setText(tr("Byte count"));
+    if (_lblLines)     _lblLines->setText(tr("Line feeds"));
     if (_cbIgnoreRepeated) _cbIgnoreRepeated->setText(tr("Ignore repeated"));
 }
