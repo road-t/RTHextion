@@ -1,4 +1,4 @@
-QT += core gui widgets concurrent network
+QT += core gui widgets concurrent network multimedia
 CONFIG += c++17
 
 TEMPLATE = app
@@ -27,7 +27,8 @@ INCLUDEPATH += \
     $$PWD/dialogs \
     $$PWD/dockwidgets \
     $$PWD/document \
-    $$PWD/utils
+    $$PWD/utils \
+    $$PWD/audio
 
 HEADERS = \
     appinfo.h \
@@ -63,6 +64,8 @@ HEADERS = \
     dockwidgets/PointersDockWidget.h \
     dockwidgets/ChangesDockWidget.h \
     dockwidgets/SectionsDockWidget.h \
+    dockwidgets/AudioDockWidget.h \
+    dockwidgets/GraphicsDockWidget.h \
     dockwidgets/BaseDockWidget.h \
     # utils
     utils/Datas.h \
@@ -70,7 +73,10 @@ HEADERS = \
     utils/encodingdetect.h \
     utils/updatechecker.h \
     utils/appsettings.h \
-    utils/romdetect.h
+    utils/romdetect.h \
+    # audio
+    audio/audiodetector.h \
+    audio/audioplayer.h
 
 SOURCES = \
     main.cpp \
@@ -87,6 +93,7 @@ SOURCES = \
     hexeditor/encoding.cpp \
     hexeditor/events.cpp \
     hexeditor/disasm.cpp \
+    hexeditor/graphics.cpp \
     hexeditor/pointers.cpp \
     hexeditor/scrollmap.cpp \
     hexeditor/layout.cpp \
@@ -115,12 +122,17 @@ SOURCES = \
     dockwidgets/PointersDockWidget.cpp \
     dockwidgets/ChangesDockWidget.cpp \
     dockwidgets/SectionsDockWidget.cpp \
+    dockwidgets/AudioDockWidget.cpp \
+    dockwidgets/GraphicsDockWidget.cpp \
     dockwidgets/BaseDockWidget.cpp \
     # utils
     utils/byteglue.cpp \
     utils/disassembler.cpp \
     utils/updatechecker.cpp \
-    utils/appsettings.cpp
+    utils/appsettings.cpp \
+    # audio
+    audio/audiodetector.cpp \
+    audio/audioplayer.cpp
 
 RESOURCES = \
     rthextion.qrc
