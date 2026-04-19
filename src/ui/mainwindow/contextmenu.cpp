@@ -540,7 +540,7 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         if (!hasSelection)
             addPointerActs = addPointerLengthMenu(menu);
 
-        auto clipActs = addClipboardActions(menu);
+        auto clipActs = addClipboardActions(menu, !clickedAscii);
 
         QAction *fillWithAct2 = nullptr;
         QAction *vfFormatAct2 = nullptr;
@@ -710,7 +710,7 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         if (!hasSelection)
             addPointerActs = addPointerLengthMenu(menu, /*disableAll=*/true); // existing pointer — disable
 
-        auto clipActs = addClipboardActions(menu);
+        auto clipActs = addClipboardActions(menu, !clickedAscii);
 
         QAction *fillWithAct1 = nullptr;
         QAction *vfFormatAct1 = nullptr;

@@ -135,11 +135,6 @@ void HexEditor::removeLineBreakDirect(qint64 offset)
 
 void HexEditor::addLineBreak(qint64 offset)
 {
-    // No-op if a break already exists at this offset (prevents duplicates in the undo stack)
-    const QVector<qint64> currentBreaks = lineBreaks();
-    auto it = std::lower_bound(currentBreaks.constBegin(), currentBreaks.constEnd(), offset);
-    if (it != currentBreaks.constEnd() && *it == offset)
-        return;
     ++_lineBreakCmdCount;  // pre-update before indexChanged fires
     _lineBreakChangeInProgress = true;
     _undoStack->push(new LineBreakAddCommand(this, offset));

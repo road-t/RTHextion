@@ -1505,7 +1505,7 @@ void HexEditor::paintEvent(QPaintEvent *event)
                                 pen.setWidth(1);
                                 painter.setPen(pen);
 
-                                auto frame = QRect(pxPosX - 6, pxPosY - _pxCharHeight + _pxSelectionSub + 1,
+                                auto frame = QRect(pxPosX - 6, pxPosY - _pxCharHeight + _pxSelectionSub,
                                                     (3 * bytesOnThisRow) * _pxCharWidth + (bytesOnThisRow - 1) * kHexColumnExtraGapPx,
                                                     _pxCharHeight - _pxSelectionSub + 4);
 
@@ -1533,7 +1533,7 @@ void HexEditor::paintEvent(QPaintEvent *event)
                                     if (asciiFrameWidth > 0)
                                     {
                                         auto asciiFrame = QRect(asciiStartX - 4,
-                                                                pxPosY - _pxCharHeight + _pxSelectionSub + 2,
+                                                                pxPosY - _pxCharHeight + _pxSelectionSub + 1,
                                                                 asciiFrameWidth + 2,
                                                                 _pxCharHeight - _pxSelectionSub + 4);
                                         painter.drawRect(asciiFrame);
