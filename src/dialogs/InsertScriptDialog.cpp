@@ -6,7 +6,90 @@
 #include <QEvent>
 #include <QFile>
 #include <QMessageBox>
+#include <QProgressDialog>
+#include <QRegularExpression>
 #include <algorithm>
+
+namespace
+{
+    int normalizedScriptPointerSize(int explicitSize, int defaultSize)
+    {
+        if (explicitSize == 2 || explicitSize == 4)
+            return explicitSize;
+        return (defaultSize == 2) ? 2 : 4;
+    }
+
+    bool parsePointerSpec(const QString &text, qint64 *outOffset, int *outSize)
+    {
+        if (!outOffset || !outSize)
+            return false;
+
+        static const QRegularExpression re(
+            QStringLiteral("^\\s*([0-9A-Fa-f]+)(?:\\s*:\\s*([24]))?\\s*$"));
+        const QRegularExpressionMatch m = re.match(text);
+        if (!m.hasMatch())
+            return false;
+
+        bool ok = false;
+        const qint64 ofs = static_cast<qint64>(m.captured(1).toULongLong(&ok, 16));
+        if (!ok)
+            return false;
+
+        const int sz = m.captured(2).isEmpty() ? 0 : m.captured(2).toInt();
+        *outOffset = ofs;
+        *outSize = sz;
+        return true;
+    }
+
+    QByteArray decodeScriptText(const QString &text, TranslationTable *tb)
+    {
+        QByteArray result;
+        QString plainBuf;
+
+        auto flushPlain = [&]() {
+            if (plainBuf.isEmpty())
+                return;
+            if (tb)
+                result.append(tb->decode(plainBuf.toUtf8()));
+            plainBuf.clear();
+        };
+
+        int i = 0;
+        const int len = text.size();
+        while (i < len) {
+            const QChar ch = text[i];
+
+            if (ch == QLatin1Char('\\') && i + 1 < len) {
+                const QChar next = text[i + 1];
+                if (next == QLatin1Char('{') || next == QLatin1Char('}') || next == QLatin1Char('\\')) {
+                    plainBuf += next;
+                    i += 2;
+                    continue;
+                }
+            }
+
+            if (ch == QLatin1Char('{')) {
+                const int closePos = text.indexOf(QLatin1Char('}'), i + 1);
+                if (closePos > i + 1) {
+                    const QString hexStr = text.mid(i + 1, closePos - i - 1);
+                    static const QRegularExpression hexRe(QStringLiteral("^[0-9A-Fa-f]+$"));
+                    if (hexStr.size() % 2 == 0 && hexRe.match(hexStr).hasMatch()) {
+                        flushPlain();
+                        result.append(QByteArray::fromHex(hexStr.toLatin1()));
+                        i = closePos + 1;
+                        continue;
+                    }
+                }
+            }
+
+            plainBuf += ch;
+            ++i;
+        }
+
+        flushPlain();
+        return result;
+    }
+}
 
 InsertScriptDialog::InsertScriptDialog(HexEditor *hexEdit, QWidget *parent) :
     QDialog(parent),
@@ -107,11 +190,10 @@ void InsertScriptDialog::on_bbControls_clicked(QAbstractButton *button)
 
         */
         static QRegularExpression re(
-                    "\\{\\|([a-f0-9:,]+)\\|\\}:\\s*(.*)(?=(?:\\{\\|)|$)\\s*",
-                    QRegularExpression::CaseInsensitiveOption |
-                    QRegularExpression::DotMatchesEverythingOption |
-                    QRegularExpression::InvertedGreedinessOption
-                    );
+            "\\{\\|([^|]+)\\|\\}:(?:\\r?\\n)*(.*?)(?=(?:\\{\\|)|\\z)",
+                QRegularExpression::CaseInsensitiveOption |
+                QRegularExpression::DotMatchesEverythingOption
+                );
 
         static QRegularExpression reNoNewlines("[\r\n]+");
 
@@ -123,32 +205,56 @@ void InsertScriptDialog::on_bbControls_clicked(QAbstractButton *button)
     //    {
             auto script = ui->pteScript->toPlainText();
 
-            QRegularExpressionMatchIterator it = re.globalMatch(script, 0, QRegularExpression::PartialPreferCompleteMatch);
+            QVector<QRegularExpressionMatch> matches;
+            QRegularExpressionMatchIterator it = re.globalMatch(script);
+            while (it.hasNext()) {
+                const QRegularExpressionMatch match = it.next();
+                if (match.hasMatch())
+                    matches.append(match);
+            }
 
-            while (it.hasNext())
+            const bool updatePointers = ui->cbUpdatePointers->isChecked();
+            QVector<QPair<qint64, qint64>> pointerBatch;
+            const bool hadChunks = !matches.isEmpty();
+
+            QProgressDialog progress(tr("Importing script..."), QString(), 0, hadChunks ? matches.size() : 1, this);
+            progress.setWindowModality(Qt::ApplicationModal);
+            progress.setMinimumDuration(0);
+            progress.setCancelButton(nullptr);
+            progress.setAutoClose(true);
+            progress.setAutoReset(true);
+            progress.show();
+
+            QUndoStack *stack = hexEdit->undoStack();
+            if (stack)
+                stack->beginMacro(tr("Import script"));
+
+            hexEdit->setUpdatesEnabled(false);
+
+            int progressStep = 0;
+            for (const QRegularExpressionMatch &match : matches)
             {
-                QRegularExpressionMatch match = it.next();
-
                 if (match.hasMatch())
                 {
                      qDebug() << ": [1] " << match.captured(1) << "[2] " << match.captured(2);
 
                      // insert pointed chunk
-                     auto line = tb->decode(match.captured(2).remove(reNoNewlines).toUtf8());
+                     auto line = decodeScriptText(match.captured(2).remove(reNoNewlines), tb);
                      auto length = line.length();
 
                      hexEdit->replace(offset, length, line);
 
                      // update pointers to it
-                     auto pointers = match.captured(1).split(',');
+                     auto pointers = match.captured(1).split(',', Qt::SkipEmptyParts);
 
                      for (const auto& i : pointers)
                      {
-                         const QStringList parts = i.trimmed().split(':');
-                         const quint64 ptrOffset = parts[0].trimmed().toULongLong(nullptr, 16);
-                         const int perPtrSize = (parts.size() > 1) ? parts[1].trimmed().toInt() : _pointerSize;
-                         const int effectivePtrSize = (perPtrSize == 2 || perPtrSize == 3 || perPtrSize == 4)
-                                                          ? perPtrSize : _pointerSize;
+                         qint64 ptrOffset = -1;
+                         int parsedSize = 0;
+                         if (!parsePointerSpec(i, &ptrOffset, &parsedSize))
+                             continue;
+
+                         const int effectivePtrSize = normalizedScriptPointerSize(parsedSize, _pointerSize);
 
                          // Reverse the offset: raw_pointer = file_offset - pointerOffset
                          const qint64 rawPointerValue = static_cast<qint64>(offset) - _pointerOffset;
@@ -184,13 +290,40 @@ void InsertScriptDialog::on_bbControls_clicked(QAbstractButton *button)
                              }
                          }
 
-                         hexEdit->replace(ptrOffset, effectivePtrSize, data);
+                         if (updatePointers)
+                         {
+                             hexEdit->replace(ptrOffset, effectivePtrSize, data);
+                             pointerBatch.append({
+                                 ptrOffset,
+                                 PointerListModel::encodePtrValue(offset, effectivePtrSize)
+                             });
+                         }
                      }
 
 
                      offset += length;
                 }
+
+                progress.setValue(++progressStep);
+                QApplication::processEvents();
             }
+
+            if (!hadChunks) {
+                const QByteArray data = decodeScriptText(script.remove(reNoNewlines), tb);
+                if (!data.isEmpty())
+                    hexEdit->replace(offset, data.size(), data);
+                progress.setValue(1);
+                QApplication::processEvents();
+            }
+
+            if (!pointerBatch.isEmpty())
+                hexEdit->pointers()->addPointersBatch(pointerBatch);
+
+            hexEdit->setUpdatesEnabled(true);
+            hexEdit->viewport()->update();
+
+            if (stack)
+                stack->endMacro();
     //    }
     }
 }

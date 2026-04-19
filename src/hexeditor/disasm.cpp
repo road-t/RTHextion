@@ -30,6 +30,7 @@ void HexEditor::setShowDisasm(bool mode)
         // wraps if any section still requests Disassembly mode.
         _disasmCache.clear();
         _disasmCacheStart = _disasmCacheEnd = -1;
+        _disasmCacheRomType = RomType::Unknown;
         if (_savedLineBreaksValid)
             _lineBreaks = _savedLineBreaks;
         rebuildSectionAwareLayout();
@@ -51,6 +52,10 @@ void HexEditor::setDisasmRomType(RomType type)
     bool ok = _disasm->setRomType(type);
     (void)ok;
 
+    _disasmCache.clear();
+    _disasmCacheStart = _disasmCacheEnd = -1;
+    _disasmCacheRomType = RomType::Unknown;
+
     if (_showDisasm)
         rebuildDisasmLayout();
     else if (hasSectionDisasmMode())
@@ -63,6 +68,7 @@ void HexEditor::rebuildDisasmLayout()
     _disasmBoundaries.clear();
     _disasmCache.clear();
     _disasmCacheStart = _disasmCacheEnd = -1;
+    _disasmCacheRomType = RomType::Unknown;
 
     if (!_disasm || !Disassembler::isSupported(_disasmRomType)) {
         _lineBreaks.clear();
@@ -102,8 +108,8 @@ void HexEditor::rebuildDisasmLayout()
 
 void HexEditor::ensureDisasmBoundaries()
 {
-    if (!_disasm || !Disassembler::isSupported(_disasmRomType))
-        return;
+    if (!_disasm)
+        _disasm = new Disassembler();
     if (!_disasmBoundaries.isEmpty())
         return;
 
@@ -122,17 +128,28 @@ void HexEditor::ensureDisasmBoundaries()
             const qint64 start = qBound<qint64>(0, s.startOffset, fSize);
             const qint64 end = qBound<qint64>(0, _sectionModel->endOffsetOf(si, fSize), fSize);
             if (start < end) {
-                const auto bndrs = _disasm->scanBoundaries(
+                const RomType cpu = (s.disasmCpu != RomType::Unknown) ? s.disasmCpu : _disasmRomType;
+                if (!Disassembler::isSupported(cpu))
+                    continue;
+                Disassembler secDisasm;
+                if (!secDisasm.setRomType(cpu))
+                    continue;
+                const auto bndrs = secDisasm.scanBoundaries(
                     fileData, start, static_cast<int>(end - start));
                 _disasmBoundaries.append(bndrs);
             }
         }
     } else {
+        if (!Disassembler::isSupported(_disasmRomType))
+            return;
+        if (!_disasm->setRomType(_disasmRomType))
+            return;
         _disasmBoundaries = _disasm->scanBoundaries(fileData, 0, fileData.size());
     }
 
     _disasmCache.clear();
     _disasmCacheStart = _disasmCacheEnd = -1;
+    _disasmCacheRomType = RomType::Unknown;
 }
 
 
@@ -384,11 +401,28 @@ void HexEditor::rebuildSectionAwareLayout()
     _disasmBoundaries.clear();
     _disasmCache.clear();
     _disasmCacheStart = _disasmCacheEnd = -1;
-    if (_disasm && Disassembler::isSupported(_disasmRomType)) {
+    _disasmCacheRomType = RomType::Unknown;
+    if (_disasm) {
         const QByteArray fileData = data();
         if (!fileData.isEmpty()) {
             for (const auto &range : disasmRanges) {
-                const auto bndrs = _disasm->scanBoundaries(
+                RomType cpu = _disasmRomType;
+                if (_sectionModel) {
+                    const int si = _sectionModel->sectionIndexAtOffset(range.first);
+                    if (si >= 0) {
+                        const auto &s = _sectionModel->at(si);
+                        if (s.disasmCpu != RomType::Unknown)
+                            cpu = s.disasmCpu;
+                    }
+                }
+                if (!Disassembler::isSupported(cpu))
+                    continue;
+
+                Disassembler secDisasm;
+                if (!secDisasm.setRomType(cpu))
+                    continue;
+
+                const auto bndrs = secDisasm.scanBoundaries(
                     fileData, range.first,
                     static_cast<int>(range.second - range.first));
                 _disasmBoundaries.append(bndrs);
@@ -538,8 +572,22 @@ int HexEditor::disasmBoundaryIndex(qint64 fileOffset) const
 
 const DisasmInstruction *HexEditor::disasmInstructionAtOffset(qint64 fileOffset) const
 {
+    RomType effectiveRomType = _disasmRomType;
+    if (_sectionModel) {
+        const int secIdx = _sectionModel->sectionIndexAtOffset(fileOffset);
+        if (secIdx >= 0) {
+            const auto &sec = _sectionModel->at(secIdx);
+            if (sec.displayMode == SectionDisplay_Disasm && sec.disasmCpu != RomType::Unknown)
+                effectiveRomType = sec.disasmCpu;
+        }
+    }
+
+    if (!Disassembler::isSupported(effectiveRomType))
+        return nullptr;
+
     // Return from cache if available
-    if (fileOffset >= _disasmCacheStart && fileOffset < _disasmCacheEnd) {
+    if (effectiveRomType == _disasmCacheRomType
+        && fileOffset >= _disasmCacheStart && fileOffset < _disasmCacheEnd) {
         for (const auto &instr : _disasmCache) {
             if (fileOffset >= instr.fileOffset && fileOffset < instr.fileOffset + instr.size)
                 return &instr;
@@ -549,6 +597,15 @@ const DisasmInstruction *HexEditor::disasmInstructionAtOffset(qint64 fileOffset)
     // Find the boundary index for this offset
     const int idx = const_cast<HexEditor*>(this)->disasmBoundaryIndex(fileOffset);
     if (idx < 0 || !_disasm)
+        return nullptr;
+
+    if (_disasmCacheRomType != effectiveRomType) {
+        _disasmCache.clear();
+        _disasmCacheStart = _disasmCacheEnd = -1;
+        _disasmCacheRomType = RomType::Unknown;
+    }
+
+    if (_disasm->romType() != effectiveRomType && !_disasm->setRomType(effectiveRomType))
         return nullptr;
 
     // Disassemble a window of ~256 instructions around the target,
@@ -582,6 +639,7 @@ const DisasmInstruction *HexEditor::disasmInstructionAtOffset(qint64 fileOffset)
     _disasmCache = _disasm->disassemble(fileData, startOfs, bytes);
     _disasmCacheStart = startOfs;
     _disasmCacheEnd = endOfs;
+    _disasmCacheRomType = effectiveRomType;
 
     // Search the freshly populated cache
     for (const auto &instr : _disasmCache) {

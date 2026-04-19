@@ -33,6 +33,8 @@ public:
     QPair<char, QString> prev();
     void reset();
     void setItem(uint8_t key, const QString& value);
+    // Adds an alternative text symbol decoded to the same byte key.
+    void addDecodeAlias(uint8_t key, const QString& value);
     void setMultiByteItem(const QByteArray &key, const QString& value);
     void removeItem(uint8_t key);
     void removeMultiByteItem(const QByteArray &key);
@@ -51,7 +53,11 @@ protected:
     QMap<QString, char> decodeTable;              // single-byte: text → byte
     QMap<QByteArray, QString> multiByteEncodeTable; // multi-byte: byte sequence → text
     QMap<QString, QByteArray> multiByteDecodeTable; // multi-byte: text → byte sequence
+    QMap<char, QStringList> decodeAliases;          // single-byte aliases: byte → extra text symbols
     int _maxKeyLen = 1;                           // longest key length in bytes
+
+public:
+    const QStringList &decodeAliasesForKey(uint8_t key) const;
 
 private:
     QMap<char, QString>::Iterator it;

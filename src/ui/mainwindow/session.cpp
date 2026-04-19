@@ -521,12 +521,15 @@ public:
     {
         setAttribute(Qt::WA_TranslucentBackground);
         setAttribute(Qt::WA_DeleteOnClose);
-        setAttribute(Qt::WA_ShowWithoutActivating);
+        setFocusPolicy(Qt::StrongFocus);
         setGeometry(mainWindow->geometry());
         // Intercept clicks that pass through the transparent hole to the real tab bar
         if (m_tabs && m_tabs->tabBar())
             m_tabs->tabBar()->installEventFilter(this);
         show();
+        raise();
+        activateWindow();
+        setFocus(Qt::ActiveWindowFocusReason);
     }
 
     ~TabPickerOverlay() override

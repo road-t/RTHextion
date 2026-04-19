@@ -20,6 +20,13 @@ namespace
 {
     const char *kLastDumpDirKey = "Paths/LastDumpDir";
 
+    int normalizedScriptPointerSize(int explicitSize, int defaultSize)
+    {
+        if (explicitSize == 2 || explicitSize == 4)
+            return explicitSize;
+        return (defaultSize == 2) ? 2 : 4;
+    }
+
     bool hasIncomingPointersInSelection(HexEditor *hexEdit)
     {
         if (!hexEdit)
@@ -41,6 +48,60 @@ namespace
         }
 
         return false;
+    }
+
+    bool parsePointerSpec(const QString &text, qint64 *outOffset, int *outSize)
+    {
+        if (!outOffset || !outSize)
+            return false;
+
+        static const QRegularExpression re(
+            QStringLiteral("^\\s*([0-9A-Fa-f]+)(?:\\s*:\\s*([24]))?\\s*$"));
+        const QRegularExpressionMatch m = re.match(text);
+        if (!m.hasMatch())
+            return false;
+
+        bool ok = false;
+        const qint64 ofs = static_cast<qint64>(m.captured(1).toULongLong(&ok, 16));
+        if (!ok)
+            return false;
+
+        const int sz = m.captured(2).isEmpty() ? 0 : m.captured(2).toInt();
+        *outOffset = ofs;
+        *outSize = sz;
+        return true;
+    }
+
+    QString escapeScriptText(const QString &text)
+    {
+        QString escaped;
+        escaped.reserve(text.size());
+
+        int i = 0;
+        while (i < text.size()) {
+            const QChar ch = text[i];
+
+            // Preserve generated {HEX} byte markers as-is.
+            if (ch == QLatin1Char('{')) {
+                const int closePos = text.indexOf(QLatin1Char('}'), i + 1);
+                if (closePos > i + 1) {
+                    const QString hexStr = text.mid(i + 1, closePos - i - 1);
+                    static const QRegularExpression hexRe(QStringLiteral("^[0-9A-Fa-f]+$"));
+                    if (hexStr.size() % 2 == 0 && hexRe.match(hexStr).hasMatch()) {
+                        escaped += text.mid(i, closePos - i + 1);
+                        i = closePos + 1;
+                        continue;
+                    }
+                }
+            }
+
+            if (ch == QLatin1Char('{') || ch == QLatin1Char('}') || ch == QLatin1Char('\\'))
+                escaped += QLatin1Char('\\');
+            escaped += ch;
+            ++i;
+        }
+
+        return escaped;
     }
 }
 
@@ -151,7 +212,7 @@ void DumpScriptDialog::updateText()
         {
             // split by pointers if requested
             if (ui->cbSplitByPointers->isChecked() && i)
-                dump += '\n';
+                dump += QStringLiteral("\n\n");
 
             auto ptrs = hexEdit->pointers()->getPointers(offset);
             QString ptrsString;
@@ -173,7 +234,7 @@ void DumpScriptDialog::updateText()
         if (useTable)
         {
             int consumed = 0;
-            dump += tb->encodeBytes(data, i, consumed, true);
+            dump += escapeScriptText(tb->encodeBytes(data, i, consumed, true));
             if (stopCharActive && data.mid(i, stopBytes.size()) == stopBytes)
                 dump += '\n';
             i += consumed;
@@ -190,7 +251,7 @@ void DumpScriptDialog::updateText()
                 // Non-printable byte
                 dump += TranslationTable::charToHex(data[i]);
             } else {
-                dump += chars[i];
+                dump += escapeScriptText(chars[i]);
             }
             if (stopCharActive && data.mid(i, stopBytes.size()) == stopBytes)
                 dump += '\n';
@@ -390,10 +451,9 @@ void DumpScriptDialog::on_pbInsert_clicked()
     const qint64 selSize  = selEnd - selBegin;
 
     static QRegularExpression re(
-        "\\{\\|([a-f0-9:,]+)\\|\\}:\\s*(.*)(?=(?:\\{\\|)|$)\\s*",
+        "\\{\\|([^|]+)\\|\\}:(?:\\r?\\n)*(.*?)(?=(?:\\{\\|)|\\z)",
         QRegularExpression::CaseInsensitiveOption |
-        QRegularExpression::DotMatchesEverythingOption |
-        QRegularExpression::InvertedGreedinessOption
+        QRegularExpression::DotMatchesEverythingOption
     );
     static QRegularExpression reNoNewlines("[\r\n]+");
 
@@ -404,7 +464,7 @@ void DumpScriptDialog::on_pbInsert_clicked()
 
     QVector<Chunk> chunks;
 
-    QRegularExpressionMatchIterator it = re.globalMatch(script, 0, QRegularExpression::PartialPreferCompleteMatch);
+    QRegularExpressionMatchIterator it = re.globalMatch(script);
     while (it.hasNext()) {
         QRegularExpressionMatch match = it.next();
         if (!match.hasMatch())
@@ -414,13 +474,14 @@ void DumpScriptDialog::on_pbInsert_clicked()
         const QString textContent = match.captured(2).remove(reNoNewlines);
         chunk.data = decodeScriptText(textContent, useTable);
 
-        const QStringList ptrParts = match.captured(1).split(QLatin1Char(','));
+        const QStringList ptrParts = match.captured(1).split(QLatin1Char(','), Qt::SkipEmptyParts);
         for (const QString &ptrStr : ptrParts) {
-            const QStringList parts = ptrStr.trimmed().split(QLatin1Char(':'));
-            const qint64 ptrFileOffset = static_cast<qint64>(parts[0].trimmed().toULongLong(nullptr, 16));
-            const int perPtrSize       = (parts.size() > 1) ? parts[1].trimmed().toInt() : _pointerSize;
-            const int effectivePtrSize = (perPtrSize == 2 || perPtrSize == 3 || perPtrSize == 4)
-                                             ? perPtrSize : _pointerSize;
+            qint64 ptrFileOffset = -1;
+            int parsedSize = 0;
+            if (!parsePointerSpec(ptrStr, &ptrFileOffset, &parsedSize))
+                continue;
+
+            const int effectivePtrSize = normalizedScriptPointerSize(parsedSize, _pointerSize);
             chunk.pointers.insert(ptrFileOffset, effectivePtrSize);
         }
 
@@ -460,6 +521,13 @@ void DumpScriptDialog::on_pbInsert_clicked()
 
     qint64 offset = selBegin;
     const qint64 limitOffset = selBegin + selSize;
+    QVector<QPair<qint64, qint64>> pointerBatch;
+
+    QUndoStack *stack = hexEdit->undoStack();
+    if (stack)
+        stack->beginMacro(tr("Insert script"));
+
+    hexEdit->setUpdatesEnabled(false);
 
     for (const auto &chunk : chunks) {
         QByteArray data = chunk.data;
@@ -508,10 +576,23 @@ void DumpScriptDialog::on_pbInsert_clicked()
             }
 
             hexEdit->replace(ptrFileOffset, effectivePtrSize, ptrData);
+            pointerBatch.append({
+                ptrFileOffset,
+                PointerListModel::encodePtrValue(offset, effectivePtrSize)
+            });
         }
 
         offset += chunk.data.size(); // advance by full (untruncated) chunk size
     }
+
+    if (!pointerBatch.isEmpty())
+        hexEdit->pointers()->addPointersBatch(pointerBatch);
+
+    hexEdit->setUpdatesEnabled(true);
+    hexEdit->viewport()->update();
+
+    if (stack)
+        stack->endMacro();
 
     ui->pteScript->document()->setModified(false);
     close();

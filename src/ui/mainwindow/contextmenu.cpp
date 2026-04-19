@@ -511,7 +511,7 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         {
             jumpToPointerAct = menu.addAction(
                 tr("Jump to pointer") + QStringLiteral(": 0x%1")
-                    .arg(ptrs[0], 8, 16, QChar('0')).toUpper());
+                    .arg(ptrs[0], 8, 16, QChar('0')));
         }
         else
         {
@@ -519,7 +519,7 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
             for (const qint64 ptr : ptrs)
             {
                 QAction *ptrAct = subJmp->addAction(
-                    QStringLiteral("0x%1").arg(ptr, 8, 16, QChar('0')).toUpper());
+                    QStringLiteral("0x%1").arg(ptr, 8, 16, QChar('0')));
                 ptrActs.append(ptrAct);
             }
         }

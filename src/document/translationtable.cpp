@@ -87,6 +87,16 @@ bool tryDecodeWithEncoding(const QByteArray &raw, const QString &encodingName, Q
     *outText = decoded;
     return true;
 }
+
+void removeDecodeEntriesForKey(QMap<QString, char> &decodeTable, char key)
+{
+    for (auto it = decodeTable.begin(); it != decodeTable.end(); ) {
+        if (it.value() == key)
+            it = decodeTable.erase(it);
+        else
+            ++it;
+    }
+}
 }
 
 TranslationTable::TranslationTable()
@@ -222,8 +232,11 @@ bool TranslationTable::loadFromFile(const QString &fileName, const QString &text
             bool success;
             auto val = hexPart.toUInt(&success, 16);
             if (success) {
-                encodeTable.insert(val, value);
-                decodeTable[value] = val;
+                const uint8_t key = static_cast<uint8_t>(val);
+                if (!encodeTable.contains(key))
+                    setItem(key, value);
+                else
+                    addDecodeAlias(key, value);
             }
         } else {
             // Multi-byte entry: XXYY...=text (must be even number of hex digits)
@@ -342,6 +355,10 @@ QByteArray TranslationTable::decodeToBytes(const QString &text) const
     for (auto it2 = encodeTable.constBegin(); it2 != encodeTable.constEnd(); ++it2) {
         if (it2.value() == text)
             return QByteArray(1, it2.key());
+
+        const auto aliasIt = decodeAliases.constFind(it2.key());
+        if (aliasIt != decodeAliases.constEnd() && aliasIt.value().contains(text))
+            return QByteArray(1, it2.key());
     }
 
     return QByteArray(); // not found
@@ -457,12 +474,34 @@ void TranslationTable::reset()
 
 void TranslationTable::setItem(uint8_t key, const QString &value)
 {
-    // Remove old decode entry for this key
-    if (encodeTable.contains(key))
-        decodeTable.remove(encodeTable.value(key));
-
+    removeDecodeEntriesForKey(decodeTable, static_cast<char>(key));
     encodeTable[key] = value;
     decodeTable[value] = key;
+
+    auto &aliases = decodeAliases[static_cast<char>(key)];
+    aliases.removeAll(value);
+    for (const QString &alias : aliases)
+        decodeTable[alias] = static_cast<char>(key);
+}
+
+void TranslationTable::addDecodeAlias(uint8_t key, const QString &value)
+{
+    if (value.isEmpty())
+        return;
+
+    if (!encodeTable.contains(key)) {
+        setItem(key, value);
+        return;
+    }
+
+    if (encodeTable.value(key) == value)
+        return;
+
+    auto &aliases = decodeAliases[static_cast<char>(key)];
+    if (!aliases.contains(value))
+        aliases.append(value);
+
+    decodeTable[value] = static_cast<char>(key);
 }
 
 void TranslationTable::setMultiByteItem(const QByteArray &key, const QString &value)
@@ -480,7 +519,8 @@ void TranslationTable::removeItem(uint8_t key)
 {
     if (encodeTable.contains(key))
     {
-        decodeTable.remove(encodeTable.value(key));
+        removeDecodeEntriesForKey(decodeTable, static_cast<char>(key));
+        decodeAliases.remove(static_cast<char>(key));
         encodeTable.remove(key);
     }
 }
@@ -500,7 +540,15 @@ void TranslationTable::clearItems()
     decodeTable.clear();
     multiByteEncodeTable.clear();
     multiByteDecodeTable.clear();
+    decodeAliases.clear();
     _maxKeyLen = 1;
+}
+
+const QStringList &TranslationTable::decodeAliasesForKey(uint8_t key) const
+{
+    static const QStringList kEmpty;
+    auto it = decodeAliases.constFind(static_cast<char>(key));
+    return (it == decodeAliases.constEnd()) ? kEmpty : it.value();
 }
 
 bool TranslationTable::save(const QString &fileName) const
@@ -517,6 +565,17 @@ bool TranslationTable::save(const QString &fileName) const
         out << QString("%1=%2").arg(
             QString::number(static_cast<uint8_t>(it.key()), 16).toUpper().rightJustified(2, '0'),
             it.value()) << "\n";
+
+        const auto aliasIt = decodeAliases.constFind(it.key());
+        if (aliasIt != decodeAliases.constEnd()) {
+            for (const QString &alias : aliasIt.value()) {
+                if (alias == it.value())
+                    continue;
+                out << QString("%1=%2").arg(
+                    QString::number(static_cast<uint8_t>(it.key()), 16).toUpper().rightJustified(2, '0'),
+                    alias) << "\n";
+            }
+        }
     }
 
     // Save multi-byte entries

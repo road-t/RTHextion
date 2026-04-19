@@ -41,20 +41,50 @@
 class HexColumnDelegate : public QStyledItemDelegate
 {
 public:
-    using QStyledItemDelegate::QStyledItemDelegate;
+    explicit HexColumnDelegate(QObject *editorFilter, QObject *parent = nullptr)
+        : QStyledItemDelegate(parent), m_editorFilter(editorFilter)
+    {
+    }
 
     QWidget *createEditor(QWidget *parent, const QStyleOptionViewItem &option,
                           const QModelIndex &index) const override
     {
         QWidget *editor = QStyledItemDelegate::createEditor(parent, option, index);
+        if (editor && m_editorFilter)
+            editor->installEventFilter(m_editorFilter);
         if (index.column() == 0) {
             if (auto *le = qobject_cast<QLineEdit *>(editor)) {
-                static const QRegularExpression hexRe(QStringLiteral("^([0-9A-Fa-f]{2})*$"));
+                // Allow incremental typing; even-length is validated on commit/change.
+                static const QRegularExpression hexRe(QStringLiteral("^[0-9A-Fa-f]*$"));
                 le->setValidator(new QRegularExpressionValidator(hexRe, le));
             }
         }
         return editor;
     }
+
+private:
+    QObject *m_editorFilter = nullptr;
+};
+
+class ValueColumnDelegate : public QStyledItemDelegate
+{
+public:
+    explicit ValueColumnDelegate(QObject *editorFilter, QObject *parent = nullptr)
+        : QStyledItemDelegate(parent), m_editorFilter(editorFilter)
+    {
+    }
+
+    QWidget *createEditor(QWidget *parent, const QStyleOptionViewItem &option,
+                          const QModelIndex &index) const override
+    {
+        QWidget *editor = QStyledItemDelegate::createEditor(parent, option, index);
+        if (editor && m_editorFilter)
+            editor->installEventFilter(m_editorFilter);
+        return editor;
+    }
+
+private:
+    QObject *m_editorFilter = nullptr;
 };
 
 // ---------------------------------------------------------------------------
@@ -109,6 +139,18 @@ static void configureTableGridColumns(QTableWidget *grid)
 }
 
 static constexpr const char *kTableRowsMimeType = "application/x-rthextion-table-rows";
+static constexpr int kOriginalValueRole = Qt::UserRole + 2;
+
+static QTableWidget *owningGridFromObject(QObject *obj)
+{
+    auto *w = qobject_cast<QWidget *>(obj);
+    while (w) {
+        if (auto *grid = qobject_cast<QTableWidget *>(w))
+            return grid;
+        w = w->parentWidget();
+    }
+    return nullptr;
+}
 
 class TableSnapshotCommand : public QUndoCommand
 {
@@ -256,6 +298,39 @@ TablesDockWidget::TablesDockWidget(QWidget *parent)
 
     initTitleBar();
 
+    // Some editor widgets may not propagate FocusOut reliably through the
+    // grid/viewport filters on all platforms. This fallback guarantees draft
+    // lifecycle rules whenever focus leaves the active table.
+    connect(qApp, &QApplication::focusChanged, this, [this](QWidget * /*old*/, QWidget *now) {
+        if (!m_draftGrid || m_draftRow < 0)
+            return;
+
+        bool focusInsideDraftGrid = false;
+        for (QWidget *w = now; w; w = w->parentWidget()) {
+            if (w == m_draftGrid) {
+                focusInsideDraftGrid = true;
+                break;
+            }
+        }
+        if (focusInsideDraftGrid)
+            return;
+
+        if (m_draftRow < 0 || m_draftRow >= m_draftGrid->rowCount()) {
+            cancelDraftRow(m_draftGrid);
+            return;
+        }
+
+        auto *hexItem = m_draftGrid->item(m_draftRow, 0);
+        auto *valItem = m_draftGrid->item(m_draftRow, 1);
+        const QString hex = hexItem ? hexItem->text().trimmed().toUpper() : QString();
+        const QString value = valItem ? valItem->text() : QString();
+
+        if (isValidHexKeyText(hex) && !value.isEmpty())
+            commitDraftRow(m_draftGrid, m_draftRow);
+        else
+            cancelDraftRow(m_draftGrid);
+    });
+
     updateButtonStates();
     retranslateUi();
 
@@ -291,23 +366,7 @@ int TablesDockWidget::addTable(const QString &name, const TranslationTable *tabl
     // Create grid widget
     auto *grid = new QTableWidget(0, 2, this);
     grid->setHorizontalHeaderLabels(QStringList() << QStringLiteral("HEX") << tr("Value"));
-    grid->setItemDelegateForColumn(0, new HexColumnDelegate(grid));
-    configureTableGridColumns(grid);
-    grid->setAlternatingRowColors(true);
-    grid->setSelectionBehavior(QAbstractItemView::SelectRows);
-    grid->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    grid->setContextMenuPolicy(Qt::CustomContextMenu);
-    grid->verticalHeader()->setDefaultSectionSize(22);
-    grid->setSortingEnabled(true);
-    grid->sortByColumn(0, Qt::AscendingOrder);
-    connect(grid, &QTableWidget::cellChanged, this, &TablesDockWidget::onCellChanged);
-    connect(grid, &QTableWidget::cellClicked, this, [this, grid](int row, int /*col*/) {
-        if (isPlaceholderRow(grid, row))
-            activatePlaceholderRow(grid, row);
-    });
-    connect(grid, &QTableWidget::customContextMenuRequested, this, [this, grid](const QPoint &pos) {
-        onGridContextMenu(grid, pos);
-    });
+    installGridBehavior(grid);
 
     m_ignoreChanges = true;
     populateGrid(grid, &tab.table);
@@ -622,45 +681,53 @@ void TablesDockWidget::onCellChanged(int row, int col)
     if (!grid)
         return;
 
-    if (row >= 0 && row < grid->rowCount() && !isPlaceholderRow(grid, row)) {
-        auto *hexItem = grid->item(row, 0);
-        auto *valItem = grid->item(row, 1);
-        if (hexItem && valItem) {
-            const QString normalizedHex = hexItem->text().trimmed().toUpper();
-            const bool validHex = isValidHexKeyText(normalizedHex);
+    if (row < 0 || row >= grid->rowCount() || isPlaceholderRow(grid, row))
+        return;
 
-            if (col == 0) {
-                m_ignoreChanges = true;
-                hexItem->setText(normalizedHex);
-                if (validHex) {
-                    hexItem->setBackground(QBrush());
-                    valItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled | Qt::ItemIsEditable);
-                    valItem->setToolTip(QString());
-                } else {
-                    hexItem->setBackground(QColor(255, 220, 220));
-                    valItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
-                    valItem->setToolTip(tr("HEX must contain only hexadecimal digits and even length (e.g. 0A or 0A1B)."));
-                }
-                m_ignoreChanges = false;
-            } else if (col == 1 && !validHex) {
-                m_ignoreChanges = true;
-                valItem->setText(QString());
-                valItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
-                valItem->setToolTip(tr("Enter HEX key first"));
-                m_ignoreChanges = false;
-                QMessageBox::warning(this, tr("Invalid HEX"),
-                                     tr("Allowed format: hexadecimal digits with even length."));
-            }
+    auto *hexItem = grid->item(row, 0);
+    auto *valItem = grid->item(row, 1);
+    if (!hexItem || !valItem)
+        return;
+
+    if (col == 0) {
+        const QString normalizedHex = hexItem->text().trimmed().toUpper();
+        m_ignoreChanges = true;
+        hexItem->setText(normalizedHex);
+        m_ignoreChanges = false;
+
+        if (isDraftRow(grid, row)) {
+            if (isValidHexKeyText(normalizedHex))
+                hexItem->setBackground(QBrush());
+            else
+                hexItem->setBackground(QColor(255, 220, 220));
+            return;
         }
+
+        if (!validateHexCell(grid, row, true, true))
+            return;
     }
 
-    // Push undo snapshot for content edits
-    // We don't push per-keystroke; instead we rely on tab losing focus / explicit commit.
-    // For now push per-change (may create many entries but is functionally correct).
-    syncTableFromGrid(idx);
-    updateButtonStates();
-    emit tableContentChanged();
-    emit activeTableChanged(&m_tables[idx].table);
+    if (col == 1 && !isDraftRow(grid, row)) {
+        const QString newValue = valItem->text();
+        if (newValue.isEmpty()) {
+            const QString originalValue = valItem->data(kOriginalValueRole).toString();
+            if (!originalValue.isEmpty()) {
+                m_ignoreChanges = true;
+                valItem->setText(originalValue);
+                m_ignoreChanges = false;
+            }
+            return;
+        }
+
+        valItem->setData(kOriginalValueRole, newValue);
+    }
+
+    if (isDraftRow(grid, row) && col == 1) {
+        commitDraftRow(grid, row);
+        return;
+    }
+
+    syncAndNotifyTableChanged(idx);
 }
 
 // ---------------------------------------------------------------------------
@@ -681,11 +748,29 @@ void TablesDockWidget::populateGrid(QTableWidget *grid, TranslationTable *table)
     for (auto it = items->cbegin(); it != items->cend(); ++it) {
         const int row = grid->rowCount();
         grid->insertRow(row);
+        const uint8_t byteKey = static_cast<uint8_t>(it.key());
         auto *hexItem = new HexSortItem(
-            QString::number(static_cast<uint8_t>(it.key()), 16).toUpper().rightJustified(2, '0'));
+            QString::number(byteKey, 16).toUpper().rightJustified(2, '0'));
         hexItem->setTextAlignment(Qt::AlignCenter);
         grid->setItem(row, 0, hexItem);
-        grid->setItem(row, 1, new QTableWidgetItem(it.value()));
+        auto *valueItem = new QTableWidgetItem(it.value());
+        valueItem->setData(kOriginalValueRole, it.value());
+        grid->setItem(row, 1, valueItem);
+
+        const QStringList aliases = table->decodeAliasesForKey(byteKey);
+        for (const QString &alias : aliases) {
+            if (alias.isEmpty())
+                continue;
+            const int aliasRow = grid->rowCount();
+            grid->insertRow(aliasRow);
+            auto *aliasHexItem = new HexSortItem(
+                QString::number(byteKey, 16).toUpper().rightJustified(2, '0'));
+            aliasHexItem->setTextAlignment(Qt::AlignCenter);
+            grid->setItem(aliasRow, 0, aliasHexItem);
+            auto *aliasValueItem = new QTableWidgetItem(alias);
+            aliasValueItem->setData(kOriginalValueRole, alias);
+            grid->setItem(aliasRow, 1, aliasValueItem);
+        }
     }
 
     const auto &mbItems = table->getMultiByteItems();
@@ -698,7 +783,9 @@ void TablesDockWidget::populateGrid(QTableWidget *grid, TranslationTable *table)
         auto *hexItem = new HexSortItem(hexKey);
         hexItem->setTextAlignment(Qt::AlignCenter);
         grid->setItem(row, 0, hexItem);
-        grid->setItem(row, 1, new QTableWidgetItem(it.value()));
+        auto *valueItem = new QTableWidgetItem(it.value());
+        valueItem->setData(kOriginalValueRole, it.value());
+        grid->setItem(row, 1, valueItem);
     }
 
     ensurePlaceholderRow(grid);
@@ -714,6 +801,7 @@ void TablesDockWidget::syncTableFromGrid(int tabIndex)
 
     TranslationTable *table = &m_tables[tabIndex].table;
     table->clearItems();
+    QSet<uint8_t> seenSingleByteKeys;
 
     for (int r = 0; r < grid->rowCount(); ++r) {
         auto *hexItem = grid->item(r, 0);
@@ -736,10 +824,17 @@ void TablesDockWidget::syncTableFromGrid(int tabIndex)
         const QString value = valItem->text();
         if (value.isEmpty()) continue;
 
-        if (key.size() == 1)
-            table->setItem(static_cast<uint8_t>(key[0]), value);
-        else
+        if (key.size() == 1) {
+            const uint8_t singleKey = static_cast<uint8_t>(key[0]);
+            if (!seenSingleByteKeys.contains(singleKey)) {
+                table->setItem(singleKey, value);
+                seenSingleByteKeys.insert(singleKey);
+            } else {
+                table->addDecodeAlias(singleKey, value);
+            }
+        } else {
             table->setMultiByteItem(key, value);
+        }
     }
 
     m_tabs->setTabText(tabIndex, m_tables[tabIndex].name);
@@ -749,6 +844,20 @@ void TablesDockWidget::ensurePlaceholderRow(QTableWidget *grid)
 {
     if (!grid)
         return;
+
+    QVector<int> placeholderRows;
+    placeholderRows.reserve(grid->rowCount());
+    for (int r = 0; r < grid->rowCount(); ++r) {
+        auto *valueItem = grid->item(r, 1);
+        if (valueItem && valueItem->data(Qt::UserRole).toBool())
+            placeholderRows.append(r);
+    }
+
+    if (!placeholderRows.isEmpty()) {
+        for (int i = placeholderRows.size() - 1; i >= 1; --i)
+            grid->removeRow(placeholderRows[i]);
+        return;
+    }
 
     const int row = grid->rowCount();
     grid->insertRow(row);
@@ -800,6 +909,11 @@ void TablesDockWidget::activatePlaceholderRow(QTableWidget *grid, int row)
     valueItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
     valueItem->setToolTip(tr("Enter HEX key first"));
     valueItem->setForeground(QBrush());
+
+    setDraftRow(grid, row, true);
+    m_draftGrid = grid;
+    m_draftRow = row;
+    grid->setSortingEnabled(false);
 
     ensurePlaceholderRow(grid);
 
@@ -876,6 +990,11 @@ void TablesDockWidget::deleteRows(QTableWidget *grid, const QVector<int> &rows)
         grid->removeRow(rows[i]);
     m_ignoreChanges = false;
 
+    if (m_draftGrid == grid && m_draftRow >= 0 && m_draftRow < grid->rowCount() && rows.contains(m_draftRow)) {
+        m_draftGrid = nullptr;
+        m_draftRow = -1;
+    }
+
     ensurePlaceholderRow(grid);
 }
 
@@ -929,67 +1048,8 @@ void TablesDockWidget::pasteRowsFromClipboard(QTableWidget *grid)
     if (incoming.isEmpty())
         return;
 
-    QHash<QString, int> existingByHex;
-    for (int r = 0; r < grid->rowCount(); ++r) {
-        if (isPlaceholderRow(grid, r))
-            continue;
-        auto *hexItem = grid->item(r, 0);
-        if (!hexItem)
-            continue;
-        const QString hex = hexItem->text().trimmed().toUpper();
-        if (isValidHexKeyText(hex))
-            existingByHex.insert(hex, r);
-    }
-
-    enum class ConflictDecision { Ask, YesAll, NoAll };
-    ConflictDecision decision = ConflictDecision::Ask;
-
     m_ignoreChanges = true;
     for (const RowData &rowData : incoming) {
-        if (existingByHex.contains(rowData.hex)) {
-            const int row = existingByHex.value(rowData.hex);
-            auto *valItem = grid->item(row, 1);
-            if (!valItem)
-                continue;
-            const QString currentValue = valItem->text();
-            if (currentValue == rowData.value)
-                continue;
-
-            bool overwrite = false;
-            if (decision == ConflictDecision::YesAll) {
-                overwrite = true;
-            } else if (decision == ConflictDecision::NoAll) {
-                overwrite = false;
-            } else {
-                QMessageBox box(QMessageBox::Question,
-                                tr("Overwrite value"),
-                                tr("Key %1 already exists with different value. Overwrite?").arg(rowData.hex),
-                                QMessageBox::NoButton,
-                                this);
-                QPushButton *yesBtn = box.addButton(tr("Yes"), QMessageBox::YesRole);
-                QPushButton *noBtn = box.addButton(tr("No"), QMessageBox::NoRole);
-                QPushButton *yesAllBtn = box.addButton(tr("Yes for all"), QMessageBox::AcceptRole);
-                QPushButton *noAllBtn = box.addButton(tr("No for all"), QMessageBox::RejectRole);
-                box.exec();
-
-                if (box.clickedButton() == yesAllBtn) {
-                    decision = ConflictDecision::YesAll;
-                    overwrite = true;
-                } else if (box.clickedButton() == noAllBtn) {
-                    decision = ConflictDecision::NoAll;
-                    overwrite = false;
-                } else if (box.clickedButton() == yesBtn) {
-                    overwrite = true;
-                } else if (box.clickedButton() == noBtn) {
-                    overwrite = false;
-                }
-            }
-
-            if (overwrite)
-                valItem->setText(rowData.value);
-            continue;
-        }
-
         int insertRow = grid->rowCount();
         for (int r = 0; r < grid->rowCount(); ++r) {
             if (isPlaceholderRow(grid, r)) {
@@ -1002,17 +1062,14 @@ void TablesDockWidget::pasteRowsFromClipboard(QTableWidget *grid)
         auto *hexItem = new HexSortItem(rowData.hex);
         hexItem->setTextAlignment(Qt::AlignCenter);
         auto *valItem = new QTableWidgetItem(rowData.value);
+        valItem->setData(kOriginalValueRole, rowData.value);
         valItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled | Qt::ItemIsEditable);
         grid->setItem(insertRow, 0, hexItem);
         grid->setItem(insertRow, 1, valItem);
-
-        existingByHex.insert(rowData.hex, insertRow);
     }
     m_ignoreChanges = false;
 
-    syncTableFromGrid(m_tabs->currentIndex());
-    emit tableContentChanged();
-    emit activeTableChanged(currentTable());
+    syncAndNotifyTableChanged(m_tabs->currentIndex());
 }
 
 void TablesDockWidget::onGridContextMenu(QTableWidget *grid, const QPoint &pos)
@@ -1050,20 +1107,14 @@ void TablesDockWidget::onGridContextMenu(QTableWidget *grid, const QPoint &pos)
         pushUndoSnapshot(tr("Cut rows"));
         copyRowsToClipboard(grid, rows);
         deleteRows(grid, rows);
-        syncTableFromGrid(m_tabs->currentIndex());
-        updateButtonStates();
-        emit tableContentChanged();
-        emit activeTableChanged(currentTable());
+        syncAndNotifyTableChanged(m_tabs->currentIndex());
         return;
     }
 
     if (chosen == deleteAct) {
         pushUndoSnapshot(tr("Delete rows"));
         deleteRows(grid, rows);
-        syncTableFromGrid(m_tabs->currentIndex());
-        updateButtonStates();
-        emit tableContentChanged();
-        emit activeTableChanged(currentTable());
+        syncAndNotifyTableChanged(m_tabs->currentIndex());
         return;
     }
 
@@ -1128,6 +1179,354 @@ QString TablesDockWidget::defaultTabName(int /*number*/) const
         }
     }
     return prefix + QString::number(maxN + 1);
+}
+
+void TablesDockWidget::installGridBehavior(QTableWidget *grid)
+{
+    if (!grid)
+        return;
+
+    grid->setItemDelegateForColumn(0, new HexColumnDelegate(this, grid));
+    grid->setItemDelegateForColumn(1, new ValueColumnDelegate(this, grid));
+
+    configureTableGridColumns(grid);
+    grid->setAlternatingRowColors(true);
+    grid->setSelectionBehavior(QAbstractItemView::SelectRows);
+    grid->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    grid->setContextMenuPolicy(Qt::CustomContextMenu);
+    grid->verticalHeader()->setDefaultSectionSize(22);
+    grid->setSortingEnabled(true);
+    grid->sortByColumn(0, Qt::AscendingOrder);
+
+    connect(grid, &QTableWidget::cellChanged, this, &TablesDockWidget::onCellChanged);
+    connect(grid, &QTableWidget::cellClicked, this, [this, grid](int row, int col) {
+        beginCellEditFlow(grid, row, col);
+    });
+    connect(grid, &QTableWidget::customContextMenuRequested, this, [this, grid](const QPoint &pos) {
+        onGridContextMenu(grid, pos);
+    });
+
+    grid->installEventFilter(this);
+    if (grid->viewport())
+        grid->viewport()->installEventFilter(this);
+}
+
+int TablesDockWidget::tabIndexForGrid(QTableWidget *grid) const
+{
+    if (!grid)
+        return -1;
+    for (int i = 0; i < m_tabs->count(); ++i) {
+        if (gridAt(i) == grid)
+            return i;
+    }
+    return -1;
+}
+
+void TablesDockWidget::syncAndNotifyTableChanged(int tabIndex)
+{
+    if (tabIndex < 0 || tabIndex >= m_tables.size())
+        return;
+
+    syncTableFromGrid(tabIndex);
+    updateButtonStates();
+    emit tableContentChanged();
+    emit activeTableChanged(&m_tables[tabIndex].table);
+}
+
+bool TablesDockWidget::isDraftRow(QTableWidget *grid, int row) const
+{
+    if (!grid || row < 0 || row >= grid->rowCount())
+        return false;
+    auto *hexItem = grid->item(row, 0);
+    return hexItem && hexItem->data(Qt::UserRole + 1).toBool();
+}
+
+void TablesDockWidget::setDraftRow(QTableWidget *grid, int row, bool draft)
+{
+    if (!grid || row < 0 || row >= grid->rowCount())
+        return;
+
+    // Draft flag changes are internal state updates and should not trigger
+    // expensive table re-sync via cellChanged.
+    const QSignalBlocker blocker(grid);
+
+    auto *hexItem = grid->item(row, 0);
+    auto *valItem = grid->item(row, 1);
+    if (hexItem)
+        hexItem->setData(Qt::UserRole + 1, draft);
+    if (valItem)
+        valItem->setData(Qt::UserRole + 1, draft);
+}
+
+void TablesDockWidget::beginCellEditFlow(QTableWidget *grid, int row, int col)
+{
+    if (!grid || row < 0 || row >= grid->rowCount())
+        return;
+
+    if (isPlaceholderRow(grid, row))
+        activatePlaceholderRow(grid, row);
+
+    if (row >= grid->rowCount())
+        return;
+
+    if (isDraftRow(grid, row) && col == 1) {
+        if (!validateAndEnableDraftValue(grid, row, true))
+            return;
+    }
+
+    if (!isDraftRow(grid, row) && col == 1) {
+        auto *valueItem = grid->item(row, 1);
+        if (valueItem)
+            valueItem->setData(kOriginalValueRole, valueItem->text());
+    }
+
+    auto *item = grid->item(row, col);
+    if (item && (item->flags() & Qt::ItemIsEditable))
+        grid->editItem(item);
+}
+
+void TablesDockWidget::cancelDraftRow(QTableWidget *grid)
+{
+    if (!grid || m_draftGrid != grid || m_draftRow < 0)
+        return;
+
+    const int row = m_draftRow;
+    m_draftGrid = nullptr;
+    m_draftRow = -1;
+
+    if (row >= 0 && row < grid->rowCount()) {
+        m_ignoreChanges = true;
+        grid->removeRow(row);
+        m_ignoreChanges = false;
+    }
+
+    ensurePlaceholderRow(grid);
+    grid->setSortingEnabled(true);
+    grid->sortByColumn(0, Qt::AscendingOrder);
+}
+
+bool TablesDockWidget::validateHexCell(QTableWidget *grid, int row, bool showWarning, bool refocusHex)
+{
+    if (!grid || row < 0 || row >= grid->rowCount())
+        return false;
+
+    auto *hexItem = grid->item(row, 0);
+    auto *valItem = grid->item(row, 1);
+    if (!hexItem || !valItem)
+        return false;
+
+    const QString hex = hexItem->text().trimmed().toUpper();
+    const bool valid = isValidHexKeyText(hex);
+
+    m_ignoreChanges = true;
+    hexItem->setText(hex);
+    if (valid) {
+        hexItem->setBackground(QBrush());
+        valItem->setToolTip(QString());
+    } else {
+        hexItem->setBackground(QColor(255, 220, 220));
+        valItem->setToolTip(tr("HEX must contain only hexadecimal digits and even length (e.g. 0A or 0A1B)."));
+    }
+    m_ignoreChanges = false;
+
+    if (!valid && showWarning) {
+        QMessageBox::warning(this, tr("Invalid HEX"),
+                             tr("Allowed format: hexadecimal digits with even length."));
+    }
+
+    if (!valid && refocusHex) {
+        grid->setCurrentCell(row, 0);
+        if (auto *item = grid->item(row, 0))
+            grid->editItem(item);
+    }
+
+    return valid;
+}
+
+bool TablesDockWidget::validateAndEnableDraftValue(QTableWidget *grid, int row, bool showWarning)
+{
+    if (!validateHexCell(grid, row, showWarning, true))
+        return false;
+
+    auto *valueItem = grid->item(row, 1);
+    if (!valueItem)
+        return false;
+
+    m_ignoreChanges = true;
+    valueItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled | Qt::ItemIsEditable);
+    valueItem->setToolTip(QString());
+    m_ignoreChanges = false;
+    return true;
+}
+
+bool TablesDockWidget::commitDraftRow(QTableWidget *grid, int row)
+{
+    if (!grid || !isDraftRow(grid, row))
+        return false;
+
+    if (!validateAndEnableDraftValue(grid, row, true))
+        return false;
+
+    auto *valItem = grid->item(row, 1);
+    if (!valItem)
+        return false;
+
+    // If Enter is pressed while an editor is still open, force-sync the latest
+    // editor text into the cell before validating emptiness.
+    if (grid->currentRow() == row && grid->currentColumn() == 1) {
+        QWidget *focus = QApplication::focusWidget();
+        bool focusInsideGrid = false;
+        for (QWidget *w = focus; w; w = w->parentWidget()) {
+            if (w == grid) {
+                focusInsideGrid = true;
+                break;
+            }
+        }
+        if (focusInsideGrid) {
+            if (auto *le = qobject_cast<QLineEdit *>(focus)) {
+                m_ignoreChanges = true;
+                valItem->setText(le->text());
+                m_ignoreChanges = false;
+            }
+        }
+    }
+
+    if (valItem->text().isEmpty()) {
+        cancelDraftRow(grid);
+        return false;
+    }
+
+    valItem->setData(kOriginalValueRole, valItem->text());
+
+    setDraftRow(grid, row, false);
+    m_draftGrid = nullptr;
+    m_draftRow = -1;
+
+    grid->setSortingEnabled(true);
+    grid->sortByColumn(0, Qt::AscendingOrder);
+
+    const int tabIndex = tabIndexForGrid(grid);
+    syncAndNotifyTableChanged(tabIndex);
+    return true;
+}
+
+bool TablesDockWidget::eventFilter(QObject *watched, QEvent *event)
+{
+    QTableWidget *grid = qobject_cast<QTableWidget *>(watched);
+    if (!grid)
+        grid = owningGridFromObject(watched);
+
+    if (!grid)
+        return BaseDockWidget::eventFilter(watched, event);
+
+    auto draftHasCommitData = [this](QTableWidget *g) {
+        if (!g || m_draftGrid != g || m_draftRow < 0 || m_draftRow >= g->rowCount())
+            return false;
+        auto *hexItem = g->item(m_draftRow, 0);
+        auto *valItem = g->item(m_draftRow, 1);
+        if (!hexItem || !valItem)
+            return false;
+        const QString hex = hexItem->text().trimmed().toUpper();
+        const QString value = valItem->text();
+        return isValidHexKeyText(hex) && !value.isEmpty();
+    };
+
+    auto commitOrCancelDraft = [this, draftHasCommitData](QTableWidget *g, bool preferCommit) {
+        if (!g || m_draftGrid != g || m_draftRow < 0)
+            return false;
+        if (preferCommit && draftHasCommitData(g))
+            return commitDraftRow(g, m_draftRow);
+        cancelDraftRow(g);
+        return true;
+    };
+
+    if (event->type() == QEvent::KeyPress) {
+        auto *ke = static_cast<QKeyEvent *>(event);
+        const int row = grid->currentRow();
+        const int col = grid->currentColumn();
+
+        if ((ke->key() == Qt::Key_Return || ke->key() == Qt::Key_Enter) && m_draftGrid == grid && m_draftRow >= 0) {
+            if (auto *le = qobject_cast<QLineEdit *>(watched); le) {
+                auto *cellItem = grid->item(m_draftRow, col);
+                if (cellItem) {
+                    m_ignoreChanges = true;
+                    cellItem->setText(le->text());
+                    m_ignoreChanges = false;
+                }
+
+                if (col == 1) {
+                    commitOrCancelDraft(grid, true);
+                    return true;
+                }
+            }
+        }
+
+        if (ke->key() == Qt::Key_Escape && isDraftRow(grid, row)) {
+            cancelDraftRow(grid);
+            return true;
+        }
+
+        if ((ke->key() == Qt::Key_Return || ke->key() == Qt::Key_Enter) && row >= 0) {
+            if (isDraftRow(grid, row)) {
+                if (col == 0) {
+                    if (validateAndEnableDraftValue(grid, row, true)) {
+                        grid->setCurrentCell(row, 1);
+                        if (auto *item = grid->item(row, 1))
+                            grid->editItem(item);
+                    }
+                    return true;
+                }
+                if (col == 1)
+                {
+                    commitDraftRow(grid, row);
+                    return true;
+                }
+            }
+
+            if (col == 0 && !isPlaceholderRow(grid, row)) {
+                if (!validateHexCell(grid, row, true, true))
+                    return true;
+            }
+        }
+    }
+
+    if (event->type() == QEvent::FocusOut && m_draftGrid == grid && m_draftRow >= 0) {
+        if (auto *le = qobject_cast<QLineEdit *>(watched); le && grid->currentColumn() == 1) {
+            auto *valItem = grid->item(m_draftRow, 1);
+            if (valItem) {
+                m_ignoreChanges = true;
+                valItem->setText(le->text());
+                m_ignoreChanges = false;
+            }
+        }
+
+        QMetaObject::invokeMethod(this, [this, grid]() {
+            if (m_draftGrid != grid || m_draftRow < 0)
+                return;
+
+            QWidget *focus = QApplication::focusWidget();
+            bool focusInsideGrid = false;
+            for (QWidget *w = focus; w; w = w->parentWidget()) {
+                if (w == grid) {
+                    focusInsideGrid = true;
+                    break;
+                }
+            }
+
+            if (!focusInsideGrid) {
+                auto *hexItem = grid->item(m_draftRow, 0);
+                auto *valItem = grid->item(m_draftRow, 1);
+                const QString hex = hexItem ? hexItem->text().trimmed().toUpper() : QString();
+                const QString value = valItem ? valItem->text() : QString();
+                if (isValidHexKeyText(hex) && !value.isEmpty())
+                    commitDraftRow(grid, m_draftRow);
+                else
+                    cancelDraftRow(grid);
+            }
+        }, Qt::QueuedConnection);
+    }
+
+    return BaseDockWidget::eventFilter(watched, event);
 }
 
 // ---------------------------------------------------------------------------
@@ -1255,23 +1654,7 @@ void TablesDockWidget::applySnapshot(const QVector<TableTab> &snapshot, int acti
         TableTab copy = cloneTab(snap);
         auto *grid = new QTableWidget(0, 2, this);
         grid->setHorizontalHeaderLabels(QStringList() << QStringLiteral("HEX") << tr("Value"));
-        grid->setItemDelegateForColumn(0, new HexColumnDelegate(grid));
-        configureTableGridColumns(grid);
-        grid->setAlternatingRowColors(true);
-        grid->setSelectionBehavior(QAbstractItemView::SelectRows);
-        grid->setSelectionMode(QAbstractItemView::ExtendedSelection);
-        grid->setContextMenuPolicy(Qt::CustomContextMenu);
-        grid->verticalHeader()->setDefaultSectionSize(22);
-        grid->setSortingEnabled(true);
-        grid->sortByColumn(0, Qt::AscendingOrder);
-        connect(grid, &QTableWidget::cellChanged, this, &TablesDockWidget::onCellChanged);
-        connect(grid, &QTableWidget::cellClicked, this, [this, grid](int row, int /*col*/) {
-            if (isPlaceholderRow(grid, row))
-                activatePlaceholderRow(grid, row);
-        });
-        connect(grid, &QTableWidget::customContextMenuRequested, this, [this, grid](const QPoint &pos) {
-            onGridContextMenu(grid, pos);
-        });
+        installGridBehavior(grid);
 
         populateGrid(grid, &copy.table);
 

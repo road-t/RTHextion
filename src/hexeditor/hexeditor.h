@@ -892,6 +892,7 @@ private:
     mutable QVector<DisasmInstruction> _disasmCache;
     mutable qint64 _disasmCacheStart = -1;          // file offset of first cached instruction
     mutable qint64 _disasmCacheEnd = -1;            // file offset past last cached instruction
+    mutable RomType _disasmCacheRomType {};
 
     void rebuildDisasmLayout();
     void rebuildSectionAwareLayout(); ///< apply section-specific disasm wraps on top of user line breaks

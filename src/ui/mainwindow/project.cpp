@@ -1026,6 +1026,19 @@ void MainWindow::loadOriginal()
 
     m_document->originalBytes = newOriginalBytes;
     m_document->originalFileSize = origData.size();
+
+    if (hexEdit->showOriginal()) {
+        QByteArray reconstructed = currentData;
+        for (const auto &entry : m_document->originalBytes) {
+            const qint64 off = entry.first;
+            const QByteArray &origBytes = entry.second;
+            if (off >= 0 && off + origBytes.size() <= reconstructed.size())
+                reconstructed.replace(off, origBytes.size(), origBytes);
+        }
+        hexEdit->setOriginalData(reconstructed);
+        hexEdit->viewport()->update();
+    }
+
     updateActionStates();
     m_changesDock->show();
     enforceBottomDockEqualWidth();

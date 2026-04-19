@@ -1240,8 +1240,21 @@ void MainWindow::switchUseTable()
 
 void MainWindow::updateScriptMenuState(bool enabled)
 {
-    dumpScriptAct->setEnabled(enabled);
-    toolbarDumpScriptAct->setEnabled(enabled);
+    const bool canModify = hexEdit && !hexEdit->isReadOnly() && !hexEdit->showOriginal();
+
+    if (dumpScriptAct)
+        dumpScriptAct->setEnabled(enabled);
+    if (toolbarDumpScriptAct)
+        toolbarDumpScriptAct->setEnabled(enabled);
+
+    // Keep import action available in editable mode regardless of selection.
+    if (insertScriptAct)
+        insertScriptAct->setEnabled(canModify);
+    if (toolbarInsertScriptAct)
+        toolbarInsertScriptAct->setEnabled(canModify);
+
+    if (scriptMenu)
+        scriptMenu->setEnabled(enabled || canModify);
 }
 
 void MainWindow::toggleOverwriteMode()
@@ -1653,12 +1666,12 @@ void MainWindow::init()
             [this](int sectionIdx, const QVector<qint64> &sizes) {
                 splitSection(sectionIdx, sizes);
             });
-    connect(m_sectionsDock, &SectionsDockWidget::disasmCpuChanged, this, [this](int /*sectionIdx*/, RomType cpu) {
-        if (!hexEdit) return;
-        // If the section specifies a CPU, use it; otherwise fall back to platform default
-        const RomType effective = (cpu == RomType::Unknown) ? m_detectedRomType : cpu;
-        hexEdit->setDisasmRomType(effective);
-    });
+    connect(m_sectionsDock, &SectionsDockWidget::disasmCpuChanged, this,
+            [this](int /*sectionIdx*/, RomType /*cpu*/) {
+                if (!hexEdit) return;
+                // CPU is now resolved per-section inside HexEditor disasm path.
+                hexEdit->viewport()->update();
+            });
     connect(m_sectionModel, &SectionListModel::sectionsChanged, this, [this]() {
         const bool restoring = m_restoringSession || m_restoringProjectUi;
         if (!restoring && m_document && m_document->sectionSnapshot != m_sectionModel->sections())

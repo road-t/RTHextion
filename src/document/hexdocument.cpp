@@ -233,6 +233,17 @@ static void writeTableEntries(QTextStream &out, const TranslationTable *table,
         out << indent << "- "
             << QString::number(static_cast<uint8_t>(it.key()), 16).toUpper().rightJustified(2, '0')
             << "=" << it.value() << "\n";
+
+        const QStringList aliases = table->decodeAliasesForKey(static_cast<uint8_t>(it.key()));
+        for (const QString &alias : aliases)
+        {
+            if (alias == it.value())
+                continue;
+
+            out << indent << "- "
+                << QString::number(static_cast<uint8_t>(it.key()), 16).toUpper().rightJustified(2, '0')
+                << "=" << alias << "\n";
+        }
     }
 
     // Multi-byte entries
@@ -604,7 +615,13 @@ bool HexDocument::loadProject(const QString &path)
                 {
                     bool ok;
                     uint val = hexPart.toUInt(&ok, 16);
-                    if (ok) t->setItem(static_cast<uint8_t>(val), value);
+                    if (ok) {
+                        const uint8_t key = static_cast<uint8_t>(val);
+                        if (!t->getItems()->contains(static_cast<char>(key)))
+                            t->setItem(key, value);
+                        else
+                            t->addDecodeAlias(key, value);
+                    }
                 }
                 else if (hexPart.size() % 2 == 0)
                 {
@@ -682,8 +699,13 @@ bool HexDocument::loadProject(const QString &path)
                 {
                     bool ok;
                     uint val = hexPart.toUInt(&ok, 16);
-                    if (ok)
-                        translationTable->setItem(static_cast<uint8_t>(val), value);
+                    if (ok) {
+                        const uint8_t key = static_cast<uint8_t>(val);
+                        if (!translationTable->getItems()->contains(static_cast<char>(key)))
+                            translationTable->setItem(key, value);
+                        else
+                            translationTable->addDecodeAlias(key, value);
+                    }
                 }
                 else if (hexPart.size() % 2 == 0)
                 {

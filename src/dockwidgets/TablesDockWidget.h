@@ -10,6 +10,7 @@
 #include <QUndoStack>
 #include <QToolButton>
 #include <QMenu>
+#include <QPointer>
 
 #include "BaseDockWidget.h"
 #include "translationtable.h"
@@ -130,6 +131,7 @@ signals:
 
 protected:
     void onPaletteChanged() override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private slots:
     void onTabChanged(int index);
@@ -140,11 +142,21 @@ private slots:
     void onGridContextMenu(QTableWidget *grid, const QPoint &pos);
 
 private:
+    void installGridBehavior(QTableWidget *grid);
+    int tabIndexForGrid(QTableWidget *grid) const;
+    void syncAndNotifyTableChanged(int tabIndex);
     void populateGrid(QTableWidget *grid, TranslationTable *table);
     void syncTableFromGrid(int tabIndex);
     void ensurePlaceholderRow(QTableWidget *grid);
     bool isPlaceholderRow(QTableWidget *grid, int row) const;
+    bool isDraftRow(QTableWidget *grid, int row) const;
+    void setDraftRow(QTableWidget *grid, int row, bool draft);
     void activatePlaceholderRow(QTableWidget *grid, int row);
+    void beginCellEditFlow(QTableWidget *grid, int row, int col);
+    void cancelDraftRow(QTableWidget *grid);
+    bool validateHexCell(QTableWidget *grid, int row, bool showWarning, bool refocusHex);
+    bool validateAndEnableDraftValue(QTableWidget *grid, int row, bool showWarning);
+    bool commitDraftRow(QTableWidget *grid, int row);
     bool isValidHexKeyText(const QString &hexText) const;
     QVector<int> selectedEditableRows(QTableWidget *grid) const;
     void copyRowsToClipboard(QTableWidget *grid, const QVector<int> &rows) const;
@@ -182,6 +194,9 @@ private:
 
     // Snapshot stored before a destructive operation so undo can restore it
     QVector<TableTab> m_pendingSnapshot;
+
+    QPointer<QTableWidget> m_draftGrid;
+    int m_draftRow = -1;
 
     friend class TableSnapshotCommand;
 };
