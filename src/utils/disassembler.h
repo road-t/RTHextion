@@ -22,6 +22,13 @@ struct DisasmCpuEntry {
 inline const char *disasmCpuName(RomType type)
 {
     switch (type) {
+    case RomType::GB:
+    case RomType::GBC:
+    case RomType::SMS:
+    case RomType::GG:
+    case RomType::SG1000:
+    case RomType::ColecoVision:
+        return "Z80";
     case RomType::NES:
     case RomType::Atari2600:
     case RomType::Atari5200:
@@ -49,6 +56,10 @@ inline const char *disasmCpuName(RomType type)
 inline RomType disasmCanonicalRom(RomType type)
 {
     switch (type) {
+    case RomType::GB: case RomType::GBC:
+    case RomType::SMS: case RomType::GG:
+    case RomType::SG1000: case RomType::ColecoVision:
+        return RomType::GB;
     case RomType::NES: case RomType::Atari2600:
     case RomType::Atari5200: case RomType::Atari7800:
         return RomType::NES;
@@ -69,6 +80,7 @@ inline RomType disasmCanonicalRom(RomType type)
 inline QVector<DisasmCpuEntry> disasmSupportedCpus()
 {
     return {
+        { RomType::GB,         "Z80" },
         { RomType::NES,        "MOS 6502" },
         { RomType::GBA,        "ARM7 (Thumb)" },
         { RomType::MD,         "Motorola 68000" },
