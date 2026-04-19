@@ -11,15 +11,17 @@ private slots:
     void cpuHelpers()
     {
         QCOMPARE(QString::fromLatin1(disasmCpuName(RomType::NES)), QStringLiteral("MOS 6502"));
+        QCOMPARE(QString::fromLatin1(disasmCpuName(RomType::GB)), QStringLiteral("Z80"));
         QCOMPARE(QString::fromLatin1(disasmCpuName(RomType::MD)), QStringLiteral("Motorola 68000"));
         QVERIFY(disasmCpuName(RomType::Unknown) == nullptr);
 
+        QCOMPARE(disasmCanonicalRom(RomType::GG), RomType::GB);
         QCOMPARE(disasmCanonicalRom(RomType::Atari7800), RomType::NES);
         QCOMPARE(disasmCanonicalRom(RomType::X32), RomType::MD);
         QCOMPARE(disasmCanonicalRom(RomType::Unknown), RomType::Unknown);
 
         const auto cpus = disasmSupportedCpus();
-        QCOMPARE(cpus.size(), 5);
+        QCOMPARE(cpus.size(), 6);
 
         QSet<RomType> reps;
         for (const auto &entry : cpus) {
@@ -33,6 +35,7 @@ private slots:
     void romTypeSupportAndSelection()
     {
         QVERIFY(Disassembler::isSupported(RomType::NES));
+        QVERIFY(Disassembler::isSupported(RomType::GB));
         QVERIFY(Disassembler::isSupported(RomType::GBA));
         QVERIFY(!Disassembler::isSupported(RomType::SNES));
 
@@ -40,6 +43,84 @@ private slots:
         QVERIFY(d.setRomType(RomType::NES));
         QCOMPARE(d.romType(), RomType::NES);
         QVERIFY(!d.setRomType(RomType::SNES));
+    }
+
+    void z80DisassembleAndBoundaries()
+    {
+        // 0000: CD 06 00   CALL 0006
+        // 0003: 18 01      JR 0006
+        // 0005: 00         NOP
+        // 0006: C9         RET
+        const QByteArray data = QByteArray::fromHex("CD0600180100C9");
+
+        Disassembler d;
+        QVERIFY(d.setRomType(RomType::GB));
+
+        const auto insns = d.disassemble(data, 0, data.size());
+        QVERIFY(insns.size() >= 4);
+
+        QCOMPARE(insns[0].fileOffset, qint64(0));
+        QCOMPARE(insns[0].mnemonic, QStringLiteral("CALL"));
+        QVERIFY(insns[0].isBranch);
+        QVERIFY(insns[0].isCall);
+        QCOMPARE(insns[0].branchTarget, qint64(6));
+
+        QCOMPARE(insns[1].fileOffset, qint64(3));
+        QCOMPARE(insns[1].mnemonic, QStringLiteral("JR"));
+        QVERIFY(insns[1].isBranch);
+        QCOMPARE(insns[1].branchTarget, qint64(6));
+
+        QVERIFY(insns[3].isReturn);
+
+        const auto bounds = d.scanBoundaries(data, 0, data.size());
+        QCOMPARE(bounds.size(), insns.size());
+        for (int i = 0; i < insns.size(); ++i) {
+            QCOMPARE(bounds[i].offset, insns[i].fileOffset);
+            QCOMPARE(bounds[i].size, insns[i].size);
+        }
+    }
+
+    void z80PrefixesAndReturns()
+    {
+        // ED 4D = RETI, DD E9 = JP (IX), FD E9 = JP (IY)
+        const QByteArray data = QByteArray::fromHex("ED4DDDE9FDE9");
+
+        Disassembler d;
+        QVERIFY(d.setRomType(RomType::GB));
+
+        const auto insns = d.disassemble(data, 0, data.size());
+        QCOMPARE(insns.size(), 3);
+
+        QCOMPARE(insns[0].mnemonic, QStringLiteral("RETI"));
+        QVERIFY(insns[0].isReturn);
+
+        QCOMPARE(insns[1].mnemonic, QStringLiteral("JP"));
+        QCOMPARE(insns[1].operands, QStringLiteral("(IX)"));
+        QVERIFY(insns[1].isBranch);
+
+        QCOMPARE(insns[2].mnemonic, QStringLiteral("JP"));
+        QCOMPARE(insns[2].operands, QStringLiteral("(IY)"));
+        QVERIFY(insns[2].isBranch);
+    }
+
+    void z80ScanFunctionsFindsCallTarget()
+    {
+        const QByteArray data = QByteArray::fromHex("CD0600180100C9");
+
+        Disassembler d;
+        QVERIFY(d.setRomType(RomType::GB));
+
+        QVector<CallPointer> callPointers;
+        const auto funcs = d.scanFunctions(data, 0, data.size(), nullptr, &callPointers);
+
+        QVERIFY(!funcs.isEmpty());
+        QCOMPARE(funcs[0].startOffset, qint64(6));
+        QCOMPARE(funcs[0].endOffset, qint64(7));
+
+        QVERIFY(!callPointers.isEmpty());
+        QCOMPARE(callPointers[0].ptrFileOffset, qint64(1));
+        QCOMPARE(callPointers[0].targetOffset, qint64(6));
+        QCOMPARE(callPointers[0].ptrSize, 2);
     }
 
     void disassembleAndBoundariesFor6502()

@@ -1,7 +1,25 @@
 #include <QTest>
+#include <QComboBox>
+#include <QDialogButtonBox>
+#include <QPlainTextEdit>
+#include <QPushButton>
 
 #include "../../src/document/SectionListModel.h"
+#include "../../src/dialogs/InsertScriptDialog.h"
 #include "../../src/hexeditor/hexeditor.h"
+#include "../../src/dockwidgets/TablesDockWidget.h"
+
+namespace {
+
+quint64 readPtr(HexEditor &editor, qint64 fileOffset, int ptrSize)
+{
+    const QByteArray raw = editor.dataAt(fileOffset, ptrSize);
+    if (raw.size() != ptrSize)
+        return 0;
+    return decodePointer(reinterpret_cast<const uchar *>(raw.constData()), ptrSize, editor.byteOrder);
+}
+
+} // namespace
 
 class TstGraphics : public QObject
 {
@@ -84,6 +102,81 @@ private slots:
         // Rendering path should stay stable and cursor should be valid for origin click.
         const qint64 pos = editor.cursorPosition(QPoint(0, 0));
         QVERIFY(pos >= -1);
+    }
+
+    void importScriptUpdatesAllPointers()
+    {
+        HexEditor editor;
+        editor.byteOrder = ByteOrder::LittleEndian;
+        editor.setData(QByteArray(0x80, char(0x00)));
+
+        TranslationTable table;
+        table.setItem('A', QStringLiteral("A"));
+        table.setItem('B', QStringLiteral("B"));
+
+        QVector<TableTab> tabs;
+        TableTab tab;
+        tab.name = QStringLiteral("T");
+        tab.table = table;
+        tabs.append(tab);
+
+        InsertScriptDialog dlg(&editor);
+        dlg.setAvailableTables(tabs);
+        dlg.setRomProfile(4, 0);
+
+        editor.setCursorPosition(0x20 * 2);
+
+        auto *script = dlg.findChild<QPlainTextEdit *>("pteScript");
+        auto *buttons = dlg.findChild<QDialogButtonBox *>("bbControls");
+        QVERIFY(script);
+        QVERIFY(buttons);
+
+        script->setPlainText(QStringLiteral("{|0004,0008,000C:2,0010:4|}:\nA\nB\n"));
+
+        QPushButton *ok = buttons->button(QDialogButtonBox::Ok);
+        QVERIFY(ok);
+        QTest::mouseClick(ok, Qt::LeftButton);
+
+        QCOMPARE(readPtr(editor, 0x04, 4), quint64(0x20));
+        QCOMPARE(readPtr(editor, 0x08, 4), quint64(0x20));
+        QCOMPARE(readPtr(editor, 0x0C, 2), quint64(0x20));
+        QCOMPARE(readPtr(editor, 0x10, 4), quint64(0x20));
+    }
+
+    void importScriptPointerDefaultSizeFallsBackToRomProfile()
+    {
+        HexEditor editor;
+        editor.byteOrder = ByteOrder::LittleEndian;
+        editor.setData(QByteArray(0x40, char(0x00)));
+
+        TranslationTable table;
+        table.setItem('A', QStringLiteral("A"));
+
+        QVector<TableTab> tabs;
+        TableTab tab;
+        tab.name = QStringLiteral("T");
+        tab.table = table;
+        tabs.append(tab);
+
+        InsertScriptDialog dlg(&editor);
+        dlg.setAvailableTables(tabs);
+        dlg.setRomProfile(2, 0);
+
+        editor.setCursorPosition(0x12 * 2);
+
+        auto *script = dlg.findChild<QPlainTextEdit *>("pteScript");
+        auto *buttons = dlg.findChild<QDialogButtonBox *>("bbControls");
+        QVERIFY(script);
+        QVERIFY(buttons);
+
+        // Pointer has no :N suffix -> must use ROM profile size (2 here).
+        script->setPlainText(QStringLiteral("{|0006|}:\nA\n"));
+
+        QPushButton *ok = buttons->button(QDialogButtonBox::Ok);
+        QVERIFY(ok);
+        QTest::mouseClick(ok, Qt::LeftButton);
+
+        QCOMPARE(readPtr(editor, 0x06, 2), quint64(0x12));
     }
 };
 

@@ -20,7 +20,8 @@ SOURCES += tst_graphics.cpp \
     ../../src/utils/appsettings.cpp \
     ../../src/document/SectionListModel.cpp \
     ../../src/document/translationtable.cpp \
-    ../../src/document/PointerListModel.cpp
+    ../../src/document/PointerListModel.cpp \
+    ../../src/dialogs/InsertScriptDialog.cpp
 
 HEADERS += \
     ../../src/hexeditor/hexeditor.h \
@@ -33,10 +34,13 @@ HEADERS += \
     ../../src/document/translationtable.h \
     ../../src/document/PointerListModel.h \
     ../../src/utils/disassembler.h \
-    ../../src/utils/Datas.h
+    ../../src/utils/Datas.h \
+    ../../src/dialogs/InsertScriptDialog.h
+
+FORMS += ../../src/dialogs/InsertScriptDialog.ui
 
 macx: LIBS += -liconv
 macx: LIBS += -L../../../src/libs/capstone -lcapstone
 
-INCLUDEPATH += ../../src ../../src/hexeditor ../../src/document ../../src/utils ../../src/libs/capstone/include
+INCLUDEPATH += ../../src ../../src/hexeditor ../../src/document ../../src/utils ../../src/dockwidgets ../../src/libs/capstone/include
 DEFINES += HEXEDITOR_EXPORTS

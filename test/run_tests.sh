@@ -7,7 +7,7 @@ PASS=0
 FAIL=0
 ERRORS=""
 
-for test_dir in tst_chunks tst_commands tst_translationtable tst_datas tst_hexdocument tst_hexedit tst_disassembler tst_audio tst_graphics; do
+for test_dir in tst_chunks tst_commands tst_translationtable tst_tablesdockwidget tst_datas tst_hexdocument tst_hexedit tst_disassembler tst_audio tst_graphics; do
     echo "============================================"
     echo "Building $test_dir..."
     echo "============================================"

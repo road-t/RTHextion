@@ -123,6 +123,36 @@ private slots:
         QVERIFY(result.isEmpty());
     }
 
+    void singleByteAliasesDecodeAndPersist()
+    {
+        TranslationTable table;
+        table.setItem(0x41, QStringLiteral("A"));
+        table.addDecodeAlias(0x41, QStringLiteral("А")); // Cyrillic A alias
+        table.addDecodeAlias(0x41, QStringLiteral("@"));
+
+        QByteArray cyr = table.decodeToBytes(QStringLiteral("А"));
+        QCOMPARE(cyr.size(), 1);
+        QCOMPARE(static_cast<uint8_t>(cyr[0]), uint8_t(0x41));
+
+        QByteArray at = table.decodeToBytes(QStringLiteral("@"));
+        QCOMPARE(at.size(), 1);
+        QCOMPARE(static_cast<uint8_t>(at[0]), uint8_t(0x41));
+
+        // Save and load should keep aliases as duplicate byte entries.
+        QTemporaryFile tmp;
+        tmp.setAutoRemove(true);
+        tmp.open();
+        QString path = tmp.fileName();
+        tmp.close();
+
+        QVERIFY(table.save(path));
+
+        TranslationTable loaded(path);
+        QByteArray loadedAlias = loaded.decodeToBytes(QStringLiteral("@"));
+        QCOMPARE(loadedAlias.size(), 1);
+        QCOMPARE(static_cast<uint8_t>(loadedAlias[0]), uint8_t(0x41));
+    }
+
     // ---- Fallback entries ----
 
     void fallbackEntriesForUnmappedBytes()
