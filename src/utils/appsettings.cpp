@@ -45,11 +45,19 @@ AppSettings::AppSettings()
         m_filePath = configDir + QLatin1Char('/') + kConfigFileName;
     }
 
+    if (QCoreApplication::instance()) {
+        QObject::connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit,
+                         QCoreApplication::instance(), [this]() { sync(); }, Qt::DirectConnection);
+    }
+
     load();
 }
 
 AppSettings::~AppSettings()
 {
+    if (QCoreApplication::closingDown())
+        return;
+
     if (m_dirty)
         save();
 }
@@ -341,8 +349,8 @@ static QString variantToYamlScalar(const QVariant &v)
         break;
     }
 
-    // QString or convertible-to-string types
-    if (v.typeId() == QMetaType::QString || v.canConvert<QString>()) {
+    // QString scalar
+    if (v.typeId() == QMetaType::QString) {
         const QString s = v.toString();
         return scalarNeedsQuoting(s) ? quoteYaml(s) : s;
     }
