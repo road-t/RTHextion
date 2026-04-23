@@ -65,6 +65,14 @@ struct Section
     QString name;
     qint64  startOffset = 0;
     QColor  color;
+
+    // New schema fields for persisted display settings.
+    // Main display mnemonic: auto, raw, txt, gfx, snd, asm.
+    QString display = QStringLiteral("auto");
+    // Options payload for sub-type and per-mode settings (key=value;... format).
+    QString options;
+
+    // Legacy runtime fields (kept for compatibility with existing rendering code).
     int     displayMode = SectionDisplay_Default;
     RomType disasmCpu   = RomType::Unknown;
     int     groupId     = -1;   // -1 = ungrouped; >=0 = index into groups vector
@@ -80,6 +88,8 @@ inline bool operator==(const Section &lhs, const Section &rhs)
     return lhs.name == rhs.name
         && lhs.startOffset == rhs.startOffset
         && lhs.color == rhs.color
+        && lhs.display == rhs.display
+        && lhs.options == rhs.options
         && lhs.displayMode == rhs.displayMode
         && lhs.disasmCpu == rhs.disasmCpu
         && lhs.groupId == rhs.groupId

@@ -81,11 +81,11 @@ inline QVector<DisasmCpuEntry> disasmSupportedCpus()
 {
     return {
         { RomType::GB,         "Z80" },
-        { RomType::NES,        "MOS 6502" },
-        { RomType::GBA,        "ARM7 (Thumb)" },
-        { RomType::MD,         "Motorola 68000" },
-        { RomType::N64,        "MIPS R4300i" },
-        { RomType::WonderSwan, "x86-16 (V30MZ)" },
+        { RomType::NES,        "6502" },
+        { RomType::GBA,        "ARM7" },
+        { RomType::MD,         "68000" },
+        { RomType::N64,        "R4300i" },
+        { RomType::WonderSwan, "V30MZ" },
     };
 }
 

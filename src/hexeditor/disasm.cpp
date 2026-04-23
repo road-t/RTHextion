@@ -258,23 +258,6 @@ void HexEditor::rebuildSectionAwareLayout()
     QVector<qint64> baseBreaks = _savedLineBreaksValid ? _savedLineBreaks : _lineBreaks;
     const qint64 fileSize = _chunks ? _chunks->size() : 0;
 
-    // Strip stale section-header double-breaks.  After a merge the header
-    // doubles of removed sections remain in baseBreaks; remove them so a
-    // merged section appears contiguous.
-    if (_sectionModel && _sectionModel->count() > 0) {
-        QSet<qint64> curSecBreaks;
-        for (int si = 0; si < _sectionModel->count(); ++si) {
-            const auto &sec = _sectionModel->at(si);
-            curSecBreaks.insert(sec.startOffset == 0 ? qint64(-1) : sec.startOffset - 1);
-        }
-        QHash<qint64, int> freq;
-        for (qint64 b : std::as_const(baseBreaks))
-            freq[b]++;
-        baseBreaks.erase(std::remove_if(baseBreaks.begin(), baseBreaks.end(),
-            [&](qint64 b) { return freq[b] >= 2 && !curSecBreaks.contains(b); }),
-            baseBreaks.end());
-    }
-
     if (!hasSectionDisasmMode()) {
         // Even without disasm sections we must apply section-header gaps
         // and collapse logic to the base breaks.
@@ -323,7 +306,7 @@ void HexEditor::rebuildSectionAwareLayout()
                     const int dataRows = static_cast<int>((bytes + _bytesPerLine - 1) / _bytesPerLine);
 
                     const int bpt = tileCodecBytesPerTile(sec.tileCodec);
-                    const int tileCols = graphicsAutoTileCols(sec.tileCodec);
+                    const int tileCols = graphicsResolvedTileCols(sec.tileCodec, sec.tileCols);
                     int padRows = 0;
                     if (bpt > 0 && tileCols > 0) {
                         const int totalTiles = static_cast<int>((bytes + bpt - 1) / bpt);
@@ -433,17 +416,9 @@ void HexEditor::rebuildSectionAwareLayout()
     QVector<qint64> breaks;
     breaks.reserve(baseBreaks.size() + _disasmBoundaries.size());
 
-    // Keep manual/user breaks only outside section-disasm ranges.
-    int rangeIdx = 0;
-    for (qint64 brk : baseBreaks) {
-        while (rangeIdx < disasmRanges.size() && brk >= disasmRanges[rangeIdx].second)
-            ++rangeIdx;
-        const bool insideDisasmRange = (rangeIdx < disasmRanges.size()
-                                     && brk >= disasmRanges[rangeIdx].first
-                                     && brk < disasmRanges[rangeIdx].second);
-        if (!insideDisasmRange)
-            breaks.append(brk);
-    }
+    // Keep all manual/user breaks (including inside disasm ranges).
+    // This allows repeated Enter presses to add explicit virtual wraps.
+    breaks = baseBreaks;
 
     // Add virtual line breaks so each disasm section behaves like global disasm.
     int instrIdx = 0;
@@ -518,7 +493,7 @@ void HexEditor::rebuildSectionAwareLayout()
                 const int dataRows = static_cast<int>((bytes + _bytesPerLine - 1) / _bytesPerLine);
 
                 const int bpt = tileCodecBytesPerTile(sec.tileCodec);
-                const int tileCols = graphicsAutoTileCols(sec.tileCodec);
+                const int tileCols = graphicsResolvedTileCols(sec.tileCodec, sec.tileCols);
                 int padRows = 0;
                 if (bpt > 0 && tileCols > 0) {
                     const int totalTiles = static_cast<int>((bytes + bpt - 1) / bpt);

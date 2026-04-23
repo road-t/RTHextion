@@ -18,6 +18,7 @@ class PalettePreview : public QWidget
 public:
     explicit PalettePreview(QWidget *parent = nullptr);
     void setPalette(const QVector<QRgb> &colors);
+    void setDimmed(bool dimmed);
     const QVector<QRgb> &colors() const { return m_colors; }
 
     int leftIndex() const { return m_leftIndex; }
@@ -32,12 +33,17 @@ protected:
     void paintEvent(QPaintEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
-    QSize sizeHint() const override { return QSize(160, 80); }
-    QSize minimumSizeHint() const override { return QSize(80, 40); }
+    void resizeEvent(QResizeEvent *event) override;
+    QSize sizeHint() const override;
+    QSize minimumSizeHint() const override;
 private:
+    int columnCountForWidth(int availWidth) const;
+    void updateHeightForCurrentWidth();
+
     QVector<QRgb> m_colors;
     int m_leftIndex  = 0;
     int m_rightIndex = 1;
+    bool m_dimmed = false;
 };
 
 class GraphicsDockWidget : public BaseDockWidget
@@ -48,7 +54,14 @@ public:
     explicit GraphicsDockWidget(QWidget *parent = nullptr);
     ~GraphicsDockWidget() override;
 
+    /// Rebuild codec list with platform-preferred options on top.
+    void setRomType(RomType romType);
+
+    /// Enable controls only when cursor is in a graphics section.
+    void setSectionActive(bool active);
+
     TileCodec selectedCodec() const;
+    int selectedTileCols() const;
 
     void setCodec(TileCodec codec);
     void setTileColsDisplay(int cols);
@@ -67,6 +80,7 @@ public:
 
 signals:
     void codecChanged(TileCodec codec);
+    void tileColsChanged(int cols);
     void paletteChanged(const QVector<QRgb> &palette);
     void leftPalIndexChanged(int index);
     void rightPalIndexChanged(int index);
@@ -75,13 +89,17 @@ protected:
     void onPaletteChanged() override;
 
 private:
+    void populateCodecs(RomType romType);
+
     QComboBox      *m_codecCombo   = nullptr;
-    QLabel         *m_colsValue    = nullptr;
+    QSpinBox       *m_colsSpin     = nullptr;
     PalettePreview *m_palPreview   = nullptr;
     QLabel         *m_codecLabel   = nullptr;
     QLabel         *m_colsLabel    = nullptr;
     QLabel         *m_palLabel     = nullptr;
     bool            m_hasCustomPalette = false;
+    RomType         m_currentRomType = RomType::Unknown;
+    bool            m_sectionActive = false;
 };
 
 #endif // GRAPHICSDOCKWIDGET_H

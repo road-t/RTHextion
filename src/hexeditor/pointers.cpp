@@ -44,13 +44,27 @@ namespace {
             if (!_model)
                 return;
 
+            QVector<qint64> toDrop;
+            QVector<QPair<qint64, qint64>> toAdd;
+            toDrop.reserve(states.size());
+            toAdd.reserve(states.size());
+
             for (const PointerState &state : states)
             {
-                if (state.hasTarget)
-                    _model->addPointer(state.pointerOffset, state.targetOffset, state.ptrSize);
-                else
-                    _model->dropPointer(state.pointerOffset);
+                if (state.hasTarget) {
+                    toAdd.append({
+                        state.pointerOffset,
+                        PointerListModel::encodePtrValue(state.targetOffset, state.ptrSize)
+                    });
+                } else {
+                    toDrop.append(state.pointerOffset);
+                }
             }
+
+            if (!toDrop.isEmpty())
+                _model->dropPointersBatch(toDrop);
+            if (!toAdd.isEmpty())
+                _model->addPointersBatch(toAdd);
         }
 
         PointerListModel *_model = nullptr;

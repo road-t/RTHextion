@@ -449,6 +449,7 @@ void DumpScriptDialog::on_pbInsert_clicked()
     const qint64 selBegin = hexEdit->getSelectionBegin();
     const qint64 selEnd   = hexEdit->getSelectionEnd();
     const qint64 selSize  = selEnd - selBegin;
+    const qint64 insertBegin = (selSize > 0) ? selBegin : hexEdit->getCurrentOffset();
 
     static QRegularExpression re(
         "\\{\\|([^|]+)\\|\\}:(?:\\r?\\n)*(.*?)(?=(?:\\{\\|)|\\z)",
@@ -519,8 +520,8 @@ void DumpScriptDialog::on_pbInsert_clicked()
         shouldTrim = (box.clickedButton() == trimBtn);
     }
 
-    qint64 offset = selBegin;
-    const qint64 limitOffset = selBegin + selSize;
+    qint64 offset = insertBegin;
+    const qint64 limitOffset = insertBegin + selSize;
     QVector<QPair<qint64, qint64>> pointerBatch;
 
     QUndoStack *stack = hexEdit->undoStack();

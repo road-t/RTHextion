@@ -96,6 +96,9 @@ void MainWindow::saveCurrentSession()
         m_currentSession->searchRelative    = s.relative;
     }
 
+    if (jumpToDialog)
+        m_currentSession->jumpToText = jumpToDialog->offsetText();
+
     // Save Find Pointers dialog state for this tab
     if (pointersDialog) {
         const PointersDialog::State ps = pointersDialog->dialogState();
@@ -165,6 +168,8 @@ void MainWindow::restoreSession(EditorSession *session)
         }
         if (m_audioDock)
             m_audioDock->setRomType(m_detectedRomType);
+        if (m_graphicsDock)
+            m_graphicsDock->setRomType(m_detectedRomType);
     }
 
     // Restore the per-session table dock content. applySnapshot rebuilds the
@@ -195,6 +200,24 @@ void MainWindow::restoreSession(EditorSession *session)
     }
 
     m_tablesDock->blockSignals(false);
+
+    // Signals were blocked during restore, so refresh section text-table menu
+    // and per-section table pointers explicitly.
+    {
+        QStringList names;
+        QVector<TranslationTable*> ptrs;
+        const auto &tabs = m_tablesDock->allTables();
+        names.reserve(tabs.size());
+        ptrs.reserve(tabs.size());
+        for (int i = 0; i < tabs.size(); ++i) {
+            names << tabs[i].name;
+            ptrs << const_cast<TranslationTable*>(&tabs[i].table);
+        }
+        if (m_sectionsDock)
+            m_sectionsDock->setTableNames(names);
+        if (hexEdit)
+            hexEdit->setAllTables(ptrs);
+    }
 
     m_restoringTableDockState = false;
     tb = m_tablesDock->currentTable();
@@ -254,8 +277,17 @@ void MainWindow::restoreSession(EditorSession *session)
                     const Section &sec = hexEdit->sectionModel()->at(idx);
                     if (sec.displayMode == SectionDisplay_Graphics) {
                         m_graphicsDock->setCodec(sec.tileCodec);
+                        m_graphicsDock->setTileColsDisplay(sec.tileCols);
                         m_graphicsDock->setPaletteColors(sec.palette);
+                    } else if (hexEdit->showGraphicsPanel()) {
+                        m_graphicsDock->setCodec(hexEdit->globalTileCodec());
+                        m_graphicsDock->setTileColsDisplay(hexEdit->globalTileCols());
+                        m_graphicsDock->setPaletteColors({});
                     }
+                } else if (hexEdit->showGraphicsPanel()) {
+                    m_graphicsDock->setCodec(hexEdit->globalTileCodec());
+                    m_graphicsDock->setTileColsDisplay(hexEdit->globalTileCols());
+                    m_graphicsDock->setPaletteColors({});
                 }
             }
         }
@@ -353,6 +385,11 @@ void MainWindow::restoreSession(EditorSession *session)
                 session->scrollPending = false;
             }
         }
+    }
+
+    if (jumpToDialog) {
+        jumpToDialog->setHexEdit(hexEdit);
+        jumpToDialog->setOffsetText(session->jumpToText);
     }
 
     updateDockAreaActions();

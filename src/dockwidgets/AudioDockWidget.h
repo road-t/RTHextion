@@ -21,6 +21,9 @@ public:
     /// Update the format combo to show only formats relevant for this ROM type.
     void setRomType(RomType romType);
 
+    /// Enable controls only when cursor is in an audio section.
+    void setSectionActive(bool active);
+
     /// Selected audio format (may be Unknown for "auto-detect").
     AudioSampleFormat selectedFormat() const;
 
@@ -33,6 +36,7 @@ public:
     /// Get/set format combo index for per-tab persistence.
     int formatIndex() const;
     void setFormatIndex(int index);
+    void setSelectedFormat(AudioSampleFormat format);
 
     /// Get/set sample rate text for per-tab persistence.
     QString sampleRateText() const;
@@ -53,6 +57,7 @@ protected:
 
 private:
     void populateFormats(RomType romType);
+    void applySectionActiveState();
 
     QComboBox *m_formatCombo = nullptr;
     QComboBox *m_rateCombo = nullptr;
@@ -60,6 +65,8 @@ private:
     QLabel *m_formatLabel = nullptr;
     QLabel *m_rateLabel = nullptr;
     QLabel *m_speedLabel = nullptr;
+    RomType m_currentRomType = RomType::Unknown;
+    bool m_sectionActive = false;
 };
 
 #endif // AUDIODOCKWIDGET_H

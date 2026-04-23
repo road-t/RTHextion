@@ -8,6 +8,7 @@ using namespace MainWindowInternal;
 #include <QApplication>
 #include <QMessageBox>
 #include <QInputDialog>
+#include <algorithm>
 #include "FillWithDialog.h"
 #include "VirtualFormatDialog.h"
 #include "PointerListModel.h"
@@ -26,6 +27,111 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
     const bool clickedDisasm = hexEdit->showDisasm()
         || (m_sectionModel && m_sectionModel->displayModeAtOffset(bytePos) == SectionDisplay_Disasm);
     const bool canRemoveFromSection = hasSelection && canRemoveSelectionFromSection();
+
+    struct RestoreSpan {
+        qint64 start = 0;
+        QByteArray bytes;
+    };
+
+    auto collectOriginalSpans = [this](qint64 rangeBegin, qint64 rangeEnd) -> QVector<RestoreSpan> {
+        QVector<RestoreSpan> spans;
+        if (!m_document || rangeEnd <= rangeBegin)
+            return spans;
+
+        for (const auto &entry : m_document->originalBytes)
+        {
+            const qint64 entryBegin = entry.first;
+            const QByteArray &orig = entry.second;
+            const qint64 entryEnd = entryBegin + orig.size();
+            const qint64 overlapBegin = qMax(rangeBegin, entryBegin);
+            const qint64 overlapEnd = qMin(rangeEnd, entryEnd);
+            if (overlapEnd <= overlapBegin)
+                continue;
+
+            spans.append({overlapBegin,
+                orig.mid(static_cast<int>(overlapBegin - entryBegin),
+                         static_cast<int>(overlapEnd - overlapBegin))});
+        }
+
+        if (spans.isEmpty())
+            return spans;
+
+        std::sort(spans.begin(), spans.end(), [](const RestoreSpan &a, const RestoreSpan &b) {
+            return a.start < b.start;
+        });
+
+        QVector<RestoreSpan> merged;
+        merged.reserve(spans.size());
+        for (const RestoreSpan &span : spans)
+        {
+            if (merged.isEmpty()) {
+                merged.append(span);
+                continue;
+            }
+            RestoreSpan &last = merged.last();
+            const qint64 lastEnd = last.start + last.bytes.size();
+            if (span.start == lastEnd)
+                last.bytes.append(span.bytes);
+            else
+                merged.append(span);
+        }
+
+        return merged;
+    };
+
+    auto restoreOriginalRangeUndoable = [this, &collectOriginalSpans](qint64 rangeBegin, qint64 rangeEnd) -> bool {
+        if (!hexEdit || !m_document)
+            return false;
+
+        const QVector<RestoreSpan> spans = collectOriginalSpans(rangeBegin, rangeEnd);
+        if (spans.isEmpty())
+            return false;
+
+        QUndoStack *stack = hexEdit->undoStack();
+        if (stack)
+            stack->beginMacro(tr("Restore original data"));
+
+        for (const RestoreSpan &span : spans)
+            hexEdit->replace(span.start, span.bytes.size(), span.bytes);
+
+        if (stack)
+            stack->endMacro();
+
+        QVector<QPair<qint64, QByteArray>> nextOriginalBytes;
+        nextOriginalBytes.reserve(m_document->originalBytes.size());
+        for (const auto &entry : m_document->originalBytes)
+        {
+            const qint64 entryBegin = entry.first;
+            const QByteArray &orig = entry.second;
+            const qint64 entryEnd = entryBegin + orig.size();
+            const qint64 overlapBegin = qMax(rangeBegin, entryBegin);
+            const qint64 overlapEnd = qMin(rangeEnd, entryEnd);
+
+            if (overlapEnd <= overlapBegin) {
+                nextOriginalBytes.append(entry);
+                continue;
+            }
+
+            if (overlapBegin > entryBegin) {
+                nextOriginalBytes.append({entryBegin,
+                    orig.left(static_cast<int>(overlapBegin - entryBegin))});
+            }
+            if (overlapEnd < entryEnd) {
+                nextOriginalBytes.append({overlapEnd,
+                    orig.mid(static_cast<int>(overlapEnd - entryBegin))});
+            }
+        }
+        m_document->originalBytes = nextOriginalBytes;
+
+        if (showChangesAct && showChangesAct->isChecked())
+            updateChangedBytesHighlight();
+        updateActionStates();
+        return true;
+    };
+
+    const bool hasRestorableSelection = hasSelection
+        && !isReadOnly
+        && !collectOriginalSpans(hexEdit->getSelectionBegin(), hexEdit->getSelectionEnd()).isEmpty();
 
     auto addToSectionWithPrompt = [this, canRemoveFromSection]() {
         if (!canRemoveFromSection)
@@ -93,6 +199,19 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
             pointersDialog->refreshFromTable();
         pointersUpdated();
         hexEdit->viewport()->update();
+    };
+
+    auto confirmDropSelectionPointers = [this](int count) -> bool
+    {
+        if (count <= 0)
+            return false;
+
+        QMessageBox confirm(QMessageBox::Question,
+                            QString(),
+                            tr("Drop %1 pointers from selection?").arg(count),
+                            QMessageBox::Yes | QMessageBox::Cancel,
+                            this);
+        return confirm.exec() == QMessageBox::Yes;
     };
 
     auto renameOffsetWithPrompt = [&](qint64 targetOffset)
@@ -416,6 +535,12 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         copySelAct->setShortcut(QKeySequence::Copy);
         copySelAct->setEnabled(hasSelection);
 
+        QAction *restoreOrigSelectionAct = nullptr;
+        if (hasSelection) {
+            restoreOrigSelectionAct = menu.addAction(tr("Restore original data"));
+            restoreOrigSelectionAct->setEnabled(hasRestorableSelection);
+        }
+
         QAction *saveAsDumpAct = nullptr;
         if (clickedAscii)
             saveAsDumpAct = menu.addAction(tr("Save as dump"));
@@ -455,6 +580,10 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
                 QApplication::clipboard()->setText(hexEdit->decodeTextForCurrentEncoding(raw));
             else
                 QApplication::clipboard()->setText(QString::fromLatin1(raw.toHex(' ')).toUpper());
+        }
+        else if (restoreOrigSelectionAct && chosen == restoreOrigSelectionAct)
+        {
+            restoreOriginalRangeUndoable(hexEdit->getSelectionBegin(), hexEdit->getSelectionEnd());
         }
         else if (saveAsDumpAct && chosen == saveAsDumpAct)
         {
@@ -546,11 +675,14 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         QAction *vfFormatAct2 = nullptr;
         QAction *vfRemoveAct2 = nullptr;
         QAction *addToSectionAct2 = nullptr;
+        QAction *restoreOrigSelAct2 = nullptr;
         if (hasSelection) {
             menu.addSeparator();
             editScriptAct2 = menu.addAction(tr("Edit script..."));
             if (!isReadOnly)
                 fillWithAct2 = menu.addAction(tr("Fill with") + "...");
+            restoreOrigSelAct2 = menu.addAction(tr("Restore original data"));
+            restoreOrigSelAct2->setEnabled(hasRestorableSelection);
             vfFormatAct2 = menu.addAction(tr("Virtually format") + "...");
             vfRemoveAct2 = menu.addAction(tr("Remove virtual formatting"));
             addToSectionAct2 = menu.addAction(tr("Add to section"));
@@ -590,6 +722,12 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
                 hexEdit->setCursorPosition(2 * (selBegin + len));
                 hexEdit->ensureVisible();
             }
+            return;
+        }
+
+        if (restoreOrigSelAct2 && chosen == restoreOrigSelAct2)
+        {
+            restoreOriginalRangeUndoable(hexEdit->getSelectionBegin(), hexEdit->getSelectionEnd());
             return;
         }
 
@@ -637,16 +775,8 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
 
         if (chosen == dropAllAct)
         {
-            QMessageBox confirm(QMessageBox::Question,
-                                QString(),
-                                tr("Drop all pointers to this offset?"),
-                                QMessageBox::Yes | QMessageBox::Cancel,
-                                this);
-            if (confirm.exec() == QMessageBox::Yes)
-            {
-                if (hexEdit->removePointersToOffsetUndoable(bytePos) > 0)
-                    refreshPointersUi();
-            }
+            if (hexEdit->removePointersToOffsetUndoable(bytePos) > 0)
+                refreshPointersUi();
         }
         else if (chosen == renameOffsetAct)
         {
@@ -654,7 +784,8 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         }
         else if (dropSelectionPtrsAct && chosen == dropSelectionPtrsAct)
         {
-            if (hexEdit->removePointersUndoable(dropSelectionPtrs) > 0)
+            if (confirmDropSelectionPointers(dropSelectionPtrs.size())
+                && hexEdit->removePointersUndoable(dropSelectionPtrs) > 0)
                 refreshPointersUi();
         }
         return;
@@ -716,11 +847,14 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         QAction *vfFormatAct1 = nullptr;
         QAction *vfRemoveAct1 = nullptr;
         QAction *addToSectionAct1 = nullptr;
+        QAction *restoreOrigSelAct1 = nullptr;
         if (hasSelection) {
             menu.addSeparator();
             editScriptAct1 = menu.addAction(tr("Edit script..."));
             if (!isReadOnly)
                 fillWithAct1 = menu.addAction(tr("Fill with") + "...");
+            restoreOrigSelAct1 = menu.addAction(tr("Restore original data"));
+            restoreOrigSelAct1->setEnabled(hasRestorableSelection);
             vfFormatAct1 = menu.addAction(tr("Virtually format") + "...");
             vfRemoveAct1 = menu.addAction(tr("Remove virtual formatting"));
             addToSectionAct1 = menu.addAction(tr("Add to section"));
@@ -771,7 +905,8 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
 
         if (dropSelectionPtrsAct && chosen == dropSelectionPtrsAct)
         {
-            if (hexEdit->removePointersUndoable(dropSelectionPtrs) > 0)
+            if (confirmDropSelectionPointers(dropSelectionPtrs.size())
+                && hexEdit->removePointersUndoable(dropSelectionPtrs) > 0)
                 refreshPointersUi();
             return;
         }
@@ -800,6 +935,12 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
                 hexEdit->setCursorPosition(2 * (selBegin + len));
                 hexEdit->ensureVisible();
             }
+            return;
+        }
+
+        if (restoreOrigSelAct1 && chosen == restoreOrigSelAct1)
+        {
+            restoreOriginalRangeUndoable(hexEdit->getSelectionBegin(), hexEdit->getSelectionEnd());
             return;
         }
 
@@ -878,6 +1019,7 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
 
     QAction *editScriptAct3 = nullptr;
     QAction *fillWithAct3 = nullptr;
+    QAction *restoreOrigSelAct3 = nullptr;
     QAction *vfFormatAct3 = nullptr;
     QAction *vfRemoveAct3 = nullptr;
     QAction *addToSectionAct3 = nullptr;
@@ -886,6 +1028,8 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         editScriptAct3 = menu.addAction(tr("Edit script..."));
         if (!isReadOnly)
             fillWithAct3 = menu.addAction(tr("Fill with") + "...");
+        restoreOrigSelAct3 = menu.addAction(tr("Restore original data"));
+        restoreOrigSelAct3->setEnabled(hasRestorableSelection);
         vfFormatAct3 = menu.addAction(tr("Virtually format") + "...");
         vfRemoveAct3 = menu.addAction(tr("Remove virtual formatting"));
         addToSectionAct3 = menu.addAction(tr("Add to section"));
@@ -956,7 +1100,8 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
     }
     else if (dropSelectionPtrsAct && chosen == dropSelectionPtrsAct)
     {
-        if (hexEdit->removePointersUndoable(dropSelectionPtrs) > 0)
+        if (confirmDropSelectionPointers(dropSelectionPtrs.size())
+            && hexEdit->removePointersUndoable(dropSelectionPtrs) > 0)
             refreshPointersUi();
     }
     else if (saveAsDumpAct && chosen == saveAsDumpAct)
@@ -985,6 +1130,10 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
             hexEdit->setCursorPosition(2 * (selBegin + len));
             hexEdit->ensureVisible();
         }
+    }
+    else if (restoreOrigSelAct3 && chosen == restoreOrigSelAct3)
+    {
+        restoreOriginalRangeUndoable(hexEdit->getSelectionBegin(), hexEdit->getSelectionEnd());
     }
     else if (vfFormatAct3 && chosen == vfFormatAct3)
     {

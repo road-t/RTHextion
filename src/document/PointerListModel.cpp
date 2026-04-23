@@ -318,10 +318,19 @@ QString PointerListModel::getOffsetText(qint64 offset) const
 
     constexpr qint64 kMaxPreviewBytes = 0x100;
 
-    const qint64 rawStored = _pointers.value(offset, -1);
-    if (rawStored < 0)
-        return "<unavailable>";
-    const qint64 targetOffset = decodePtrTarget(rawStored);
+    qint64 targetOffset = -1;
+    if (_pointers.contains(offset))
+    {
+        const qint64 rawStored = _pointers.value(offset, -1);
+        if (rawStored >= 0)
+            targetOffset = decodePtrTarget(rawStored);
+    }
+    else
+    {
+        // Allow direct target offset input (used by unnamed-pointer tooltips).
+        targetOffset = offset;
+    }
+
     if (targetOffset < 0)
         return "<unavailable>";
 
@@ -337,6 +346,9 @@ QString PointerListModel::getOffsetText(qint64 offset) const
     for (int i = 0; i < raw.size(); ++i)
     {
         if (i > 0 && _offsets.contains(targetOffset + i))
+            break;
+
+        if (raw.at(i) == '\0')
             break;
 
         preview.append(raw.at(i));
@@ -371,9 +383,12 @@ QString PointerListModel::getPointerTooltip(qint64 ptrOffset) const
     const qint64 targetOffset = getOffset(ptrOffset);
     if (targetOffset >= 0)
     {
+        const QString offsetText = QStringLiteral("0x")
+            + QString::number(targetOffset, 16).toUpper().rightJustified(8, QLatin1Char('0'));
         const QString name = offsetName(targetOffset);
         if (!name.isEmpty())
-            return name;
+            return QStringLiteral("%1: %2").arg(name, offsetText);
+        return getOffsetText(targetOffset);
     }
     return getOffsetText(ptrOffset);
 }

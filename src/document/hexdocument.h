@@ -54,7 +54,8 @@ public:
 
     // ---- File (not dirty-tracked — metadata only) ----
 
-    QString filePath;                       // canonical path to the data file
+    QString filePath;                       // canonical path to the exported/current data file
+    QString sourceFilePath;                 // canonical path to the original source file
     bool    isUntitled = true;              // true when no file has been opened
 
     // ---- Project file (not dirty-tracked — save path only) ----

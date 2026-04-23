@@ -88,8 +88,9 @@ void AudioPlayer::play(int sampleRateOverride, double speedMultiplier)
 void AudioPlayer::stop()
 {
     if (m_audioSink) {
+        disconnect(m_audioSink, nullptr, this, nullptr);
         m_audioSink->stop();
-        m_audioSink->deleteLater();
+        delete m_audioSink;
         m_audioSink = nullptr;
     }
     if (m_audioBuffer.isOpen())

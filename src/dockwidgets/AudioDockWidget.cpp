@@ -4,6 +4,76 @@
 #include <QVBoxLayout>
 #include <QFormLayout>
 
+namespace {
+
+QVector<AudioSampleFormat> allAudioFormats()
+{
+    return {
+        AudioSampleFormat::Unknown,
+        AudioSampleFormat::SNES_BRR,
+        AudioSampleFormat::NES_DPCM,
+        AudioSampleFormat::MD_DAC_PCM,
+        AudioSampleFormat::MD_PCM8_Signed,
+        AudioSampleFormat::MD_ULAW,
+        AudioSampleFormat::MD_DPCM4_6500,
+        AudioSampleFormat::MD_ADPCM_OKI,
+        AudioSampleFormat::GBA_PCM8,
+        AudioSampleFormat::GB_Wave4bit,
+        AudioSampleFormat::Raw_PCM8_Unsigned,
+        AudioSampleFormat::Raw_PCM8_Signed,
+    };
+}
+
+QVector<AudioSampleFormat> preferredAudioFormatsForRom(RomType rom)
+{
+    switch (rom) {
+    case RomType::SNES:
+    case RomType::SNES_SMC:
+    case RomType::SNES_HIROM:
+    case RomType::SNES_HIROM_SMC:
+        return {AudioSampleFormat::SNES_BRR};
+    case RomType::NES:
+        return {AudioSampleFormat::NES_DPCM};
+    case RomType::MD:
+    case RomType::X32:
+        return {
+            AudioSampleFormat::MD_DAC_PCM,
+            AudioSampleFormat::MD_PCM8_Signed,
+            AudioSampleFormat::MD_ULAW,
+            AudioSampleFormat::MD_DPCM4_6500,
+            AudioSampleFormat::MD_ADPCM_OKI,
+        };
+    case RomType::GBA:
+        return {AudioSampleFormat::GBA_PCM8};
+    case RomType::GB:
+    case RomType::GBC:
+        return {AudioSampleFormat::GB_Wave4bit};
+    default:
+        return {};
+    }
+}
+
+QString audioFormatLabel(AudioSampleFormat fmt)
+{
+    switch (fmt) {
+    case AudioSampleFormat::Unknown:           return QObject::tr("Auto");
+    case AudioSampleFormat::SNES_BRR:          return QStringLiteral("SNES BRR");
+    case AudioSampleFormat::NES_DPCM:          return QStringLiteral("NES DPCM");
+    case AudioSampleFormat::MD_DAC_PCM:        return QStringLiteral("MD DAC PCM (unsigned 8-bit)");
+    case AudioSampleFormat::MD_PCM8_Signed:    return QStringLiteral("MD Signed 8-bit PCM");
+    case AudioSampleFormat::MD_ULAW:           return QStringLiteral("MD µ-law");
+    case AudioSampleFormat::MD_DPCM4_6500:     return QStringLiteral("IMA ADPCM 4-bit (UMK3)");
+    case AudioSampleFormat::MD_ADPCM_OKI:      return QStringLiteral("OKI/Dialogic ADPCM 4-bit");
+    case AudioSampleFormat::GBA_PCM8:          return QStringLiteral("GBA PCM8");
+    case AudioSampleFormat::GB_Wave4bit:       return QStringLiteral("GB Wave 4-bit");
+    case AudioSampleFormat::Raw_PCM8_Unsigned: return QStringLiteral("Raw PCM8 Unsigned");
+    case AudioSampleFormat::Raw_PCM8_Signed:   return QStringLiteral("Raw PCM8 Signed");
+    }
+    return QObject::tr("Auto");
+}
+
+} // namespace
+
 AudioDockWidget::AudioDockWidget(QWidget *parent)
     : BaseDockWidget(tr("Audio"), parent)
 {
@@ -59,6 +129,8 @@ AudioDockWidget::AudioDockWidget(QWidget *parent)
     setWidget(container);
     initTitleBar();
 
+    applySectionActiveState();
+
     connect(m_formatCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
         emit formatChanged(selectedFormat());
     });
@@ -77,7 +149,16 @@ AudioDockWidget::~AudioDockWidget() = default;
 
 void AudioDockWidget::setRomType(RomType romType)
 {
+    m_currentRomType = romType;
     populateFormats(romType);
+}
+
+void AudioDockWidget::setSectionActive(bool active)
+{
+    if (m_sectionActive == active)
+        return;
+    m_sectionActive = active;
+    applySectionActiveState();
 }
 
 AudioSampleFormat AudioDockWidget::selectedFormat() const
@@ -108,6 +189,20 @@ void AudioDockWidget::setFormatIndex(int index)
         const QSignalBlocker blocker(m_formatCombo);
         m_formatCombo->setCurrentIndex(index);
     }
+}
+
+void AudioDockWidget::setSelectedFormat(AudioSampleFormat format)
+{
+    const int wanted = static_cast<int>(format);
+    int idx = 0; // default to Auto
+    for (int i = 0; i < m_formatCombo->count(); ++i) {
+        if (m_formatCombo->itemData(i).toInt() == wanted) {
+            idx = i;
+            break;
+        }
+    }
+    const QSignalBlocker blocker(m_formatCombo);
+    m_formatCombo->setCurrentIndex(idx);
 }
 
 QString AudioDockWidget::sampleRateText() const
@@ -142,38 +237,58 @@ void AudioDockWidget::onPaletteChanged()
 
 void AudioDockWidget::populateFormats(RomType romType)
 {
+    const AudioSampleFormat current = selectedFormat();
     const QSignalBlocker blocker(m_formatCombo);
     m_formatCombo->clear();
-    m_formatCombo->addItem(tr("Auto"), static_cast<int>(AudioSampleFormat::Unknown));
+
+    const QVector<AudioSampleFormat> preferred = preferredAudioFormatsForRom(romType);
+    const QVector<AudioSampleFormat> all = allAudioFormats();
+
+    auto appendFmt = [this](AudioSampleFormat fmt) {
+        m_formatCombo->addItem(audioFormatLabel(fmt), static_cast<int>(fmt));
+    };
+
+    for (AudioSampleFormat fmt : preferred)
+        appendFmt(fmt);
+
+    if (romType != RomType::Unknown && !preferred.isEmpty())
+        m_formatCombo->insertSeparator(m_formatCombo->count());
+
+    for (AudioSampleFormat fmt : all) {
+        if (preferred.contains(fmt))
+            continue;
+        appendFmt(fmt);
+    }
+
+    int bestIndex = 0;
+    for (int i = 0; i < m_formatCombo->count(); ++i) {
+        if (m_formatCombo->itemData(i).toInt() == static_cast<int>(current)) {
+            bestIndex = i;
+            break;
+        }
+    }
+    m_formatCombo->setCurrentIndex(bestIndex);
 
     switch (romType) {
     case RomType::SNES:
     case RomType::SNES_SMC:
     case RomType::SNES_HIROM:
     case RomType::SNES_HIROM_SMC:
-        m_formatCombo->addItem(QStringLiteral("SNES BRR"), static_cast<int>(AudioSampleFormat::SNES_BRR));
         m_rateCombo->setCurrentText(QStringLiteral("32000"));
         break;
     case RomType::NES:
-        m_formatCombo->addItem(QStringLiteral("NES DPCM"), static_cast<int>(AudioSampleFormat::NES_DPCM));
         m_rateCombo->setCurrentText(QStringLiteral("8363"));
         break;
-    case RomType::MD:
-    case RomType::X32:
-        m_formatCombo->addItem(QStringLiteral("MD DAC PCM (unsigned 8-bit)"), static_cast<int>(AudioSampleFormat::MD_DAC_PCM));
-        m_formatCombo->addItem(QStringLiteral("MD Signed 8-bit PCM"), static_cast<int>(AudioSampleFormat::MD_PCM8_Signed));
-        m_formatCombo->addItem(QStringLiteral("MD µ-law"), static_cast<int>(AudioSampleFormat::MD_ULAW));
-        m_formatCombo->addItem(QStringLiteral("IMA ADPCM 4-bit (UMK3)"), static_cast<int>(AudioSampleFormat::MD_DPCM4_6500));
-        m_formatCombo->addItem(QStringLiteral("OKI/Dialogic ADPCM 4-bit"), static_cast<int>(AudioSampleFormat::MD_ADPCM_OKI));
-        m_rateCombo->setCurrentText(QStringLiteral("8000"));
-        break;
     case RomType::GBA:
-        m_formatCombo->addItem(QStringLiteral("GBA PCM8"), static_cast<int>(AudioSampleFormat::GBA_PCM8));
         m_rateCombo->setCurrentText(QStringLiteral("13379"));
         break;
     default:
-        m_formatCombo->addItem(QStringLiteral("Raw PCM8 Unsigned"), static_cast<int>(AudioSampleFormat::Raw_PCM8_Unsigned));
-        m_formatCombo->addItem(QStringLiteral("Raw PCM8 Signed"), static_cast<int>(AudioSampleFormat::Raw_PCM8_Signed));
         break;
     }
+}
+
+void AudioDockWidget::applySectionActiveState()
+{
+    if (m_contentWidget)
+        m_contentWidget->setEnabled(m_sectionActive);
 }

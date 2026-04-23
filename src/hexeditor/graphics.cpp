@@ -134,6 +134,13 @@ int HexEditor::graphicsAutoTileCols(TileCodec codec) const
     return qMax(1, cols);
 }
 
+int HexEditor::graphicsResolvedTileCols(TileCodec codec, int preferredCols) const
+{
+    if (preferredCols > 0)
+        return preferredCols;
+    return graphicsAutoTileCols(codec);
+}
+
 // ── Graphics palette initialization ──────────────────────────────
 
 void HexEditor::initGraphicsPalette(int bpp, QVector<QRgb> &palette) const
@@ -340,6 +347,9 @@ void HexEditor::paintGraphicsArea(QPainter &painter, int pxOfsX,
         return;
 
     const qint64 fileSize = _chunks->size();
+    const qint64 selBegin = getSelectionBegin();
+    const qint64 selEnd = getSelectionEnd();
+    const bool hasSelection = (selEnd - selBegin) > 0;
 
     const auto rowBytesThisRow = [this](int r) -> int {
         if (r < 0 || r >= _visualRowStartBytes.size())
@@ -374,7 +384,7 @@ void HexEditor::paintGraphicsArea(QPainter &painter, int pxOfsX,
         const int dataRows = static_cast<int>((bytes + _bytesPerLine - 1) / _bytesPerLine);
 
         const int bpt = tileCodecBytesPerTile(sec.tileCodec);
-        const int tileCols = graphicsAutoTileCols(sec.tileCodec);
+        const int tileCols = graphicsResolvedTileCols(sec.tileCodec, sec.tileCols);
         int padRows = 0;
         if (bpt > 0 && tileCols > 0) {
             const int totalTiles = static_cast<int>((bytes + bpt - 1) / bpt);
@@ -441,6 +451,7 @@ void HexEditor::paintGraphicsArea(QPainter &painter, int pxOfsX,
 
         // Get section or global settings
         TileCodec codec = _globalTileCodec;
+        int tileColsSetting = _globalTileCols;
         qint64 dataStart = 0;
         qint64 dataEnd   = fileSize;
         QVector<QRgb> customPalette;
@@ -451,6 +462,7 @@ void HexEditor::paintGraphicsArea(QPainter &painter, int pxOfsX,
             if (secIdx >= 0) {
                 const Section &sec = _sectionModel->at(secIdx);
                 codec    = sec.tileCodec;
+                tileColsSetting = sec.tileCols;
                 dataStart = sec.startOffset;
                 dataEnd   = _sectionModel->endOffsetOf(secIdx, fileSize);
                 customPalette = sec.palette;
@@ -460,8 +472,7 @@ void HexEditor::paintGraphicsArea(QPainter &painter, int pxOfsX,
         // Apply tile shift
         dataStart = qMax(qint64(0), qMin(dataStart + _gfxTileShift, dataEnd - 1));
 
-        // Auto-compute tile columns from hex width
-        const int tileCols = graphicsAutoTileCols(codec);
+        const int tileCols = graphicsResolvedTileCols(codec, tileColsSetting);
         _gfxAutoTileCols = tileCols;
 
         const int bpt = tileCodecBytesPerTile(codec);
@@ -514,12 +525,15 @@ void HexEditor::paintGraphicsArea(QPainter &painter, int pxOfsX,
             ++runLen;
         }
 
-        // Build palette (custom from section or default)
+        // Build palette (custom from section or default).
         QVector<QRgb> palette;
-        if (!customPalette.isEmpty())
-            palette = customPalette;
-        else
-            initGraphicsPalette(bpp, palette);
+        initGraphicsPalette(bpp, palette);
+        if (!customPalette.isEmpty()) {
+            const int maxColors = 1 << bpp;
+            const int copyCount = qMin(customPalette.size(), maxColors);
+            for (int i = 0; i < copyCount; ++i)
+                palette[i] = customPalette[i];
+        }
 
         // Keep full row height (no gaps between rows), but make pixels narrower.
         const int pixW = qMax(2, (rowStridePx * 17) / 20); // ~85% width
@@ -610,6 +624,39 @@ void HexEditor::paintGraphicsArea(QPainter &painter, int pxOfsX,
                 painter.setRenderHint(QPainter::SmoothPixmapTransform, false);
                 painter.setRenderHint(QPainter::Antialiasing, false);
                 painter.drawImage(destRect, _tileCanvasBuffer, srcRect);
+
+                // Overlay selection: highlight the exact tile pixels affected by selected bytes.
+                if (hasSelection) {
+                    const int secVisualRow = tileRow * 8 + pr;
+                    const qint64 rowDataStart = dataStart + static_cast<qint64>(secVisualRow) * _bytesPerLine;
+                    const qint64 rowDataEnd = qMin(rowDataStart + _bytesPerLine, dataEnd);
+                    if (rowDataStart < rowDataEnd) {
+                        QColor selPix = _brushSelection.color();
+                        selPix.setAlpha(110);
+                        for (qint64 ofs = rowDataStart; ofs < rowDataEnd; ++ofs) {
+                            if (ofs < selBegin || ofs >= selEnd)
+                                continue;
+
+                            const qint64 byteInSection = ofs - dataStart;
+                            if (byteInSection < 0)
+                                continue;
+
+                            const int tileIndex = static_cast<int>(byteInSection / bpt);
+                            const int tileCol = tileIndex % tileCols;
+                            const int byteInTile = static_cast<int>(byteInSection % bpt);
+
+                            int py = 0, px0 = 0, pxCount = 0;
+                            tilePixelRangeForByte(codec, byteInTile, py, px0, pxCount);
+                            if (py != pr || pxCount <= 0)
+                                continue;
+
+                            const int x = gfxAreaX + (tileCol * 8 + px0) * pixW;
+                            const int w = qMax(1, pxCount * pixW);
+                            painter.fillRect(x, y, w, pixH, selPix);
+                        }
+                    }
+                }
+
                 ++screenRowsRendered;
             }
         }
@@ -670,6 +717,7 @@ void HexEditor::gfxSetPixel(Qt::MouseButton button)
 
     // Find the section/global context for the cursor byte
     TileCodec codec = _globalTileCodec;
+    int tileColsSetting = _globalTileCols;
     qint64 dataStart = 0;
     qint64 dataEnd = _chunks->size();
     if (_sectionModel) {
@@ -679,6 +727,7 @@ void HexEditor::gfxSetPixel(Qt::MouseButton button)
             if (secIdx >= 0) {
                 const Section &sec = _sectionModel->at(secIdx);
                 codec = sec.tileCodec;
+                tileColsSetting = sec.tileCols;
                 dataStart = sec.startOffset;
                 dataEnd = _sectionModel->endOffsetOf(secIdx, _chunks->size());
             }
@@ -689,7 +738,7 @@ void HexEditor::gfxSetPixel(Qt::MouseButton button)
     dataStart = qMax(qint64(0), qMin(dataStart + _gfxTileShift, dataEnd - 1));
 
     const int bpt = tileCodecBytesPerTile(codec);
-    const int tileCols = graphicsAutoTileCols(codec);
+    const int tileCols = graphicsResolvedTileCols(codec, tileColsSetting);
     if (bpt <= 0 || _bPosCurrent < dataStart || _bPosCurrent >= dataEnd)
         return;
 

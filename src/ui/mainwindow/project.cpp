@@ -76,9 +76,36 @@ void MainWindow::openProjectFile(const QString &path)
     const bool wasRestoringProjectUi = m_restoringProjectUi;
     m_restoringProjectUi = true;
 
-    // 1. Load the data file
-    if (!doc.filePath.isEmpty() && QFile::exists(doc.filePath)) {
-        loadFile(doc.filePath);
+    auto canonicalOrRaw = [](const QString &p) -> QString {
+        const QString c = QFileInfo(p).canonicalFilePath();
+        return c.isEmpty() ? p : c;
+    };
+
+    // 1. Load project data file: prefer exported/current file, fall back to source.
+    QString projectDataPath;
+    if (!doc.filePath.isEmpty() && QFile::exists(doc.filePath))
+        projectDataPath = doc.filePath;
+    else if (!doc.sourceFilePath.isEmpty() && QFile::exists(doc.sourceFilePath))
+        projectDataPath = doc.sourceFilePath;
+
+    if (projectDataPath.isEmpty()) {
+        m_restoringProjectUi = wasRestoringProjectUi;
+        QMessageBox::warning(
+            this,
+            QString::fromLatin1(AppInfo::Name),
+            tr("Project data file not found.\n\n"
+               "Current file path: %1\n"
+               "Source file path: %2")
+                .arg(doc.filePath.isEmpty() ? tr("<not set>") : doc.filePath,
+                     doc.sourceFilePath.isEmpty() ? tr("<not set>") : doc.sourceFilePath));
+        return;
+    }
+
+    loadFile(projectDataPath);
+
+    if (canonicalOrRaw(curFile) != canonicalOrRaw(projectDataPath)) {
+        m_restoringProjectUi = wasRestoringProjectUi;
+        return;
     }
 
     // 2. Load translation tables into dock widget
@@ -106,7 +133,6 @@ void MainWindow::openProjectFile(const QString &path)
         tb = m_tablesDock->currentTable();
         useTableAct->setEnabled(hasTables);
         useTableAct->setChecked(hasTables && doc.useTable);
-
         if (useTableAct->isChecked())
             applySelectedTable();
         else
@@ -186,6 +212,8 @@ void MainWindow::openProjectFile(const QString &path)
     }
     if (m_audioDock)
         m_audioDock->setRomType(doc.romType());
+    if (m_graphicsDock)
+        m_graphicsDock->setRomType(doc.romType());
 
     // 6. Alignment (virtual line breaks) — block signal to avoid marking project modified on load
     {
@@ -323,6 +351,8 @@ bool MainWindow::saveProjectImpl(const QString &path)
 
     // Populate document from current state
     m_document->filePath = curFile;
+    if (m_document->sourceFilePath.isEmpty() && !curFile.isEmpty())
+        m_document->sourceFilePath = curFile;
     m_document->tableFilePath = tableFilePath;
     m_document->useTable = (useTableAct && useTableAct->isChecked());
     m_document->setCurrentEncoding(m_currentEncoding);
@@ -338,11 +368,7 @@ bool MainWindow::saveProjectImpl(const QString &path)
     m_document->cursorPosition = 0; // now stored in per-project app settings
     m_document->setAlignmentOffsets(hexEdit->lineBreaks());
 
-    // Recompute tracked diffs byte-by-byte.
-    // If project already has an original baseline (e.g. loaded via "Load original"),
-    // keep that baseline authoritative and only keep bytes that are still changed.
-    // Otherwise, derive baseline from the current file on disk.
-    const QVector<QPair<qint64, QByteArray>> previousOriginalBytes = m_document->originalBytes;
+    // Recompute tracked diffs byte-by-byte against the immutable source file.
     const QByteArray currentData = hexEdit->data();
     m_document->originalBytes.clear();
     m_document->originalFileSize = -1;
@@ -379,53 +405,33 @@ bool MainWindow::saveProjectImpl(const QString &path)
             m_document->originalBytes.append({runStart, runBytes});
     };
 
-    if (!previousOriginalBytes.isEmpty()) {
-        // Flatten previous grouped baseline and keep only currently changed bytes.
-        QVector<QPair<qint64, QByteArray>> filtered;
-        for (const auto &entry : previousOriginalBytes) {
-            const qint64 base = entry.first;
-            const QByteArray &origBytes = entry.second;
-            for (int i = 0; i < origBytes.size(); ++i) {
-                const qint64 pos = base + i;
-                const char origByte = origBytes.at(i);
-
-                bool changedNow = false;
-                if (pos >= 0 && pos < currentData.size())
-                    changedNow = currentData.at(pos) != origByte;
-                else
-                    changedNow = true;
-
-                if (changedNow)
-                    filtered.append({pos, QByteArray(1, origByte)});
-            }
+    if (!m_document->sourceFilePath.isEmpty()) {
+        QFile sourceFile(m_document->sourceFilePath);
+        if (!sourceFile.open(QIODevice::ReadOnly)) {
+            QMessageBox::warning(this, QString::fromLatin1(AppInfo::Name),
+                                 tr("Cannot read source file %1:\n%2.")
+                                     .arg(m_document->sourceFilePath)
+                                     .arg(sourceFile.errorString()));
+            return false;
         }
 
-        std::sort(filtered.begin(), filtered.end(), [](const auto &a, const auto &b) {
-            return a.first < b.first;
-        });
+        const QByteArray sourceData = sourceFile.readAll();
+        m_document->originalFileSize = sourceData.size();
 
-        appendGroupedDiffs(filtered);
-    } else if (!curFile.isEmpty()) {
-        // No external baseline tracked yet: compare against bytes from file on disk.
-        QFile diskFile(curFile);
-        if (diskFile.open(QIODevice::ReadOnly)) {
-            const QByteArray originalFileData = diskFile.readAll();
-            QVector<QPair<qint64, QByteArray>> flatDiffs;
-
-            const qint64 commonSize = qMin<qint64>(originalFileData.size(), currentData.size());
-            for (qint64 i = 0; i < commonSize; ++i) {
-                if (originalFileData.at(i) != currentData.at(i))
-                    flatDiffs.append({i, QByteArray(1, originalFileData.at(i))});
-            }
-
-            // If current file is shorter than original, keep truncated tail bytes too.
-            if (originalFileData.size() > currentData.size()) {
-                for (qint64 i = currentData.size(); i < originalFileData.size(); ++i)
-                    flatDiffs.append({i, QByteArray(1, originalFileData.at(i))});
-            }
-
-            appendGroupedDiffs(flatDiffs);
+        QVector<QPair<qint64, QByteArray>> flatDiffs;
+        const qint64 commonSize = qMin<qint64>(sourceData.size(), currentData.size());
+        for (qint64 i = 0; i < commonSize; ++i) {
+            if (sourceData.at(i) != currentData.at(i))
+                flatDiffs.append({i, QByteArray(1, sourceData.at(i))});
         }
+
+        // If current file is shorter than source, keep truncated source tail bytes too.
+        if (sourceData.size() > currentData.size()) {
+            for (qint64 i = currentData.size(); i < sourceData.size(); ++i)
+                flatDiffs.append({i, QByteArray(1, sourceData.at(i))});
+        }
+
+        appendGroupedDiffs(flatDiffs);
     }
 
     // Build table list from dock widget for multi-table serialization
@@ -475,6 +481,10 @@ void MainWindow::loadFile(const QString &fileName)
     // Clear project state when loading a new file directly
     m_document->projectFilePath.clear();
     m_document->projectName.clear();
+    m_document->filePath.clear();
+    m_document->sourceFilePath.clear();
+    m_document->originalBytes.clear();
+    m_document->originalFileSize = -1;
     m_document->clearDirty();
 
     const QString canonicalIncoming = QFileInfo(fileName).canonicalFilePath();
@@ -529,6 +539,8 @@ void MainWindow::loadFile(const QString &fileName)
 
     resetNavigationHistory();
     setCurrentFile(fileName);
+    if (m_document && !curFile.isEmpty() && m_document->sourceFilePath.isEmpty())
+        m_document->sourceFilePath = curFile;
     statusBar()->showMessage(tr("File loaded"), 2000);
     rememberDirectory(kLastFileDirKey, fileName);
 
@@ -638,6 +650,8 @@ void MainWindow::loadFile(const QString &fileName)
     }
     if (m_audioDock)
         m_audioDock->setRomType(rom);
+    if (m_graphicsDock)
+        m_graphicsDock->setRomType(rom);
 
     // Do NOT auto-scan sections on file load: sections are now created only on explicit
     // "Parse" action via SectionsDockWidget context menu to avoid unexpected behavior.
@@ -703,6 +717,8 @@ void MainWindow::loadFile(const QString &fileName, RomType suggestedRomType)
         }
         if (m_audioDock)
             m_audioDock->setRomType(suggestedRomType);
+        if (m_graphicsDock)
+            m_graphicsDock->setRomType(suggestedRomType);
     }
 }
 
@@ -995,7 +1011,7 @@ void MainWindow::loadOriginal()
     }
 
     // Compare byte-by-byte and collect contiguous changed runs.
-    // Store original (from origData) values for every changed position.
+    // Store original (from origData/source) values for every changed position.
     const qint64 compareLen = qMin<qint64>(origData.size(), currentData.size());
     QVector<QPair<qint64, QByteArray>> newOriginalBytes;
 
@@ -1018,6 +1034,11 @@ void MainWindow::loadOriginal()
         }
     }
 
+    // If the current file is shorter than source, track removed tail bytes too.
+    if (origData.size() > currentData.size()) {
+        newOriginalBytes.append({currentData.size(), origData.mid(currentData.size())});
+    }
+
     if (newOriginalBytes.isEmpty()) {
         QMessageBox::information(this, QString::fromLatin1(AppInfo::Name),
                                  tr("Two files are identical, no changes detected"));
@@ -1026,6 +1047,9 @@ void MainWindow::loadOriginal()
 
     m_document->originalBytes = newOriginalBytes;
     m_document->originalFileSize = origData.size();
+    m_document->sourceFilePath = QFileInfo(path).canonicalFilePath();
+    if (m_document->sourceFilePath.isEmpty())
+        m_document->sourceFilePath = path;
 
     if (hexEdit->showOriginal()) {
         QByteArray reconstructed = currentData;

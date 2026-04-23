@@ -37,6 +37,7 @@
 #include <QPainter>
 #include <QFontMetrics>
 #include <QPointer>
+#include <QSet>
 #include <memory>
 #include <functional>
 #ifdef Q_OS_MAC
@@ -56,6 +57,7 @@
 #include "ChangesDockWidget.h"
 #include "SectionsDockWidget.h"
 #include "SectionListModel.h"
+#include "Datas.h"
 #include "disassembler.h"
 #include "romdetect.h"
 #include "romchecksum.h"
@@ -576,6 +578,7 @@ void MainWindow::onHexDataChangedAt(qint64 offset)
     }
 
     const qint64 oldSize = m_changeTrackingSnapshot.size();
+    QVector<qint64> changedOffsets;
 
     if (oldSize == newSize && offset >= 0 && offset < newSize) {
         // Same size: only a single overwrite. Read just the changed byte(s)
@@ -586,6 +589,7 @@ void MainWindow::onHexDataChangedAt(qint64 offset)
         if (oldByte != newByte) {
             applyIncrementalOriginalByteChange(m_document->originalBytes, offset, oldByte, newByte);
             m_changeTrackingSnapshot[static_cast<int>(offset)] = newByte;
+            changedOffsets.append(offset);
         }
         // A macro (e.g. multi-byte overwrite from script insert) fires
         // dataChangedAt only once with the last byte's offset.  Detect nearby
@@ -600,7 +604,50 @@ void MainWindow::onHexDataChangedAt(qint64 offset)
                 if (ob != nb) {
                     applyIncrementalOriginalByteChange(m_document->originalBytes, i, ob, nb);
                     m_changeTrackingSnapshot[static_cast<int>(i)] = nb;
+                    changedOffsets.append(i);
                 }
+            }
+        }
+
+        if (!changedOffsets.isEmpty() && hexEdit && hexEdit->pointers()) {
+            QSet<qint64> affectedPointers;
+            for (qint64 changedOffset : changedOffsets) {
+                const qint64 ptrStart = hexEdit->pointerStartAt(changedOffset, currentPointerSize());
+                if (ptrStart >= 0)
+                    affectedPointers.insert(ptrStart);
+            }
+
+            bool pointerTableChanged = false;
+            for (qint64 ptrStart : affectedPointers) {
+                const int ptrSize = hexEdit->pointers()->getPointerSize(ptrStart);
+                if (ptrSize < 2 || ptrSize > 4)
+                    continue;
+
+                const QByteArray rawPtr = hexEdit->dataAt(ptrStart, ptrSize);
+                if (rawPtr.size() != ptrSize)
+                    continue;
+
+                const quint64 decoded = decodePointer(
+                    reinterpret_cast<const uchar *>(rawPtr.constData()),
+                    ptrSize,
+                    hexEdit->byteOrder);
+                const qint64 newTarget = static_cast<qint64>(decoded) + currentPointerOffset();
+                if (newTarget < 0)
+                    continue;
+
+                if (hexEdit->pointers()->getOffset(ptrStart) != newTarget) {
+                    hexEdit->pointers()->addPointer(ptrStart, newTarget, ptrSize);
+                    pointerTableChanged = true;
+                }
+            }
+
+            if (pointerTableChanged) {
+                pointersUpdated();
+                if (m_pointersDock && m_pointersDock->isVisible())
+                    m_pointersDock->refreshView();
+                if (pointersDialog)
+                    pointersDialog->refreshFromTable();
+                hexEdit->viewport()->update();
             }
         }
     } else {
@@ -799,7 +846,14 @@ void MainWindow::showJumpToDialog()
 {
     if (!jumpToDialog)
         jumpToDialog = new JumpToDialog(hexEdit, this);
+
+    jumpToDialog->setHexEdit(hexEdit);
+    if (m_currentSession)
+        jumpToDialog->setOffsetText(m_currentSession->jumpToText);
+
     jumpToDialog->show();
+    jumpToDialog->raise();
+    jumpToDialog->activateWindow();
 }
 
 bool MainWindow::save()
@@ -807,8 +861,46 @@ bool MainWindow::save()
     bool ok;
     if (isUntitled)
         ok = saveAs();
-    else
+    else if (m_document
+             && !m_document->sourceFilePath.isEmpty()
+             && (hasProjectData() || !m_document->projectFilePath.isEmpty())) {
+        const QString sourceCanonical = QFileInfo(m_document->sourceFilePath).canonicalFilePath();
+        const QString sourcePath = sourceCanonical.isEmpty() ? m_document->sourceFilePath : sourceCanonical;
+        const QString curCanonical = QFileInfo(curFile).canonicalFilePath();
+        const QString currentPath = curCanonical.isEmpty() ? curFile : curCanonical;
+
+        if (!currentPath.isEmpty() && currentPath == sourcePath) {
+            QString initialPath = curFile;
+            if (initialPath.isEmpty())
+                initialPath = lastDirectory(kLastFileDirKey);
+
+            const QString exportPath = QFileDialog::getSaveFileName(
+                this, tr("Save current version as..."), initialPath);
+            if (exportPath.isEmpty())
+                return false;
+
+            const QString exportCanonical = QFileInfo(exportPath).canonicalFilePath();
+            const QString chosenPath = exportCanonical.isEmpty() ? exportPath : exportCanonical;
+            if (chosenPath == sourcePath) {
+                const auto answer = QMessageBox::warning(
+                    this,
+                    QString::fromLatin1(AppInfo::Name),
+                    tr("The selected file is the original source. "
+                       "If you overwrite it, tracking differences against source will no longer be possible.\n\n"
+                       "Continue anyway?"),
+                    QMessageBox::Yes | QMessageBox::No,
+                    QMessageBox::No);
+                if (answer != QMessageBox::Yes)
+                    return false;
+            }
+
+            ok = saveFile(exportPath);
+        } else {
+            ok = saveFile(curFile);
+        }
+    } else {
         ok = saveFile(curFile);
+    }
 
     if (ok && m_document) {
         if (!m_document->projectFilePath.isEmpty()) {
@@ -989,6 +1081,8 @@ void MainWindow::setSize(qint64 size)
 {
     if (lbSize)
         lbSize->setText(QString("%1").arg(size));
+    if (m_sectionsDock)
+        m_sectionsDock->setFileSize(size);
 }
 
 void MainWindow::updateStatusBarVisibility()
@@ -1676,8 +1770,10 @@ void MainWindow::init()
         const bool restoring = m_restoringSession || m_restoringProjectUi;
         if (!restoring && m_document && m_document->sectionSnapshot != m_sectionModel->sections())
             m_document->markDirty();
-        if (hexEdit)
+        if (hexEdit) {
+            syncDisplayDocksForOffset(hexEdit->cursorPosition() / 2);
             hexEdit->viewport()->update();
+        }
     });
     connect(m_sectionModel, &SectionListModel::groupsChanged, this, [this]() {
         const bool restoring = m_restoringSession || m_restoringProjectUi;
@@ -1719,11 +1815,61 @@ void MainWindow::init()
     addDockWidget(Qt::RightDockWidgetArea, m_audioDock);
     m_audioDock->hide();  // hidden by default, shown via View → Dock
     m_audioDock->setRomType(m_detectedRomType);
+    m_audioDock->setSectionActive(false);
+
+    auto syncAudioOptionsToCurrentSection = [this]() {
+        if (!hexEdit || !m_sectionModel || !m_audioDock)
+            return;
+        const int idx = m_sectionModel->sectionIndexAtOffset(hexEdit->cursorPosition() / 2);
+        if (idx < 0)
+            return;
+
+        Section sec = m_sectionModel->at(idx);
+        if (sec.displayMode != SectionDisplay_Audio)
+            return;
+
+        auto opts = parseSectionOptions(sec.options);
+        opts.insert(QStringLiteral("type"), audioSubtypeMnemonicFromFormat(m_audioDock->selectedFormat()));
+        opts.insert(QStringLiteral("sample_rate"), QString::number(m_audioDock->selectedSampleRate()));
+        opts.insert(QStringLiteral("speed"), QString::number(m_audioDock->playbackSpeed(), 'f', 3));
+        const QString optionsText = serializeSectionOptions(opts);
+
+        bool changed = false;
+        if (sec.display != QStringLiteral("snd")) {
+            sec.display = QStringLiteral("snd");
+            changed = true;
+        }
+        if (sec.options != optionsText) {
+            sec.options = optionsText;
+            changed = true;
+        }
+        if (changed) {
+            m_sectionModel->updateSection(idx, sec);
+        } else if (hexEdit) {
+            // Format change must immediately repaint audio histogram.
+            hexEdit->viewport()->update();
+        }
+    };
+
+    connect(m_audioDock, &AudioDockWidget::formatChanged, this,
+            [syncAudioOptionsToCurrentSection](AudioSampleFormat) {
+                syncAudioOptionsToCurrentSection();
+            });
+    connect(m_audioDock, &AudioDockWidget::sampleRateChanged, this,
+            [syncAudioOptionsToCurrentSection](int) {
+                syncAudioOptionsToCurrentSection();
+            });
+    connect(m_audioDock, &AudioDockWidget::playbackSpeedChanged, this,
+            [syncAudioOptionsToCurrentSection](double) {
+                syncAudioOptionsToCurrentSection();
+            });
 
     // ── Graphics dock ──
     m_graphicsDock = new GraphicsDockWidget(this);
     addDockWidget(Qt::RightDockWidgetArea, m_graphicsDock);
     m_graphicsDock->hide();
+    m_graphicsDock->setRomType(m_detectedRomType);
+    m_graphicsDock->setSectionActive(false);
 
     // Codec changed in dock → update global + current section
     connect(m_graphicsDock, &GraphicsDockWidget::codecChanged, this, [this](TileCodec codec) {
@@ -1738,6 +1884,24 @@ void MainWindow::init()
                     sec.palette.clear();
                     model->updateSection(idx, sec);
                     m_graphicsDock->setPaletteColors(sec.palette);
+                }
+            }
+        }
+    });
+
+    connect(m_graphicsDock, &GraphicsDockWidget::tileColsChanged, this, [this](int cols) {
+        if (!hexEdit)
+            return;
+
+        hexEdit->setGlobalTileCols(cols);
+
+        if (auto *model = hexEdit->sectionModel()) {
+            const int idx = model->sectionIndexAtOffset(hexEdit->cursorPosition() / 2);
+            if (idx >= 0) {
+                Section sec = model->at(idx);
+                if (sec.displayMode == SectionDisplay_Graphics && sec.tileCols != cols) {
+                    sec.tileCols = cols;
+                    model->updateSection(idx, sec);
                 }
             }
         }
@@ -1765,6 +1929,9 @@ void MainWindow::init()
     connect(m_graphicsDock, &GraphicsDockWidget::rightPalIndexChanged, this, [this](int idx) {
         if (hexEdit) hexEdit->setGfxRightPalIdx(idx);
     });
+
+    if (hexEdit)
+        syncDisplayDocksForOffset(hexEdit->cursorPosition() / 2);
 
     // Ctrl+1..9 shortcuts for switching table tabs
     for (int i = 1; i <= 9; ++i) {
@@ -1956,6 +2123,49 @@ EditorSession *MainWindow::createSession()
     return session;
 }
 
+void MainWindow::syncDisplayDocksForOffset(qint64 offset)
+{
+    if (!hexEdit || !m_sectionModel)
+        return;
+
+    const int idx = m_sectionModel->sectionIndexAtOffset(offset);
+    const bool inGraphicsSection = idx >= 0 && m_sectionModel->at(idx).displayMode == SectionDisplay_Graphics;
+    const bool inAudioSection = idx >= 0 && m_sectionModel->at(idx).displayMode == SectionDisplay_Audio;
+
+    if (m_graphicsDock) {
+        m_graphicsDock->setSectionActive(inGraphicsSection || hexEdit->showGraphicsPanel());
+        if (idx >= 0) {
+            const Section &sec = m_sectionModel->at(idx);
+            if (sec.displayMode == SectionDisplay_Graphics) {
+                m_graphicsDock->setCodec(sec.tileCodec);
+                m_graphicsDock->setTileColsDisplay(sec.tileCols);
+                m_graphicsDock->setPaletteColors(sec.palette);
+            } else if (hexEdit->showGraphicsPanel()) {
+                m_graphicsDock->setCodec(hexEdit->globalTileCodec());
+                m_graphicsDock->setTileColsDisplay(hexEdit->globalTileCols());
+                m_graphicsDock->setPaletteColors({});
+            }
+        } else if (hexEdit->showGraphicsPanel()) {
+            m_graphicsDock->setCodec(hexEdit->globalTileCodec());
+            m_graphicsDock->setTileColsDisplay(hexEdit->globalTileCols());
+            m_graphicsDock->setPaletteColors({});
+        }
+    }
+
+    if (m_audioDock) {
+        m_audioDock->setSectionActive(inAudioSection);
+        if (idx >= 0) {
+            const Section &sec = m_sectionModel->at(idx);
+            if (sec.displayMode == SectionDisplay_Audio) {
+                const AudioSampleFormat fmt = audioFormatFromSubtypeMnemonic(sectionAudioSubtypeMnemonic(sec, m_detectedRomType));
+                m_audioDock->setSelectedFormat(fmt);
+                m_audioDock->setSampleRateText(QString::number(sectionAudioSampleRate(sec, m_detectedRomType)));
+                m_audioDock->setPlaybackSpeed(sectionAudioSpeed(sec));
+            }
+        }
+    }
+}
+
 void MainWindow::connectEditorSignals(HexEditor *editor)
 {
     connect(editor, &HexEditor::overwriteModeChanged, this, &MainWindow::setOverwriteMode);
@@ -1966,27 +2176,8 @@ void MainWindow::connectEditorSignals(HexEditor *editor)
     connect(editor, &HexEditor::currentAddressChanged, this, &MainWindow::setAddress);
     connect(editor, &HexEditor::currentAddressChanged,
             m_sectionsDock, &SectionsDockWidget::highlightOffset);
-    // Sync graphics dock when cursor moves to a different section
-    connect(editor, &HexEditor::currentAddressChanged, this, [this](qint64 offset) {
-        if (!m_graphicsDock || !m_graphicsDock->isVisible())
-            return;
-        if (auto *model = hexEdit ? hexEdit->sectionModel() : nullptr) {
-            const int idx = model->sectionIndexAtOffset(offset);
-            if (idx >= 0) {
-                const Section &sec = model->at(idx);
-                if (sec.displayMode == SectionDisplay_Graphics) {
-                    m_graphicsDock->setCodec(sec.tileCodec);
-                    m_graphicsDock->setPaletteColors(sec.palette);
-                    return;
-                }
-            }
-            // Global mode — show global codec, no custom palette
-            if (hexEdit && hexEdit->showGraphicsPanel()) {
-                m_graphicsDock->setCodec(hexEdit->globalTileCodec());
-                m_graphicsDock->setPaletteColors({});
-            }
-        }
-    });
+    connect(editor, &HexEditor::currentAddressChanged,
+            this, &MainWindow::syncDisplayDocksForOffset);
     connect(editor, &HexEditor::currentSizeChanged, this, &MainWindow::setSize);
     connect(editor, &HexEditor::lineBreaksChanged, this, [this, editor]() {
         const bool restoring = m_restoringSession || m_restoringProjectUi;
@@ -2018,6 +2209,8 @@ void MainWindow::disconnectEditorSignals(HexEditor *editor)
     disconnect(editor, SIGNAL(currentAddressChanged(qint64)), this, SLOT(setAddress(qint64)));
     disconnect(editor, &HexEditor::currentAddressChanged,
               m_sectionsDock, &SectionsDockWidget::highlightOffset);
+    disconnect(editor, &HexEditor::currentAddressChanged,
+              this, &MainWindow::syncDisplayDocksForOffset);
     disconnect(editor, SIGNAL(currentSizeChanged(qint64)), this, SLOT(setSize(qint64)));
     disconnect(editor, &HexEditor::lineBreaksChanged, this, nullptr);
     disconnect(editor, &HexEditor::audioPlaybackToggled, this, nullptr);
@@ -2040,11 +2233,19 @@ bool MainWindow::saveFile(const QString &fileName)
         const ChecksumFixResult csResult = tryFixChecksum(data, m_detectedRomType);
         if (csResult.status == ChecksumFixStatus::Fixed) {
             checksumFixed = true;
-            // Update the editor bytes that changed (minimal replace, adds to undo stack).
+            // Update only changed spans in editor data without polluting undo/redo history.
             const QByteArray oldData = hexEdit->data();
-            for (int i = 0; i < data.size() && i < oldData.size(); ++i) {
-                if (data[i] != oldData[i])
-                    hexEdit->replace(i, data[i]);
+            const int common = qMin(data.size(), oldData.size());
+            int i = 0;
+            while (i < common) {
+                if (data[i] == oldData[i]) {
+                    ++i;
+                    continue;
+                }
+                const int start = i;
+                while (i < common && data[i] != oldData[i])
+                    ++i;
+                hexEdit->replaceNoUndo(start, i - start, data.mid(start, i - start));
             }
             // Refresh changes view to show recalculated checksums
             if (showChangesAct && showChangesAct->isChecked())

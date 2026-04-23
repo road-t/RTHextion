@@ -99,6 +99,9 @@ public:
     int     searchReplaceFormat = -1;
     bool    searchRelative      = false;
 
+    // Per-tab Jump To dialog state
+    QString jumpToText;
+
     // Per-tab Find Pointers dialog state (options not covered by ROM profile)
     int  ptrSearchDir        = 2;     // 0 = before, 1 = after, 2 = both (whole file)
     bool ptrExcludeSelection = false;

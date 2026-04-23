@@ -413,6 +413,10 @@ void HexEditor::setCursorPosition(qint64 position)
     // ascii area cursor
     int asciiOffsetPx = 0;
     int asciiCursorWidthPx = _pxCharWidth;
+    const int cursorSectionMode = _sectionModel
+        ? _sectionModel->displayModeAtOffset(_bPosCurrent)
+        : SectionDisplay_Default;
+    const bool cursorForcesRaw = (cursorSectionMode == SectionDisplay_Raw);
     // Buffer offset of cursor's row start (may be negative when cursor is above visible area)
     const int bufRowStart = static_cast<int>(absRowStart - _bPosFirst);
 
@@ -428,7 +432,7 @@ void HexEditor::setCursorPosition(qint64 position)
         asciiCursorWidthPx = _pxCharWidth + 2;
         asciiOffsetPx = 0;
 
-        if (_tb && !_tbDisplayChars.isEmpty())
+        if (!cursorForcesRaw && _tb && !_tbDisplayChars.isEmpty())
         {
             const QFontMetrics fm(font());
             int lastLeadOffsetPx = 0;
@@ -503,7 +507,7 @@ void HexEditor::setCursorPosition(qint64 position)
                 const uint8_t bv = (bytePos >= 0 && bytePos < _dataShown.size())
                     ? static_cast<uint8_t>(_dataShown.at(bytePos))
                     : 0;
-                const int baseW = (_tb && !_tbSymbolWidthPxCache.isEmpty()) ? _tbSymbolWidthPxCache[bv] : _pxCharWidth;
+                const int baseW = (!cursorForcesRaw && _tb && !_tbSymbolWidthPxCache.isEmpty()) ? _tbSymbolWidthPxCache[bv] : _pxCharWidth;
                 asciiOffsetPx += baseW + slotGapPx(baseW);
             }
 
@@ -511,7 +515,7 @@ void HexEditor::setCursorPosition(qint64 position)
             const uint8_t curBv = (curBytePos >= 0 && curBytePos < _dataShown.size())
                 ? static_cast<uint8_t>(_dataShown.at(curBytePos))
                 : 0;
-            const int baseW = (_tb && !_tbSymbolWidthPxCache.isEmpty()) ? _tbSymbolWidthPxCache[curBv] : _pxCharWidth;
+            const int baseW = (!cursorForcesRaw && _tb && !_tbSymbolWidthPxCache.isEmpty()) ? _tbSymbolWidthPxCache[curBv] : _pxCharWidth;
             asciiCursorWidthPx = baseW + 2;
         }
     }
@@ -533,7 +537,7 @@ void HexEditor::setCursorPosition(qint64 position)
         const int bufIdx  = (int)(_bPosCurrent - _bPosFirst);
         int leadBufIdx = bufIdx;
         int span = 1;
-        if (!_tbDisplayChars.isEmpty() && bufIdx >= 0 && bufIdx < _tbDisplayChars.size()) {
+        if (!cursorForcesRaw && !_tbDisplayChars.isEmpty() && bufIdx >= 0 && bufIdx < _tbDisplayChars.size()) {
             int li = bufIdx;
             while (li > 0 && _tbDisplayChars[li].isNull()) --li;
             if (li >= 0 && li < _tbDisplaySpan.size() && _tbDisplaySpan[li] > 1)
@@ -573,7 +577,7 @@ void HexEditor::setCursorPosition(qint64 position)
     {
         const int bufIdx = (int)(_bPosCurrent - _bPosFirst);
         bool isMultiByte = false;
-        if (!_tbDisplayChars.isEmpty() && bufIdx >= 0 && bufIdx < _tbDisplayChars.size()) {
+        if (!cursorForcesRaw && !_tbDisplayChars.isEmpty() && bufIdx >= 0 && bufIdx < _tbDisplayChars.size()) {
             int li = bufIdx;
             while (li > 0 && _tbDisplayChars[li].isNull()) --li;
             if (li >= 0 && li < _tbDisplaySpan.size() && _tbDisplaySpan[li] > 1)
@@ -638,7 +642,7 @@ qint64 HexEditor::cursorPosition(QPoint pos)
         const int dataRows = static_cast<int>((bytes + _bytesPerLine - 1) / _bytesPerLine);
 
         const int bpt = tileCodecBytesPerTile(sec.tileCodec);
-        const int tileCols = graphicsAutoTileCols(sec.tileCodec);
+        const int tileCols = graphicsResolvedTileCols(sec.tileCodec, sec.tileCols);
         int padRows = 0;
         if (bpt > 0 && tileCols > 0) {
             const int totalTiles = static_cast<int>((bytes + bpt - 1) / bpt);
@@ -734,6 +738,7 @@ qint64 HexEditor::cursorPosition(QPoint pos)
 
             // Determine section or global settings
             TileCodec codec = _globalTileCodec;
+            int tileColsSetting = _globalTileCols;
             qint64 dataStart = 0;
             qint64 dataEnd   = fileSize;
             int secIdx = inheritedSecIdx;
@@ -745,6 +750,7 @@ qint64 HexEditor::cursorPosition(QPoint pos)
                     if (secIdx >= 0) {
                         const Section &sec = _sectionModel->at(secIdx);
                         codec = sec.tileCodec;
+                        tileColsSetting = sec.tileCols;
                         dataStart = sec.startOffset;
                         dataEnd   = _sectionModel->endOffsetOf(secIdx, fileSize);
                     }
@@ -760,7 +766,7 @@ qint64 HexEditor::cursorPosition(QPoint pos)
             dataStart = qMax(qint64(0), qMin(dataStart + _gfxTileShift, dataEnd - 1));
 
             const int bpt = tileCodecBytesPerTile(codec);
-            const int tileCols = graphicsAutoTileCols(codec);
+            const int tileCols = graphicsResolvedTileCols(codec, tileColsSetting);
 
             // Compute pixel size (must match paintGraphicsArea)
             const int pixW = qMax(2, (rowStridePx * 17) / 20); // width only
@@ -857,13 +863,20 @@ qint64 HexEditor::cursorPosition(QPoint pos)
             }
         }
 
+        const int rowSectionMode = _sectionModel
+            ? _sectionModel->displayModeAtOffset(_visualRowStartBytes[row])
+            : SectionDisplay_Default;
+        const bool rowForcesRaw = (rowSectionMode == SectionDisplay_Raw);
+        const bool rowUsesTableDisplay = !rowForcesRaw && _tb && !_tbDisplayChars.isEmpty();
+        const bool rowUsesTableWidthCache = !rowForcesRaw && _tb && !_tbSymbolWidthPxCache.isEmpty();
+
         // Walk slots left-to-right accumulating pixel widths until we hit the click X.
         // Multi-byte TBL/encoding entries have zero-width continuation bytes; clicks snap to the lead byte.
         int accumulated = 0;
         int byteCol = 0; // lead byte of the entry being hit
 
         bool hitSlot = false;
-        if (_tb && !_tbDisplayChars.isEmpty())
+        if (rowUsesTableDisplay)
         {
             const QFontMetrics fm(font());
             for (int col = 0; col < static_cast<int>(rowEnd - rowStart); ++col)
@@ -900,7 +913,7 @@ qint64 HexEditor::cursorPosition(QPoint pos)
             for (int col = 0; col < static_cast<int>(rowEnd - rowStart); ++col)
             {
                 const uint8_t bv = static_cast<uint8_t>(_dataShown.at(rowStart + col));
-                const int baseW = (_tb && !_tbSymbolWidthPxCache.isEmpty()) ? _tbSymbolWidthPxCache[bv] : _pxCharWidth;
+                const int baseW = rowUsesTableWidthCache ? _tbSymbolWidthPxCache[bv] : _pxCharWidth;
                 const int slotW = baseW + slotGapPx(baseW);
                 if (xPx < accumulated + slotW)
                 {
@@ -1383,6 +1396,34 @@ void HexEditor::insert(qint64 pos, const QByteArray &ba)
 void HexEditor::replace(qint64 pos, qint64 len, const QByteArray &ba)
 {
     _undoStack->overwrite(pos, len, ba);
+    refresh();
+}
+
+void HexEditor::replaceNoUndo(qint64 pos, qint64 len, const QByteArray &ba)
+{
+    if (!_chunks || pos < 0 || len <= 0 || ba.isEmpty() || pos >= _chunks->size())
+        return;
+
+    const qint64 maxWritable = qMin<qint64>(len, qMin<qint64>(ba.size(), _chunks->size() - pos));
+    if (maxWritable <= 0)
+        return;
+
+    bool changed = false;
+    for (qint64 i = 0; i < maxWritable; ++i)
+    {
+        const qint64 bytePos = pos + i;
+        const char newByte = ba.at(static_cast<int>(i));
+        if ((*_chunks)[bytePos] == newByte)
+            continue;
+        _chunks->overwrite(bytePos, newByte);
+        changed = true;
+    }
+
+    if (!changed)
+        return;
+
+    _baseModified = true;
+    dataChangedPrivate();
     refresh();
 }
 

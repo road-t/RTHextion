@@ -199,7 +199,9 @@ void InsertScriptDialog::on_bbControls_clicked(QAbstractButton *button)
 
         qDebug() << "Capture groups: " << re.captureCount();
 
-        auto offset = hexEdit->getCurrentOffset();
+        const qint64 selBegin = hexEdit->getSelectionBegin();
+        const qint64 selEnd = hexEdit->getSelectionEnd();
+        qint64 offset = (selEnd > selBegin) ? selBegin : hexEdit->getCurrentOffset();
 
     //    if (ui->cbUseTable->isChecked())
     //    {

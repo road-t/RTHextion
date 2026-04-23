@@ -10,6 +10,7 @@ using namespace MainWindowInternal;
 #include <QScrollBar>
 #include <QStatusBar>
 #include <algorithm>
+#include <QMap>
 #include "disassembler.h"
 #include "SectionListModel.h"
 #include "PointerListModel.h"
@@ -185,9 +186,14 @@ void MainWindow::splitSection(int sectionIndex, const QVector<qint64> &sizes)
         s.name = QStringLiteral("%1 (%2)").arg(orig.name).arg(partNum++);
         s.startOffset = partOff;
         s.color = orig.color;
+        s.display = orig.display;
+        s.options = orig.options;
         s.displayMode = orig.displayMode;
         s.disasmCpu = orig.disasmCpu;
         s.groupId = orig.groupId;
+        s.tileCodec = orig.tileCodec;
+        s.tileCols = orig.tileCols;
+        s.palette = orig.palette;
         allSections.append(s);
         ensureBreaks(partOff);
     }
@@ -208,7 +214,7 @@ void MainWindow::splitSection(int sectionIndex, const QVector<qint64> &sizes)
 //  Section addition
 // ═══════════════════════════════════════════════════════════════════
 
-void MainWindow::addSectionFromSelection(int /*parentIdx*/)
+void MainWindow::addSectionFromSelection(int parentIdx)
 {
     if (!hexEdit || !m_sectionModel)
         return;
@@ -219,25 +225,18 @@ void MainWindow::addSectionFromSelection(int /*parentIdx*/)
         return;
 
     const qint64 fileSize = hexEdit->dataSize();
+    const qint64 selLast = selEnd - 1;
     const int existingIdx = m_sectionModel->sectionIndexAtOffset(selBegin);
+    const int lastSectionIdx = m_sectionModel->sectionIndexAtOffset(selLast);
+    int inheritedGroupId = -1;
+    if (parentIdx >= 0 && parentIdx < m_sectionModel->groupCount())
+        inheritedGroupId = parentIdx;
+    else if (existingIdx >= 0)
+        inheritedGroupId = m_sectionModel->at(existingIdx).groupId;
 
-    // Check if selBegin lands exactly on an existing section's startOffset
-    const bool startsAtExisting = (existingIdx >= 0
-        && m_sectionModel->at(existingIdx).startOffset == selBegin);
-
-    // Find the next section after selBegin
-    const qint64 nextSectionStart = (existingIdx >= 0)
-        ? m_sectionModel->endOffsetOf(existingIdx, fileSize)
-        : fileSize;
-
-    // Find which sections are overlapped by the selection
-    // (sections whose startOffset is > selBegin and < selEnd)
-    QVector<int> overlappedIndices;
-    for (int i = 0; i < m_sectionModel->count(); ++i) {
-        const qint64 so = m_sectionModel->at(i).startOffset;
-        if (so > selBegin && so < selEnd)
-            overlappedIndices.append(i);
-    }
+    Section lastSectionTemplate;
+    if (lastSectionIdx >= 0)
+        lastSectionTemplate = m_sectionModel->at(lastSectionIdx);
 
     const int n = m_sectionModel->count() + 1;
     bool ok = false;
@@ -263,102 +262,55 @@ void MainWindow::addSectionFromSelection(int /*parentIdx*/)
             hexEdit->addLineBreak(pos);
     };
 
-    if (startsAtExisting && overlappedIndices.isEmpty() && selEnd < nextSectionStart) {
-        // Case 1: Selection starts at an existing section and ends before
-        // the next section.  Create a new section at selEnd, transfer the
-        // old section's name to it, and rename the old section to what the
-        // user just typed.
-        const Section &oldSec = m_sectionModel->at(existingIdx);
-        Section newSec;
-        newSec.name = oldSec.name;                // inherit old name
-        newSec.startOffset = selEnd;
-        newSec.color = oldSec.color;
-        newSec.displayMode = oldSec.displayMode;
-        newSec.groupId = oldSec.groupId;
-
-        // Rename old section to user's name
-        for (auto &s : allSections) {
-            if (s.startOffset == selBegin) {
-                s.name = name;
-                break;
-            }
-        }
-        allSections.append(newSec);
-
-        m_sectionModel->applySections(allSections, tr("Add section"));
-        ensureBreaks(selEnd);
-    } else if (!overlappedIndices.isEmpty()) {
-        // Case 2: Selection overlaps other sections.  Create a new section
-        // at selBegin (or rename the existing one) and move the last
-        // overlapping section's start to selEnd.
-        if (startsAtExisting) {
-            // Rename the existing section at selBegin
-            for (auto &s : allSections) {
-                if (s.startOffset == selBegin) {
-                    s.name = name;
-                    break;
-                }
-            }
-        } else {
-            // Create a new section at selBegin
-            Section newSec;
-            newSec.name = name;
-            newSec.startOffset = selBegin;
-            newSec.color = SectionListModel::randomPastelColor();
-            allSections.append(newSec);
-        }
-
-        // Move the last overlapping section's startOffset to selEnd
-        const int lastOverlapped = overlappedIndices.last();
-        const qint64 oldStart = m_sectionModel->at(lastOverlapped).startOffset;
-        for (auto &s : allSections) {
-            if (s.startOffset == oldStart) {
-                s.startOffset = selEnd;
-                break;
-            }
-        }
-
-        // Remove sections that are fully inside selection (between selBegin and
-        // the last overlapping one, exclusive — those are the ones that got
-        // swallowed by the selection).
-        for (int i = overlappedIndices.size() - 2; i >= 0; --i) {
-            const qint64 rmStart = m_sectionModel->at(overlappedIndices[i]).startOffset;
-            for (int j = allSections.size() - 1; j >= 0; --j) {
-                if (allSections[j].startOffset == rmStart) {
-                    allSections.removeAt(j);
-                    break;
-                }
-            }
-        }
-
-        m_sectionModel->applySections(allSections, tr("Add section"));
-        ensureBreaks(selBegin);
-        ensureBreaks(selEnd);
-    } else {
-        // Default: just add a new section at selBegin
-        Section s;
-        s.name = name;
-        s.startOffset = selBegin;
-        s.color = SectionListModel::randomPastelColor();
-        allSections.append(s);
-
-        // Check for duplicate
-        bool hasDup = false;
-        for (int i = 0; i < allSections.size() - 1; ++i) {
-            if (allSections[i].startOffset == selBegin) { hasDup = true; break; }
-        }
-        if (hasDup) {
-            if (stack)
-                stack->endMacro();
-            QMessageBox::information(this, tr("Add section"),
-                tr("A section already exists at offset 0x%1.")
-                    .arg(selBegin, 0, 16));
-            return;
-        }
-
-        m_sectionModel->applySections(allSections, tr("Add section"));
-        ensureBreaks(selBegin);
+    for (int i = allSections.size() - 1; i >= 0; --i) {
+        const qint64 start = allSections[i].startOffset;
+        if (start > selBegin && start < selEnd)
+            allSections.removeAt(i);
     }
+
+    auto findByStart = [&](qint64 startOffset) -> int {
+        for (int i = 0; i < allSections.size(); ++i)
+            if (allSections[i].startOffset == startOffset)
+                return i;
+        return -1;
+    };
+
+    const int beginIdx = findByStart(selBegin);
+    if (beginIdx >= 0) {
+        allSections[beginIdx].name = name;
+        if (allSections[beginIdx].groupId < 0 && inheritedGroupId >= 0)
+            allSections[beginIdx].groupId = inheritedGroupId;
+    } else {
+        Section startSec;
+        startSec.name = name;
+        startSec.startOffset = selBegin;
+        startSec.color = SectionListModel::randomPastelColor();
+        startSec.groupId = inheritedGroupId;
+        startSec.display = lastSectionTemplate.display;
+        startSec.options = lastSectionTemplate.options;
+        startSec.displayMode = lastSectionTemplate.displayMode;
+        startSec.disasmCpu = lastSectionTemplate.disasmCpu;
+        startSec.tileCodec = lastSectionTemplate.tileCodec;
+        startSec.tileCols = lastSectionTemplate.tileCols;
+        startSec.palette = lastSectionTemplate.palette;
+        allSections.append(startSec);
+    }
+
+    const int tailIdx = findByStart(selEnd);
+    if (selEnd < fileSize && tailIdx < 0) {
+        Section tailSec = lastSectionTemplate;
+        tailSec.startOffset = selEnd;
+        if (tailSec.name.isEmpty())
+            tailSec.name = tr("Section %1").arg(m_sectionModel->count() + 1);
+        if (!tailSec.color.isValid())
+            tailSec.color = SectionListModel::randomPastelColor();
+        allSections.append(tailSec);
+    }
+
+    m_sectionModel->applySections(allSections, tr("Add section"));
+    ensureBreaks(selBegin);
+    if (selEnd < fileSize)
+        ensureBreaks(selEnd);
 
     if (stack)
         stack->endMacro();
@@ -419,6 +371,7 @@ void MainWindow::removeSelectionFromSection(const QString &newSectionName)
         return;
 
     const qint64 selBegin = hexEdit->getSelectionBegin();
+    const int sourceSectionIdx = m_sectionModel->sectionIndexAtOffset(selBegin);
 
     // In the new model, "removing from section" = creating a new section at selBegin
     // which effectively splits the existing section at that point.
@@ -430,6 +383,8 @@ void MainWindow::removeSelectionFromSection(const QString &newSectionName)
         newSec.name = tr("Section %1").arg(m_sectionModel->count() + 1);
     newSec.startOffset = selBegin;
     newSec.color = SectionListModel::randomPastelColor();
+    if (sourceSectionIdx >= 0)
+        newSec.groupId = m_sectionModel->at(sourceSectionIdx).groupId;
     m_sectionModel->addSection(newSec);
 
     if (m_document)
@@ -686,6 +641,8 @@ finalize:
     }
     if (m_audioDock)
         m_audioDock->setRomType(rom);
+    if (m_graphicsDock)
+        m_graphicsDock->setRomType(rom);
 
     if (pushToUndo && m_document)
         m_document->markDirty();
@@ -1281,7 +1238,13 @@ void MainWindow::detectAudioSamples()
         sec.name = s.name;
         sec.startOffset = s.offset;
         sec.color = QColor(0x40, 0xA0, 0xFF, 0x40);
+        sec.display = QStringLiteral("snd");
         sec.displayMode = SectionDisplay_Audio;
+        QMap<QString, QString> opts;
+        opts.insert(QStringLiteral("type"), audioSubtypeMnemonicFromFormat(s.format));
+        opts.insert(QStringLiteral("sample_rate"), QString::number(qMax(0, s.sampleRate)));
+        opts.insert(QStringLiteral("speed"), QStringLiteral("1.0"));
+        sec.options = serializeSectionOptions(opts);
         newSections.append(sec);
         usedOffsets.insert(s.offset);
     }
@@ -1367,7 +1330,13 @@ void MainWindow::detectAudioSamplesInRange(qint64 rangeStart, qint64 rangeEnd)
         sec.name = s.name;
         sec.startOffset = s.offset;
         sec.color = QColor(0x40, 0xA0, 0xFF, 0x40);
+        sec.display = QStringLiteral("snd");
         sec.displayMode = SectionDisplay_Audio;
+        QMap<QString, QString> opts;
+        opts.insert(QStringLiteral("type"), audioSubtypeMnemonicFromFormat(s.format));
+        opts.insert(QStringLiteral("sample_rate"), QString::number(qMax(0, s.sampleRate)));
+        opts.insert(QStringLiteral("speed"), QStringLiteral("1.0"));
+        sec.options = serializeSectionOptions(opts);
         newSections.append(sec);
         usedOffsets.insert(s.offset);
     }
@@ -1420,49 +1389,10 @@ void MainWindow::playAudioAtCursor()
     AudioSampleFormat fmt = AudioSampleFormat::Unknown;
     if (m_audioDock)
         fmt = m_audioDock->selectedFormat();
-
-    if (fmt == AudioSampleFormat::Unknown) {
-        if (sec.name.contains(QStringLiteral("BRR"), Qt::CaseInsensitive))
-            fmt = AudioSampleFormat::SNES_BRR;
-        else if (sec.name.contains(QStringLiteral("UMK3"), Qt::CaseInsensitive)
-                 || sec.name.contains(QStringLiteral("IMA ADPCM"), Qt::CaseInsensitive)
-                 || sec.name.contains(QStringLiteral("DPCM4"), Qt::CaseInsensitive)
-                 || sec.name.contains(QStringLiteral("4-bit DPCM"), Qt::CaseInsensitive))
-            fmt = AudioSampleFormat::MD_DPCM4_6500;
-        else if (sec.name.contains(QStringLiteral("OKI"), Qt::CaseInsensitive)
-                 || sec.name.contains(QStringLiteral("Dialogic"), Qt::CaseInsensitive))
-            fmt = AudioSampleFormat::MD_ADPCM_OKI;
-        else if (sec.name.contains(QStringLiteral("DPCM"), Qt::CaseInsensitive))
-            fmt = (m_detectedRomType == RomType::MD || m_detectedRomType == RomType::X32)
-                ? AudioSampleFormat::MD_DPCM4_6500
-                : AudioSampleFormat::NES_DPCM;
-        else if (sec.name.contains(QStringLiteral("ulaw"), Qt::CaseInsensitive)
-                 || sec.name.contains(QStringLiteral("µ-law"), Qt::CaseInsensitive)
-                 || sec.name.contains(QStringLiteral("mu-law"), Qt::CaseInsensitive))
-            fmt = AudioSampleFormat::MD_ULAW;
-        else if (sec.name.contains(QStringLiteral("Signed PCM"), Qt::CaseInsensitive)
-                 || sec.name.contains(QStringLiteral("Signed 8"), Qt::CaseInsensitive))
-            fmt = AudioSampleFormat::MD_PCM8_Signed;
-        else if (sec.name.contains(QStringLiteral("DAC"), Qt::CaseInsensitive))
-            fmt = AudioSampleFormat::MD_DAC_PCM;
-        else if (sec.name.contains(QStringLiteral("GBA"), Qt::CaseInsensitive))
-            fmt = AudioSampleFormat::GBA_PCM8;
-        else {
-            switch (m_detectedRomType) {
-            case RomType::SNES: case RomType::SNES_SMC:
-            case RomType::SNES_HIROM: case RomType::SNES_HIROM_SMC:
-                fmt = AudioSampleFormat::SNES_BRR; break;
-            case RomType::NES:
-                fmt = AudioSampleFormat::NES_DPCM; break;
-            case RomType::MD: case RomType::X32:
-                fmt = AudioSampleFormat::MD_DAC_PCM; break;
-            case RomType::GBA:
-                fmt = AudioSampleFormat::GBA_PCM8; break;
-            default:
-                fmt = AudioSampleFormat::Raw_PCM8_Unsigned; break;
-            }
-        }
-    }
+    if (fmt == AudioSampleFormat::Unknown)
+        fmt = audioFormatFromSubtypeMnemonic(sectionAudioSubtypeMnemonic(sec, m_detectedRomType));
+    if (fmt == AudioSampleFormat::Unknown)
+        fmt = AudioSampleFormat::Raw_PCM8_Unsigned;
 
     if (!m_audioPlayer) {
         m_audioPlayer = new AudioPlayer(this);
@@ -1472,8 +1402,12 @@ void MainWindow::playAudioAtCursor()
     }
 
     m_audioPlayer->loadFromRaw(sampleData, fmt);
-    const int rateOverride = m_audioDock ? m_audioDock->selectedSampleRate() : 0;
-    const double speed = m_audioDock ? m_audioDock->playbackSpeed() : 1.0;
+    int rateOverride = sectionAudioSampleRate(sec, m_detectedRomType);
+    double speed = sectionAudioSpeed(sec);
+    if (m_audioDock) {
+        rateOverride = m_audioDock->selectedSampleRate();
+        speed = m_audioDock->playbackSpeed();
+    }
     m_audioPlayer->play(rateOverride, speed);
 
     statusBar()->showMessage(tr("Playing sample: %1 (%2 ms)")
@@ -1505,24 +1439,9 @@ void MainWindow::exportAudioSample()
     const qint64 secEnd = m_sectionModel->endOffsetOf(idx, fileSize);
     const QByteArray sampleData = hexEdit->dataAt(sec.startOffset, secEnd - sec.startOffset);
 
-    AudioSampleFormat fmt = AudioSampleFormat::Raw_PCM8_Unsigned;
-    if (sec.name.contains(QStringLiteral("BRR"))) fmt = AudioSampleFormat::SNES_BRR;
-    else if (sec.name.contains(QStringLiteral("UMK3"), Qt::CaseInsensitive)
-             || sec.name.contains(QStringLiteral("IMA ADPCM"), Qt::CaseInsensitive)
-             || sec.name.contains(QStringLiteral("DPCM4"), Qt::CaseInsensitive)
-             || sec.name.contains(QStringLiteral("4-bit DPCM"), Qt::CaseInsensitive)) fmt = AudioSampleFormat::MD_DPCM4_6500;
-    else if (sec.name.contains(QStringLiteral("OKI"), Qt::CaseInsensitive)
-             || sec.name.contains(QStringLiteral("Dialogic"), Qt::CaseInsensitive)) fmt = AudioSampleFormat::MD_ADPCM_OKI;
-    else if (sec.name.contains(QStringLiteral("DPCM")))
-        fmt = (m_detectedRomType == RomType::MD || m_detectedRomType == RomType::X32)
-            ? AudioSampleFormat::MD_DPCM4_6500
-            : AudioSampleFormat::NES_DPCM;
-    else if (sec.name.contains(QStringLiteral("ulaw"), Qt::CaseInsensitive)
-             || sec.name.contains(QStringLiteral("µ-law"), Qt::CaseInsensitive)) fmt = AudioSampleFormat::MD_ULAW;
-    else if (sec.name.contains(QStringLiteral("Signed PCM"), Qt::CaseInsensitive)
-             || sec.name.contains(QStringLiteral("Signed 8"), Qt::CaseInsensitive)) fmt = AudioSampleFormat::MD_PCM8_Signed;
-    else if (sec.name.contains(QStringLiteral("DAC"))) fmt = AudioSampleFormat::MD_DAC_PCM;
-    else if (sec.name.contains(QStringLiteral("GBA"))) fmt = AudioSampleFormat::GBA_PCM8;
+    AudioSampleFormat fmt = audioFormatFromSubtypeMnemonic(sectionAudioSubtypeMnemonic(sec, m_detectedRomType));
+    if (fmt == AudioSampleFormat::Unknown)
+        fmt = AudioSampleFormat::Raw_PCM8_Unsigned;
 
     int rate = 0;
     const auto pcm = AudioDetector::decodeToPCM16(sampleData, fmt, &rate);
@@ -1563,30 +1482,12 @@ void MainWindow::importAudioSample()
 
     const qint64 secEnd = m_sectionModel->endOffsetOf(idx, fileSize);
 
-    AudioSampleFormat fmt = AudioSampleFormat::Raw_PCM8_Unsigned;
-    int targetRate = 8000;
-    if (sec.name.contains(QStringLiteral("BRR"))) { fmt = AudioSampleFormat::SNES_BRR; targetRate = 32000; }
-    else if (sec.name.contains(QStringLiteral("UMK3"), Qt::CaseInsensitive)
-             || sec.name.contains(QStringLiteral("IMA ADPCM"), Qt::CaseInsensitive)
-             || sec.name.contains(QStringLiteral("DPCM4"), Qt::CaseInsensitive)
-             || sec.name.contains(QStringLiteral("4-bit DPCM"), Qt::CaseInsensitive)) { fmt = AudioSampleFormat::MD_DPCM4_6500; targetRate = 6500; }
-    else if (sec.name.contains(QStringLiteral("OKI"), Qt::CaseInsensitive)
-             || sec.name.contains(QStringLiteral("Dialogic"), Qt::CaseInsensitive)) { fmt = AudioSampleFormat::MD_ADPCM_OKI; targetRate = 7575; }
-    else if (sec.name.contains(QStringLiteral("DPCM"))) {
-        if (m_detectedRomType == RomType::MD || m_detectedRomType == RomType::X32) {
-            fmt = AudioSampleFormat::MD_DPCM4_6500;
-            targetRate = 6500;
-        } else {
-            fmt = AudioSampleFormat::NES_DPCM;
-            targetRate = 8363;
-        }
-    }
-    else if (sec.name.contains(QStringLiteral("ulaw"), Qt::CaseInsensitive)
-             || sec.name.contains(QStringLiteral("µ-law"), Qt::CaseInsensitive)) { fmt = AudioSampleFormat::MD_ULAW; targetRate = 8000; }
-    else if (sec.name.contains(QStringLiteral("Signed PCM"), Qt::CaseInsensitive)
-             || sec.name.contains(QStringLiteral("Signed 8"), Qt::CaseInsensitive)) { fmt = AudioSampleFormat::MD_PCM8_Signed; targetRate = 8000; }
-    else if (sec.name.contains(QStringLiteral("DAC"))) { fmt = AudioSampleFormat::MD_DAC_PCM; targetRate = 8000; }
-    else if (sec.name.contains(QStringLiteral("GBA"))) { fmt = AudioSampleFormat::GBA_PCM8; targetRate = 13379; }
+    AudioSampleFormat fmt = audioFormatFromSubtypeMnemonic(sectionAudioSubtypeMnemonic(sec, m_detectedRomType));
+    if (fmt == AudioSampleFormat::Unknown)
+        fmt = AudioSampleFormat::Raw_PCM8_Unsigned;
+    int targetRate = sectionAudioSampleRate(sec, m_detectedRomType);
+    if (targetRate <= 0)
+        targetRate = defaultSampleRateForAudioFormat(fmt);
 
     const QString path = QFileDialog::getOpenFileName(
         this, tr("Import Audio Sample"), QString(), tr("WAV files (*.wav);;All files (*)"));

@@ -301,6 +301,11 @@ public:
     */
     void replace(qint64 pos, qint64 len, const QByteArray &ba);
 
+    /*! Replaces up to \param len bytes with \param ba without creating undo steps.
+     *  Intended for internal maintenance edits (e.g. checksum fix on save).
+     */
+    void replaceNoUndo(qint64 pos, qint64 len, const QByteArray &ba);
+
 
     // Utility functions
     /*! Calc cursor position from graphics position
@@ -919,6 +924,7 @@ private:
     void paintGraphicsCursor(QPainter &painter, int pxOfsX, int rowStridePx,
                              int pxPosStartY);
     int  graphicsAutoTileCols(TileCodec codec) const;
+    int  graphicsResolvedTileCols(TileCodec codec, int preferredCols) const;
     static int byteInTileForPixel(TileCodec codec, int px, int py);
     static void setTilePixel(TileCodec codec, uint8_t *tile, int px, int py, int colorIndex);
     static void tilePixelRangeForByte(TileCodec codec, int byteInTile, int &py, int &px0, int &pxCount);

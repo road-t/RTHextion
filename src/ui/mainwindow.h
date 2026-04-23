@@ -170,6 +170,7 @@ private:
     void restoreSession(EditorSession *session);
     void connectEditorSignals(HexEditor *editor);
     void disconnectEditorSignals(HexEditor *editor);
+    void syncDisplayDocksForOffset(qint64 offset);
     void updateTabTitle(int index);
     void createActions();
     void createMenus();

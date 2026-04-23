@@ -8,6 +8,11 @@
 #include <QFileInfo>
 #include <QDir>
 #include <QTextStream>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QMap>
+
+#include "disassembler.h"
 
 // ---------------------------------------------------------------------------
 // Construction / destruction
@@ -259,6 +264,307 @@ static void writeTableEntries(QTextStream &out, const TranslationTable *table,
     }
 }
 
+static QString tileCodecMnemonic(TileCodec codec)
+{
+    switch (codec) {
+    case TileCodec::Linear1bpp:      return QStringLiteral("1bpp-linear");
+    case TileCodec::Linear2bpp:      return QStringLiteral("2bpp-planar");
+    case TileCodec::Interleaved2bpp: return QStringLiteral("2bpp-interleaved");
+    case TileCodec::Planar3bpp:      return QStringLiteral("3bpp-planar");
+    case TileCodec::Interleaved4bpp: return QStringLiteral("4bpp-interleaved");
+    case TileCodec::Linear4bpp:      return QStringLiteral("4bpp-linear");
+    case TileCodec::SegaMD4bpp:      return QStringLiteral("4bpp-sega-md");
+    case TileCodec::SegaSMS4bpp:     return QStringLiteral("4bpp-sega-sms");
+    case TileCodec::Linear8bpp:      return QStringLiteral("8bpp-linear");
+    }
+    return QStringLiteral("2bpp-planar");
+}
+
+static TileCodec tileCodecFromMnemonic(const QString &mnemonic)
+{
+    const QString m = mnemonic.trimmed().toLower();
+    if (m == QLatin1String("1bpp-linear")) return TileCodec::Linear1bpp;
+    if (m == QLatin1String("2bpp-planar")) return TileCodec::Linear2bpp;
+    if (m == QLatin1String("2bpp-interleaved")) return TileCodec::Interleaved2bpp;
+    if (m == QLatin1String("3bpp-planar")) return TileCodec::Planar3bpp;
+    if (m == QLatin1String("4bpp-interleaved")) return TileCodec::Interleaved4bpp;
+    if (m == QLatin1String("4bpp-linear")) return TileCodec::Linear4bpp;
+    if (m == QLatin1String("4bpp-sega-md")) return TileCodec::SegaMD4bpp;
+    if (m == QLatin1String("4bpp-sega-sms")) return TileCodec::SegaSMS4bpp;
+    if (m == QLatin1String("8bpp-linear")) return TileCodec::Linear8bpp;
+    return TileCodec::Linear2bpp;
+}
+
+static QString sectionDisplayFromLegacy(const Section &s)
+{
+    if (s.displayMode == SectionDisplay_Default)
+        return QStringLiteral("auto");
+    if (s.displayMode == SectionDisplay_Raw)
+        return QStringLiteral("raw");
+    if (s.displayMode == SectionDisplay_Graphics)
+        return QStringLiteral("gfx");
+    if (s.displayMode == SectionDisplay_Audio)
+        return QStringLiteral("snd");
+    if (s.displayMode == SectionDisplay_Disasm)
+        return QStringLiteral("asm");
+    if (s.displayMode > 0)
+        return QStringLiteral("txt");
+    return QStringLiteral("auto");
+}
+
+static QString asmCpuMnemonic(RomType cpu)
+{
+    const RomType canon = disasmCanonicalRom(cpu);
+    const auto cpus = disasmSupportedCpus();
+    for (const auto &entry : cpus) {
+        if (disasmCanonicalRom(entry.representativeRom) == canon)
+            return QString::fromLatin1(entry.cpuName);
+    }
+
+    const char *name = disasmCpuName(cpu);
+    return name ? QString::fromLatin1(name) : QString();
+}
+
+static RomType romTypeFromAsmMnemonic(const QString &cpuMnemonic)
+{
+    const QString m = cpuMnemonic.trimmed().toLower();
+    const auto cpus = disasmSupportedCpus();
+    for (const auto &entry : cpus) {
+        if (QString::fromLatin1(entry.cpuName).trimmed().toLower() == m)
+            return entry.representativeRom;
+    }
+    return RomType::Unknown;
+}
+
+static QString audioSubtypeMnemonic(const Section &s, RomType docRomType)
+{
+    const QString n = s.name.toLower();
+    if (n.contains(QStringLiteral("brr")))
+        return QStringLiteral("snes-brr");
+    if (n.contains(QStringLiteral("umk3"))
+        || n.contains(QStringLiteral("ima adpcm"))
+        || n.contains(QStringLiteral("dpcm4"))
+        || n.contains(QStringLiteral("4-bit dpcm")))
+        return QStringLiteral("md-dpcm4-6500");
+    if (n.contains(QStringLiteral("oki")) || n.contains(QStringLiteral("dialogic")))
+        return QStringLiteral("md-adpcm-oki");
+    if (n.contains(QStringLiteral("dpcm"))) {
+        if (docRomType == RomType::MD || docRomType == RomType::X32)
+            return QStringLiteral("md-dpcm4-6500");
+        return QStringLiteral("nes-dpcm");
+    }
+    if (n.contains(QStringLiteral("ulaw")) || n.contains(QStringLiteral("µ-law")) || n.contains(QStringLiteral("mu-law")))
+        return QStringLiteral("md-ulaw");
+    if (n.contains(QStringLiteral("signed pcm")) || n.contains(QStringLiteral("signed 8")))
+        return QStringLiteral("md-pcm8-signed");
+    if (n.contains(QStringLiteral("dac")))
+        return QStringLiteral("md-dac-pcm");
+    if (n.contains(QStringLiteral("gba")))
+        return QStringLiteral("gba-pcm8");
+
+    switch (docRomType) {
+    case RomType::SNES:
+    case RomType::SNES_SMC:
+    case RomType::SNES_HIROM:
+    case RomType::SNES_HIROM_SMC:
+        return QStringLiteral("snes-brr");
+    case RomType::NES:
+        return QStringLiteral("nes-dpcm");
+    case RomType::MD:
+    case RomType::X32:
+        return QStringLiteral("md-dac-pcm");
+    case RomType::GBA:
+        return QStringLiteral("gba-pcm8");
+    default:
+        return QStringLiteral("raw-pcm8-unsigned");
+    }
+}
+
+static QMap<QString, QString> parseSectionOptions(const QString &raw)
+{
+    QMap<QString, QString> out;
+    const QString trimmed = raw.trimmed();
+    if (trimmed.isEmpty())
+        return out;
+
+    // Backward compatibility for old projects with JSON stored in options.
+    if (trimmed.startsWith(QLatin1Char('{'))) {
+        const QJsonDocument doc = QJsonDocument::fromJson(trimmed.toUtf8());
+        if (doc.isObject()) {
+            const QJsonObject obj = doc.object();
+            for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
+                const QString key = it.key().trimmed().toLower();
+                if (key.isEmpty())
+                    continue;
+                const QJsonValue v = it.value();
+                QString value;
+                if (v.isString())
+                    value = v.toString().trimmed();
+                else if (v.isDouble())
+                    value = QString::number(v.toDouble(), 'g', 15);
+                else if (v.isBool())
+                    value = v.toBool() ? QStringLiteral("true") : QStringLiteral("false");
+                if (!value.isEmpty())
+                    out.insert(key, value);
+            }
+            return out;
+        }
+    }
+
+    const QStringList pairs = trimmed.split(QLatin1Char(';'), Qt::SkipEmptyParts);
+    for (const QString &pairRaw : pairs) {
+        const QString pair = pairRaw.trimmed();
+        if (pair.isEmpty())
+            continue;
+        const int eq = pair.indexOf(QLatin1Char('='));
+        if (eq <= 0)
+            continue;
+        const QString key = pair.left(eq).trimmed().toLower();
+        const QString value = pair.mid(eq + 1).trimmed();
+        if (!key.isEmpty() && !value.isEmpty())
+            out.insert(key, value);
+    }
+    return out;
+}
+
+static QString serializeSectionOptions(const QMap<QString, QString> &opts)
+{
+    QStringList parts;
+    for (auto it = opts.constBegin(); it != opts.constEnd(); ++it) {
+        const QString key = it.key().trimmed().toLower();
+        const QString value = it.value().trimmed();
+        if (key.isEmpty() || value.isEmpty())
+            continue;
+        parts.append(key + QStringLiteral("=") + value);
+    }
+    return parts.join(QLatin1Char(';'));
+}
+
+static void upsertSectionOption(QString &options, const QString &key, const QString &value)
+{
+    QMap<QString, QString> map = parseSectionOptions(options);
+    const QString k = key.trimmed().toLower();
+    const QString v = value.trimmed();
+    if (k.isEmpty())
+        return;
+    if (v.isEmpty())
+        map.remove(k);
+    else
+        map.insert(k, v);
+    options = serializeSectionOptions(map);
+}
+
+static QString sectionOptionsFromLegacy(const Section &s,
+                                        const QVector<DocTableEntry> &tablesVec,
+                                        RomType docRomType)
+{
+    QMap<QString, QString> opts;
+
+    if (s.displayMode > 0) {
+        opts.insert(QStringLiteral("table_index"), QString::number(s.displayMode));
+        const int ti = s.displayMode - 1;
+        if (ti >= 0 && ti < tablesVec.size())
+            opts.insert(QStringLiteral("table"), tablesVec[ti].name);
+    } else if (s.displayMode == SectionDisplay_Graphics) {
+        opts.insert(QStringLiteral("codec"), tileCodecMnemonic(s.tileCodec));
+        opts.insert(QStringLiteral("shift"), QStringLiteral("0"));
+        opts.insert(QStringLiteral("tile_cols"), QString::number(s.tileCols));
+    } else if (s.displayMode == SectionDisplay_Audio) {
+        opts.insert(QStringLiteral("type"), audioSubtypeMnemonic(s, docRomType));
+        opts.insert(QStringLiteral("sample_rate"), QStringLiteral("0"));
+        opts.insert(QStringLiteral("speed"), QStringLiteral("1.0"));
+    } else if (s.displayMode == SectionDisplay_Disasm) {
+        const QString cpu = asmCpuMnemonic(s.disasmCpu);
+        if (!cpu.isEmpty())
+            opts.insert(QStringLiteral("cpu"), cpu);
+    }
+
+    if (opts.isEmpty())
+        return QString();
+    return serializeSectionOptions(opts);
+}
+
+static void applyDisplaySchemaToLegacy(Section &s,
+                                       const QVector<DocTableEntry> &tablesVec)
+{
+    QString display = s.display.trimmed().toLower();
+    if (display.isEmpty())
+        display = sectionDisplayFromLegacy(s);
+
+    const QMap<QString, QString> opts = parseSectionOptions(s.options);
+
+    if (display == QLatin1String("auto")) {
+        s.displayMode = SectionDisplay_Default;
+        return;
+    }
+    if (display == QLatin1String("raw")) {
+        s.displayMode = SectionDisplay_Raw;
+        return;
+    }
+    if (display == QLatin1String("txt")) {
+        int mode = 0;
+        if (opts.contains(QStringLiteral("table_index"))) {
+            bool ok = false;
+            const int parsed = opts.value(QStringLiteral("table_index")).toInt(&ok);
+            if (ok)
+                mode = parsed;
+        }
+
+        if (mode <= 0 && opts.contains(QStringLiteral("table"))) {
+            const QString tableName = opts.value(QStringLiteral("table"));
+            for (int i = 0; i < tablesVec.size(); ++i) {
+                if (tablesVec[i].name == tableName) {
+                    mode = i + 1;
+                    break;
+                }
+            }
+        }
+
+        if (mode > 0)
+            s.displayMode = mode;
+        else if (s.displayMode <= 0)
+            s.displayMode = SectionDisplay_Raw;
+        return;
+    }
+    if (display == QLatin1String("gfx")) {
+        s.displayMode = SectionDisplay_Graphics;
+        if (opts.contains(QStringLiteral("codec")))
+            s.tileCodec = tileCodecFromMnemonic(opts.value(QStringLiteral("codec")));
+        if (opts.contains(QStringLiteral("tile_cols"))) {
+            bool ok = false;
+            const int cols = opts.value(QStringLiteral("tile_cols")).toInt(&ok);
+            if (ok && cols > 0)
+                s.tileCols = cols;
+        }
+        if (s.palette.isEmpty() && opts.contains(QStringLiteral("palette"))) {
+            const QStringList colors = opts.value(QStringLiteral("palette")).split(QLatin1Char(' '), Qt::SkipEmptyParts);
+            for (const QString &c : colors) {
+                bool ok = false;
+                const uint v = c.toUInt(&ok, 16);
+                if (ok)
+                    s.palette.append(qRgb((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF));
+            }
+        }
+        return;
+    }
+    if (display == QLatin1String("snd")) {
+        s.displayMode = SectionDisplay_Audio;
+        return;
+    }
+    if (display == QLatin1String("asm")) {
+        s.displayMode = SectionDisplay_Disasm;
+        if (opts.contains(QStringLiteral("cpu"))) {
+            const RomType rt = romTypeFromAsmMnemonic(opts.value(QStringLiteral("cpu")));
+            if (rt != RomType::Unknown)
+                s.disasmCpu = rt;
+        }
+        return;
+    }
+
+    // Unknown mnemonic: fallback to legacy mode.
+    s.display = sectionDisplayFromLegacy(s);
+}
+
 bool HexDocument::saveProject(const QString &path,
                                const QVector<DocTableEntry> &tablesVec,
                                int activeIdx)
@@ -271,17 +577,24 @@ bool HexDocument::saveProject(const QString &path,
 
     QTextStream out(&f);
     out << "# RTHextion project file\n";
-    out << "version: 3\n\n";
+    out << "version: 4\n\n";
 
     // Project name
     if (!projectName.isEmpty())
         out << "title: " << yamlEscape(projectName) << "\n";
 
-    // File path
+    // Export/current file path
     if (!filePath.isEmpty())
     {
         const QString rel = projectDir.relativeFilePath(filePath);
         out << "file: " << yamlEscape(rel) << "\n";
+    }
+
+    // Original source file path
+    if (!sourceFilePath.isEmpty())
+    {
+        const QString rel = projectDir.relativeFilePath(sourceFilePath);
+        out << "source: " << yamlEscape(rel) << "\n";
     }
 
     // Multi-table section
@@ -394,22 +707,95 @@ bool HexDocument::saveProject(const QString &path,
         out << "\nsections:\n";
         for (const auto &s : sectionSnapshot)
         {
+            QString display = s.display.trimmed().toLower();
+            if (display.isEmpty() || (display == QLatin1String("auto") && s.displayMode != SectionDisplay_Default))
+                display = sectionDisplayFromLegacy(s);
+
+            QString options = s.options.trimmed();
+            if (options.isEmpty())
+                options = sectionOptionsFromLegacy(s, tablesVec, m_romType);
+            const QMap<QString, QString> opts = parseSectionOptions(options);
+
             out << "  - name: " << yamlEscape(s.name) << "\n";
             out << "    start: 0x" << QString::number(s.startOffset, 16).toUpper() << "\n";
             out << "    color: " << s.color.name(QColor::HexArgb) << "\n";
-            out << "    display: " << s.displayMode << "\n";
-            if (s.displayMode == SectionDisplay_Disasm && s.disasmCpu != RomType::Unknown)
-                out << "    disasm_cpu: " << static_cast<int>(s.disasmCpu) << "\n";
-            if (s.displayMode == SectionDisplay_Graphics) {
-                out << "    tile_codec: " << static_cast<int>(s.tileCodec) << "\n";
-                out << "    tile_cols: " << s.tileCols << "\n";
-                if (!s.palette.isEmpty()) {
-                    out << "    palette:";
-                    for (const QRgb c : s.palette)
-                        out << " " << QString::number(c & 0xFFFFFF, 16).rightJustified(6, QLatin1Char('0'));
-                    out << "\n";
+            out << "    display: " << display << "\n";
+
+            if (display == QLatin1String("txt")) {
+                int tableIndex = (s.displayMode > 0) ? s.displayMode : 0;
+                if (tableIndex <= 0) {
+                    bool ok = false;
+                    const int parsed = opts.value(QStringLiteral("table_index")).toInt(&ok);
+                    if (ok && parsed > 0)
+                        tableIndex = parsed;
                 }
+                if (tableIndex > 0)
+                    out << "    table_index: " << tableIndex << "\n";
+
+                QString tableName;
+                const int ti = tableIndex - 1;
+                if (ti >= 0 && ti < tablesVec.size())
+                    tableName = tablesVec[ti].name;
+                if (tableName.isEmpty())
+                    tableName = opts.value(QStringLiteral("table"));
+                if (!tableName.isEmpty())
+                    out << "    table: " << yamlEscape(tableName) << "\n";
+            } else if (display == QLatin1String("gfx")) {
+                const QString codec = opts.value(QStringLiteral("codec"));
+                out << "    gfx_codec: " << (codec.isEmpty() ? tileCodecMnemonic(s.tileCodec) : codec) << "\n";
+
+                int tileCols = s.tileCols;
+                if (tileCols <= 0) {
+                    bool ok = false;
+                    const int parsed = opts.value(QStringLiteral("tile_cols")).toInt(&ok);
+                    if (ok && parsed > 0)
+                        tileCols = parsed;
+                }
+                if (tileCols > 0)
+                    out << "    gfx_tile_cols: " << tileCols << "\n";
+
+                QVector<QRgb> palette = s.palette;
+                if (palette.isEmpty()) {
+                    const QStringList palItems = opts.value(QStringLiteral("palette")).split(QLatin1Char(' '), Qt::SkipEmptyParts);
+                    for (const QString &item : palItems) {
+                        bool ok = false;
+                        const uint rgb = item.toUInt(&ok, 16);
+                        if (ok)
+                            palette.append(qRgb((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF));
+                    }
+                }
+                if (!palette.isEmpty()) {
+                    QStringList colors;
+                    colors.reserve(palette.size());
+                    for (QRgb c : palette)
+                        colors.append(QString::number(c & 0x00FFFFFFu, 16).toUpper().rightJustified(6, QLatin1Char('0')));
+                    out << "    gfx_palette: " << colors.join(QLatin1Char(' ')) << "\n";
+                }
+            } else if (display == QLatin1String("snd")) {
+                QString type = opts.value(QStringLiteral("type")).trimmed().toLower();
+                if (type.isEmpty())
+                    type = audioSubtypeMnemonic(s, m_romType);
+                out << "    audio_type: " << type << "\n";
+
+                bool rateOk = false;
+                int sampleRate = opts.value(QStringLiteral("sample_rate")).toInt(&rateOk);
+                if (!rateOk || sampleRate < 0)
+                    sampleRate = 0;
+                out << "    audio_sample_rate: " << sampleRate << "\n";
+
+                bool speedOk = false;
+                double speed = opts.value(QStringLiteral("speed")).toDouble(&speedOk);
+                if (!speedOk || speed <= 0.0)
+                    speed = 1.0;
+                out << "    audio_speed: " << QString::number(speed, 'f', 3) << "\n";
+            } else if (display == QLatin1String("asm")) {
+                QString cpu = asmCpuMnemonic(s.disasmCpu);
+                if (cpu.isEmpty())
+                    cpu = opts.value(QStringLiteral("cpu"));
+                if (!cpu.isEmpty())
+                    out << "    asm_cpu: " << yamlEscape(cpu) << "\n";
             }
+
             if (s.groupId >= 0)
                 out << "    group: " << s.groupId << "\n";
         }
@@ -436,6 +822,7 @@ bool HexDocument::loadProject(const QString &path)
 
     // Reset state
     filePath.clear();
+    sourceFilePath.clear();
     tableFilePath.clear();
     projectName.clear();
     delete translationTable;
@@ -874,9 +1261,83 @@ bool HexDocument::loadProject(const QString &path)
                 }
                 if (stripped.startsWith(QLatin1String("display:")))
                 {
+                    const QString dv = yamlUnescape(stripped.mid(8).trimmed());
                     bool ok = false;
-                    const int dm = stripped.mid(8).trimmed().toInt(&ok);
-                    if (ok) cur.displayMode = dm;
+                    const int dm = dv.toInt(&ok);
+                    if (ok)
+                        cur.displayMode = dm; // legacy projects
+                    else
+                        cur.display = dv.trimmed().toLower();
+                    continue;
+                }
+                if (stripped.startsWith(QLatin1String("options:")))
+                {
+                    cur.options = yamlUnescape(stripped.mid(8).trimmed());
+                    continue;
+                }
+                if (stripped.startsWith(QLatin1String("table_index:")))
+                {
+                    upsertSectionOption(cur.options, QStringLiteral("table_index"), stripped.mid(12).trimmed());
+                    continue;
+                }
+                if (stripped.startsWith(QLatin1String("table:")))
+                {
+                    upsertSectionOption(cur.options, QStringLiteral("table"), yamlUnescape(stripped.mid(6).trimmed()));
+                    continue;
+                }
+                if (stripped.startsWith(QLatin1String("audio_type:")))
+                {
+                    upsertSectionOption(cur.options, QStringLiteral("type"), yamlUnescape(stripped.mid(11).trimmed()).toLower());
+                    continue;
+                }
+                if (stripped.startsWith(QLatin1String("audio_sample_rate:")))
+                {
+                    upsertSectionOption(cur.options, QStringLiteral("sample_rate"), stripped.mid(18).trimmed());
+                    continue;
+                }
+                if (stripped.startsWith(QLatin1String("audio_speed:")))
+                {
+                    upsertSectionOption(cur.options, QStringLiteral("speed"), stripped.mid(12).trimmed());
+                    continue;
+                }
+                if (stripped.startsWith(QLatin1String("asm_cpu:")))
+                {
+                    const QString cpu = yamlUnescape(stripped.mid(8).trimmed());
+                    upsertSectionOption(cur.options, QStringLiteral("cpu"), cpu);
+                    const RomType rt = romTypeFromAsmMnemonic(cpu);
+                    if (rt != RomType::Unknown)
+                        cur.disasmCpu = rt;
+                    continue;
+                }
+                if (stripped.startsWith(QLatin1String("gfx_codec:")))
+                {
+                    const QString codec = yamlUnescape(stripped.mid(10).trimmed());
+                    upsertSectionOption(cur.options, QStringLiteral("codec"), codec);
+                    cur.tileCodec = tileCodecFromMnemonic(codec);
+                    continue;
+                }
+                if (stripped.startsWith(QLatin1String("gfx_tile_cols:")))
+                {
+                    const QString v = stripped.mid(14).trimmed();
+                    upsertSectionOption(cur.options, QStringLiteral("tile_cols"), v);
+                    bool ok = false;
+                    const int cols = v.toInt(&ok);
+                    if (ok && cols > 0)
+                        cur.tileCols = cols;
+                    continue;
+                }
+                if (stripped.startsWith(QLatin1String("gfx_palette:")))
+                {
+                    const QString payload = stripped.mid(12).trimmed();
+                    cur.palette.clear();
+                    const QStringList colors = payload.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+                    for (const QString &c : colors) {
+                        bool ok = false;
+                        const uint v = c.toUInt(&ok, 16);
+                        if (ok)
+                            cur.palette.append(qRgb((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF));
+                    }
+                    upsertSectionOption(cur.options, QStringLiteral("palette"), payload);
                     continue;
                 }
                 if (stripped.startsWith(QLatin1String("disasm_cpu:")))
@@ -917,6 +1378,16 @@ bool HexDocument::loadProject(const QString &path)
                 && !stripped.startsWith(QLatin1String("end")) && !stripped.startsWith(QLatin1String("color"))
                 && !stripped.startsWith(QLatin1String("parent")) && !stripped.startsWith(QLatin1String("group"))
                 && !stripped.startsWith(QLatin1String("display"))
+                && !stripped.startsWith(QLatin1String("options"))
+                && !stripped.startsWith(QLatin1String("table_index"))
+                && !stripped.startsWith(QLatin1String("table"))
+                && !stripped.startsWith(QLatin1String("audio_type"))
+                && !stripped.startsWith(QLatin1String("audio_sample_rate"))
+                && !stripped.startsWith(QLatin1String("audio_speed"))
+                && !stripped.startsWith(QLatin1String("asm_cpu"))
+                && !stripped.startsWith(QLatin1String("gfx_codec"))
+                && !stripped.startsWith(QLatin1String("gfx_tile_cols"))
+                && !stripped.startsWith(QLatin1String("gfx_palette"))
                 && !stripped.startsWith(QLatin1String("disasm_cpu"))
                 && !stripped.startsWith(QLatin1String("tile_codec"))
                 && !stripped.startsWith(QLatin1String("tile_cols"))
@@ -993,6 +1464,15 @@ bool HexDocument::loadProject(const QString &path)
 
             if (filePath.isEmpty())
                 filePath = projectDir.filePath(rel);
+        }
+        else if (key == QLatin1String("source"))
+        {
+            const QString rel = yamlUnescape(val);
+
+            sourceFilePath = QFileInfo(projectDir.filePath(rel)).canonicalFilePath();
+
+            if (sourceFilePath.isEmpty())
+                sourceFilePath = projectDir.filePath(rel);
         }
         else if (key == QLatin1String("table"))
         {
@@ -1117,6 +1597,10 @@ bool HexDocument::loadProject(const QString &path)
     if (!pointerOffsetExplicit)
         m_pointerOffset = defaultPointerOffset(m_romType);
 
+    // Backward compatibility with v3 projects where "file" was the original baseline.
+    if (sourceFilePath.isEmpty() && !filePath.isEmpty())
+        sourceFilePath = filePath;
+
     // Build fallback decode entries for embedded table (legacy)
     if (hasEmbeddedTable && translationTable)
         translationTable->buildFallbackDecodeEntries();
@@ -1131,6 +1615,10 @@ bool HexDocument::loadProject(const QString &path)
     // Fix legacy audio/graphics section colors: old projects may have saved without
     // proper alpha channel.  Restore semi-transparent color.
     for (auto &s : sectionSnapshot) {
+        applyDisplaySchemaToLegacy(s, tables);
+        if (s.display.isEmpty())
+            s.display = sectionDisplayFromLegacy(s);
+
         if (s.displayMode == SectionDisplay_Audio && s.color.alpha() > 200)
             s.color.setAlpha(0x40);
         if (s.displayMode == SectionDisplay_Graphics && s.color.alpha() > 200)

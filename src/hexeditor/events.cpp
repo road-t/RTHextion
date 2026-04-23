@@ -1,5 +1,9 @@
 #include "internal.h"
 #include "encoding.h"
+#include "audiodetector.h"
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QMap>
 #include <QRegularExpression>
 
 namespace {
@@ -13,6 +17,160 @@ struct DisasmOperandRender {
     QString text;
     QVector<DisasmOperandLink> links;
 };
+
+static QMap<QString, QString> parseSectionOptions(const QString &raw)
+{
+    QMap<QString, QString> out;
+    const QString trimmed = raw.trimmed();
+    if (trimmed.isEmpty())
+        return out;
+
+    if (trimmed.startsWith(QLatin1Char('{'))) {
+        const QJsonDocument doc = QJsonDocument::fromJson(trimmed.toUtf8());
+        if (doc.isObject()) {
+            const QJsonObject obj = doc.object();
+            for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
+                const QString key = it.key().trimmed().toLower();
+                if (key.isEmpty())
+                    continue;
+                const QJsonValue v = it.value();
+                QString value;
+                if (v.isString())
+                    value = v.toString().trimmed();
+                else if (v.isDouble())
+                    value = QString::number(v.toDouble(), 'g', 15);
+                else if (v.isBool())
+                    value = v.toBool() ? QStringLiteral("true") : QStringLiteral("false");
+                if (!value.isEmpty())
+                    out.insert(key, value);
+            }
+            return out;
+        }
+    }
+
+    const QStringList parts = trimmed.split(QLatin1Char(';'), Qt::SkipEmptyParts);
+    for (const QString &partRaw : parts) {
+        const QString part = partRaw.trimmed();
+        if (part.isEmpty())
+            continue;
+        const int eq = part.indexOf(QLatin1Char('='));
+        if (eq <= 0)
+            continue;
+        const QString key = part.left(eq).trimmed().toLower();
+        const QString value = part.mid(eq + 1).trimmed();
+        if (!key.isEmpty() && !value.isEmpty())
+            out.insert(key, value);
+    }
+    return out;
+}
+
+static AudioSampleFormat audioFormatFromSubtypeMnemonic(const QString &mnemonic)
+{
+    const QString m = mnemonic.trimmed().toLower();
+    if (m == QLatin1String("snes-brr")) return AudioSampleFormat::SNES_BRR;
+    if (m == QLatin1String("nes-dpcm")) return AudioSampleFormat::NES_DPCM;
+    if (m == QLatin1String("md-dac-pcm")) return AudioSampleFormat::MD_DAC_PCM;
+    if (m == QLatin1String("md-pcm8-signed")) return AudioSampleFormat::MD_PCM8_Signed;
+    if (m == QLatin1String("md-ulaw")) return AudioSampleFormat::MD_ULAW;
+    if (m == QLatin1String("md-dpcm4-6500")) return AudioSampleFormat::MD_DPCM4_6500;
+    if (m == QLatin1String("md-adpcm-oki")) return AudioSampleFormat::MD_ADPCM_OKI;
+    if (m == QLatin1String("gba-pcm8")) return AudioSampleFormat::GBA_PCM8;
+    if (m == QLatin1String("gb-wave4bit")) return AudioSampleFormat::GB_Wave4bit;
+    if (m == QLatin1String("raw-pcm8-signed")) return AudioSampleFormat::Raw_PCM8_Signed;
+    if (m == QLatin1String("raw-pcm8-unsigned")) return AudioSampleFormat::Raw_PCM8_Unsigned;
+    return AudioSampleFormat::Unknown;
+}
+
+static QString audioSubtypeGuessFromSectionName(const QString &name)
+{
+    const QString n = name.toLower();
+    if (n.contains(QStringLiteral("brr"))) return QStringLiteral("snes-brr");
+    if (n.contains(QStringLiteral("umk3"))
+        || n.contains(QStringLiteral("ima adpcm"))
+        || n.contains(QStringLiteral("dpcm4"))
+        || n.contains(QStringLiteral("4-bit dpcm")))
+        return QStringLiteral("md-dpcm4-6500");
+    if (n.contains(QStringLiteral("oki")) || n.contains(QStringLiteral("dialogic")))
+        return QStringLiteral("md-adpcm-oki");
+    if (n.contains(QStringLiteral("dpcm"))) return QStringLiteral("nes-dpcm");
+    if (n.contains(QStringLiteral("ulaw")) || n.contains(QStringLiteral("µ-law")) || n.contains(QStringLiteral("mu-law")))
+        return QStringLiteral("md-ulaw");
+    if (n.contains(QStringLiteral("signed pcm")) || n.contains(QStringLiteral("signed 8")))
+        return QStringLiteral("md-pcm8-signed");
+    if (n.contains(QStringLiteral("dac"))) return QStringLiteral("md-dac-pcm");
+    if (n.contains(QStringLiteral("gba"))) return QStringLiteral("gba-pcm8");
+    return QStringLiteral("raw-pcm8-unsigned");
+}
+
+static AudioSampleFormat audioFormatForSection(const Section &sec)
+{
+    const QMap<QString, QString> opts = parseSectionOptions(sec.options);
+    const QString type = opts.value(QStringLiteral("type")).trimmed().toLower();
+    if (!type.isEmpty()) {
+        const AudioSampleFormat fmt = audioFormatFromSubtypeMnemonic(type);
+        if (fmt != AudioSampleFormat::Unknown)
+            return fmt;
+    }
+    return audioFormatFromSubtypeMnemonic(audioSubtypeGuessFromSectionName(sec.name));
+}
+
+static int waveformAmplitudeForByte(uint8_t byteVal,
+                                    AudioSampleFormat fmt,
+                                    qint64 sectionRelativeOffset)
+{
+    switch (fmt) {
+    case AudioSampleFormat::MD_PCM8_Signed:
+    case AudioSampleFormat::GBA_PCM8:
+    case AudioSampleFormat::Raw_PCM8_Signed:
+        return qBound(0, static_cast<int>(static_cast<int8_t>(byteVal)) + 128, 255);
+
+    case AudioSampleFormat::GB_Wave4bit: {
+        const bool useLowNibble = (sectionRelativeOffset & 1) != 0;
+        const int nibble = useLowNibble ? (byteVal & 0x0F) : ((byteVal >> 4) & 0x0F);
+        return nibble * 17;
+    }
+
+    case AudioSampleFormat::NES_DPCM: {
+        int ones = 0;
+        for (int b = 0; b < 8; ++b)
+            ones += (byteVal >> b) & 1;
+        return qBound(0, ones * 32, 255);
+    }
+
+    case AudioSampleFormat::MD_DPCM4_6500:
+    case AudioSampleFormat::MD_ADPCM_OKI: {
+        const int hi = (byteVal >> 4) & 0x0F;
+        const int lo = byteVal & 0x0F;
+        const int centered = (hi + lo) - 15;
+        return qBound(0, 128 + centered * 8, 255);
+    }
+
+    case AudioSampleFormat::MD_ULAW: {
+        const uint8_t mu = static_cast<uint8_t>(~byteVal);
+        int t = ((mu & 0x0F) << 3) + 0x84;
+        t <<= ((mu & 0x70) >> 4);
+        const int sample = (mu & 0x80) ? (0x84 - t) : (t - 0x84);
+        return qBound(0, (sample + 32768) >> 8, 255);
+    }
+
+    case AudioSampleFormat::SNES_BRR: {
+        const int blockPos = static_cast<int>(sectionRelativeOffset % 9);
+        if (blockPos == 0)
+            return 128;
+        const int hi = (byteVal >> 4) & 0x0F;
+        const int lo = byteVal & 0x0F;
+        const int sHi = (hi >= 8) ? (hi - 16) : hi;
+        const int sLo = (lo >= 8) ? (lo - 16) : lo;
+        return qBound(0, 128 + ((sHi + sLo) * 8), 255);
+    }
+
+    case AudioSampleFormat::Unknown:
+    case AudioSampleFormat::MD_DAC_PCM:
+    case AudioSampleFormat::Raw_PCM8_Unsigned:
+    default:
+        return static_cast<int>(byteVal);
+    }
+}
 
 static DisasmOperandRender disasmRenderOperandsWithNames(
     const QString &operands,
@@ -102,12 +260,37 @@ void HexEditor::keyPressEvent(QKeyEvent *event)
         return;
     }
 
-    // Virtual line break: Enter adds a break before the current byte
-    if (event->key() == Qt::Key_Return && event->modifiers() == Qt::NoModifier) {
-        const qint64 brk = _cursorPosition / 2;
-        if (brk > 0)
-            addLineBreak(brk - 1);
+    // Virtual line break: Enter adds a break so the new row starts at cursor.
+    // In disasm mode, split by full instruction rows only.
+    const int cursorSectionMode = _sectionModel
+        ? _sectionModel->displayModeAtOffset(_bPosCurrent)
+        : SectionDisplay_Default;
+
+    const bool cursorUsesDisasm = (cursorSectionMode == SectionDisplay_Disasm)
+        || (cursorSectionMode == SectionDisplay_Default && _showDisasm);
+
+    const bool cursorSupportsVirtualBreak = true
+        && !isAudioAt(_bPosCurrent)
+        && !isGraphicsAt(_bPosCurrent);
+
+    if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) && !(event->modifiers() & ~(Qt::KeypadModifier)) && cursorSupportsVirtualBreak)
+    {
+        qint64 brk = _bPosCurrent - 1;
+
+        // In disasm mode, split by whole instruction rows only.
+        if (cursorUsesDisasm)
+        {
+            const DisasmInstruction *instr = disasmInstructionAtOffset(_bPosCurrent);
+
+            if (instr && instr->size > 0)
+            brk = instr->fileOffset - 1;
+        }
+
+        if (_chunks && brk >= 0 && brk < _chunks->size())
+            addLineBreak(brk);
+
         event->accept();
+
         return;
     }
 
@@ -118,9 +301,14 @@ void HexEditor::keyPressEvent(QKeyEvent *event)
     {
         const QVector<qint64> currentBreaks = lineBreaks();
         if (!currentBreaks.isEmpty()) {
-            const qint64 brkOffset = (event->key() == Qt::Key_Delete)
-                                     ? _bPosCurrent       // Delete: break after cursor byte
-                                     : _bPosCurrent - 1;  // Backspace: break before cursor byte
+            qint64 brkOffset = (event->key() == Qt::Key_Delete)
+                               ? _bPosCurrent       // Delete: break after cursor byte
+                               : _bPosCurrent - 1;  // Backspace: break before cursor byte
+            if (cursorUsesDisasm) {
+                const DisasmInstruction *instr = disasmInstructionAtOffset(_bPosCurrent);
+                if (instr && instr->size > 0)
+                    brkOffset = instr->fileOffset - 1;
+            }
             if (brkOffset >= 0) {
                 auto it = std::lower_bound(currentBreaks.constBegin(), currentBreaks.constEnd(), brkOffset);
                 if (it != currentBreaks.constEnd() && *it == brkOffset) {
@@ -469,28 +657,20 @@ void HexEditor::keyPressEvent(QKeyEvent *event)
                 if (event->matches(QKeySequence::Delete))
                 {
                     if (!editBlockedByDisasm()) {
-                    if (getSelectionEnd() - getSelectionBegin() > 1)
+                    if (!_overwriteMode)
                     {
-                        _bPosCurrent = getSelectionBegin();
-                        if (_overwriteMode)
+                        if (getSelectionEnd() - getSelectionBegin() > 1)
                         {
-                            QByteArray ba = QByteArray(getSelectionEnd() - getSelectionBegin(), char(0));
-                            replace(_bPosCurrent, ba.size(), ba);
-                        }
-                        else
-                        {
+                            _bPosCurrent = getSelectionBegin();
                             remove(_bPosCurrent, getSelectionEnd() - getSelectionBegin());
                         }
-                    }
-                    else
-                    {
-                        if (_overwriteMode)
-                            replace(_bPosCurrent, char(0));
                         else
+                        {
                             remove(_bPosCurrent, 1);
+                        }
+                        setCursorPosition(2 * _bPosCurrent);
+                        resetSelection(2 * _bPosCurrent);
                     }
-                    setCursorPosition(2 * _bPosCurrent);
-                    resetSelection(2 * _bPosCurrent);
                     } // !editBlockedByDisasm
                 }
                 else
@@ -503,33 +683,16 @@ void HexEditor::keyPressEvent(QKeyEvent *event)
                         if (!editBlockedByDisasm()) {
                         if (!_overwriteMode)
                         {
-                            // In INSERT mode backspace only removes line breaks (handled above).
-                            // No data deletion — do nothing.
-                        }
-                        else
-                        if (getSelectionEnd() - getSelectionBegin() > 1)
-                        {
-                            _bPosCurrent = getSelectionBegin();
-                            setCursorPosition(2 * _bPosCurrent);
-
+                            if (getSelectionEnd() - getSelectionBegin() > 1)
                             {
-                                QByteArray ba = QByteArray(getSelectionEnd() - getSelectionBegin(), char(0));
-                                replace(_bPosCurrent, ba.size(), ba);
+                                _bPosCurrent = getSelectionBegin();
+                                remove(_bPosCurrent, getSelectionEnd() - getSelectionBegin());
                             }
-                            resetSelection(2 * _bPosCurrent);
-                        }
-                        else
-                        {
-                            bool behindLastByte = false;
-                            if ((_cursorPosition / 2) == _chunks->size())
-                                behindLastByte = true;
-
-                            _bPosCurrent -= 1;
-                            replace(_bPosCurrent, char(0));
-
-                            if (!behindLastByte)
+                            else if (_bPosCurrent > 0)
+                            {
                                 _bPosCurrent -= 1;
-
+                                remove(_bPosCurrent, 1);
+                            }
                             setCursorPosition(2 * _bPosCurrent);
                             resetSelection(2 * _bPosCurrent);
                         }
@@ -867,9 +1030,15 @@ bool HexEditor::viewportEvent(QEvent *event)
             else if (_pointers.hasOffset(bytePos))
             {
                 const auto ptrs = _pointers.getPointers(bytePos);
-                const QString tip = (ptrs.size() == 1)
-                    ? QStringLiteral("0x") + QStringLiteral("%1").arg(ptrs[0], 8, 16, QChar('0')).toUpper()
-                    : tr("%1 pointers").arg(ptrs.size());
+                const QString name = _pointers.offsetName(bytePos).trimmed();
+                const QString byteOffsetText = QStringLiteral("0x") + QStringLiteral("%1").arg(bytePos, 8, 16, QChar('0')).toUpper();
+                const QString tip = !name.isEmpty()
+                    ? ((ptrs.size() > 1)
+                        ? QStringLiteral("%1: %2 pointers").arg(name).arg(ptrs.size())
+                        : QStringLiteral("%1: %2").arg(name, byteOffsetText))
+                    : ((ptrs.size() == 1)
+                        ? QStringLiteral("0x") + QStringLiteral("%1").arg(ptrs[0], 8, 16, QChar('0')).toUpper()
+                        : tr("%1 pointers").arg(ptrs.size()));
                 QToolTip::showText(helpEvent->globalPos(), tip, viewport());
                 return true;
             }
@@ -969,8 +1138,17 @@ void HexEditor::mousePressEvent(QMouseEvent *event)
                 else if (_pointers.hasOffset(_bPosCurrent))
                 {
                     auto ptrs = _pointers.getPointers(_bPosCurrent);
+                    const QString name = _pointers.offsetName(_bPosCurrent).trimmed();
+                    const QString byteOffsetText = QStringLiteral("0x") + QStringLiteral("%1").arg(_bPosCurrent, 8, 16, QChar('0')).toUpper();
 
-                    if (ptrs.size() == 1)
+                    if (!name.isEmpty())
+                    {
+                        if (ptrs.size() > 1)
+                            QToolTip::showText(mapToGlobal(event->pos()), QStringLiteral("%1: %2 pointers").arg(name).arg(ptrs.size()));
+                        else
+                            QToolTip::showText(mapToGlobal(event->pos()), QStringLiteral("%1: %2").arg(name, byteOffsetText));
+                    }
+                    else if (ptrs.size() == 1)
                     {
                         QToolTip::showText(mapToGlobal(event->pos()), QString("0x%1").arg(ptrs[0], 8, 16, QChar('0')));
                     }
@@ -1523,7 +1701,7 @@ void HexEditor::paintEvent(QPaintEvent *event)
                                             break;
 
                                         const uint8_t rowByte = static_cast<uint8_t>(_dataShown.at(rowBytePos));
-                                        const int baseW = (_tb && !_tbSymbolWidthPxCache.isEmpty())
+                                        const int baseW = (!rowForcesRaw && _tb && !_tbSymbolWidthPxCache.isEmpty())
                                             ? _tbSymbolWidthPxCache[rowByte]
                                             : _pxCharWidth;
                                         const int slotW = baseW + slotGapPx(baseW);
@@ -1957,6 +2135,20 @@ void HexEditor::paintEvent(QPaintEvent *event)
                     // top→bottom; each byte maps to a sub-row.  Amplitude maps
                     // left→right across the full ASCII-area width.
                     const uint8_t byteVal = static_cast<uint8_t>(rawByte);
+                    const qint64 fileOffset = _bPosFirst + bPosLine + colIdx;
+                    qint64 sectionStart = fileOffset;
+                    AudioSampleFormat secAudioFormat = AudioSampleFormat::Unknown;
+                    if (_sectionModel) {
+                        const int secIdxAtByte = _sectionModel->sectionIndexAtOffset(fileOffset);
+                        if (secIdxAtByte >= 0) {
+                            const Section &audioSec = _sectionModel->at(secIdxAtByte);
+                            secAudioFormat = audioFormatForSection(audioSec);
+                            sectionStart = audioSec.startOffset;
+                        }
+                    }
+                    const int ampVal = waveformAmplitudeForByte(byteVal,
+                                                                secAudioFormat,
+                                                                qMax<qint64>(0, fileOffset - sectionStart));
                     const int cellTop = pxPosY - _pxCharHeight + _pxSelectionSub + 2;
                     const int cellH = _pxCharHeight;
                     const int waveLeft = _pxPosAsciiX + kAsciiAreaLeftPaddingPx - pxOfsX;
@@ -1990,7 +2182,7 @@ void HexEditor::paintEvent(QPaintEvent *event)
 
                     // Map amplitude across full waveform width
                     const int midX = waveLeft + waveW / 2;
-                    const int ampX = waveLeft + (byteVal * (waveW - 1)) / 255;
+                    const int ampX = waveLeft + (ampVal * (waveW - 1)) / 255;
                     const int subMidY = subY + subH / 2;
 
                     // Filled area from centre to amplitude
@@ -2152,8 +2344,8 @@ void HexEditor::paintEvent(QPaintEvent *event)
                         else if (isPointerByte)
                             painter.setPen(_penPointers);
                         else {
-                            const bool isUnmappedZero = isZeroByte && !useTbMultiByte
-                                && (!_tb || sym == QString(_notInTableChar));
+                            const bool isUnmappedZero = isZeroByte && !activeTbMultiByte
+                                && (!activeTable || sym == QString(_notInTableChar));
                             painter.setPen(QPen(isUnmappedZero ? _zeroByteFontColor : _asciiFontColor));
                         }
                         painter.drawText(r, Qt::AlignLeft | Qt::AlignVCenter, sym);

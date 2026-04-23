@@ -16,6 +16,10 @@ public:
     explicit JumpToDialog(HexEditor *hexEdit, QWidget *parent = nullptr);
     ~JumpToDialog();
 
+    void setHexEdit(HexEditor *hexEdit);
+    QString offsetText() const;
+    void setOffsetText(const QString &text);
+
 protected:
     void changeEvent(QEvent *event) override;
 
