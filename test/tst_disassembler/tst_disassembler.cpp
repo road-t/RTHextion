@@ -1,6 +1,8 @@
 #include <QTest>
 #include <QSet>
 
+#include <algorithm>
+
 #include "../../src/utils/disassembler.h"
 
 class TstDisassembler : public QObject
@@ -121,6 +123,83 @@ private slots:
         QCOMPARE(callPointers[0].ptrFileOffset, qint64(1));
         QCOMPARE(callPointers[0].targetOffset, qint64(6));
         QCOMPARE(callPointers[0].ptrSize, 2);
+    }
+
+    void z80GbHeaderUsesEntrySeedAndKeepsHeaderData()
+    {
+        QByteArray data(0x160, char(0x00));
+        data[0x100] = char(0x00);
+        data[0x101] = char(0xC3);
+        data[0x102] = char(0x50);
+        data[0x103] = char(0x01);
+        data[0x150] = char(0xDD);
+        data[0x151] = char(0x21);
+        data[0x152] = char(0x34);
+        data[0x153] = char(0x12);
+        data[0x154] = char(0xC9);
+
+        Disassembler d;
+        QVERIFY(d.setRomType(RomType::GB));
+
+        const auto insns = d.disassemble(data, 0, data.size());
+        QVERIFY(!insns.isEmpty());
+        QCOMPARE(insns.first().fileOffset, qint64(0));
+        QCOMPARE(insns.first().mnemonic, QStringLiteral("DC.B"));
+
+        auto findInsn = [&insns](qint64 fileOffset) {
+            return std::find_if(insns.begin(), insns.end(), [fileOffset](const DisasmInstruction &insn) {
+                return insn.fileOffset == fileOffset;
+            });
+        };
+
+        const auto nopIt = findInsn(0x100);
+        QVERIFY(nopIt != insns.end());
+        QCOMPARE(nopIt->mnemonic, QStringLiteral("NOP"));
+
+        const auto jpIt = findInsn(0x101);
+        QVERIFY(jpIt != insns.end());
+        QCOMPARE(jpIt->mnemonic, QStringLiteral("JP"));
+        QCOMPARE(jpIt->branchTarget, qint64(0x150));
+
+        const auto codeIt = findInsn(0x150);
+        QVERIFY(codeIt != insns.end());
+        QCOMPARE(codeIt->mnemonic, QStringLiteral("LD"));
+        QCOMPARE(codeIt->operands, QStringLiteral("IX, $1234"));
+
+        const auto bounds = d.scanBoundaries(data, 0, data.size());
+        QVERIFY(!bounds.isEmpty());
+        QVERIFY(bounds.first().isData);
+        auto codeBoundary = std::find_if(bounds.begin(), bounds.end(), [](const InsnBoundary &boundary) {
+            return boundary.offset == qint64(0x150);
+        });
+        QVERIFY(codeBoundary != bounds.end());
+        QVERIFY(!codeBoundary->isData);
+    }
+
+    void z80IndexedAndExtendedOpcodesDecode()
+    {
+        const QByteArray data = QByteArray::fromHex("CB11ED4ADD213412FD3605AADDCBFE46");
+
+        Disassembler d;
+        QVERIFY(d.setRomType(RomType::GB));
+
+        const auto insns = d.disassemble(data, 0, data.size());
+        QCOMPARE(insns.size(), 5);
+
+        QCOMPARE(insns[0].mnemonic, QStringLiteral("RL"));
+        QCOMPARE(insns[0].operands, QStringLiteral("C"));
+
+        QCOMPARE(insns[1].mnemonic, QStringLiteral("ADC"));
+        QCOMPARE(insns[1].operands, QStringLiteral("HL, BC"));
+
+        QCOMPARE(insns[2].mnemonic, QStringLiteral("LD"));
+        QCOMPARE(insns[2].operands, QStringLiteral("IX, $1234"));
+
+        QCOMPARE(insns[3].mnemonic, QStringLiteral("LD"));
+        QCOMPARE(insns[3].operands, QStringLiteral("(IY+$05), $AA"));
+
+        QCOMPARE(insns[4].mnemonic, QStringLiteral("BIT"));
+        QCOMPARE(insns[4].operands, QStringLiteral("0, (IX-$02)"));
     }
 
     void disassembleAndBoundariesFor6502()
