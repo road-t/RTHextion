@@ -94,6 +94,7 @@ void MainWindow::saveCurrentSession()
         m_currentSession->searchReplaceText = s.replaceText;
         m_currentSession->searchReplaceFormat = s.replaceFormat;
         m_currentSession->searchRelative    = s.relative;
+        m_currentSession->searchSectionScope = s.sectionScope;
     }
 
     if (jumpToDialog)

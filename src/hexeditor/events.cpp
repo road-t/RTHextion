@@ -995,8 +995,6 @@ void HexEditor::mouseMoveEvent(QMouseEvent *event)
                     drawButton = Qt::RightButton;
 
                 if (drawButton != Qt::NoButton) {
-                    setCursorPosition(actPos);
-                    resetSelection(actPos);
                     gfxSetPixel(drawButton);
                     _gfxClickPixX = -1;
                     _gfxClickPixY = -1;
@@ -1090,8 +1088,6 @@ void HexEditor::mousePressEvent(QMouseEvent *event)
 
     // Graphics pixel drawing: if click was in the graphics area, paint the pixel
     if (cPos >= 0 && _gfxClickPixX >= 0 && _gfxClickPixY >= 0) {
-        setCursorPosition(cPos);
-        resetSelection(cPos);
         gfxSetPixel(event->button());
         _gfxClickPixX = -1;
         _gfxClickPixY = -1;
@@ -1972,6 +1968,18 @@ void HexEditor::paintEvent(QPaintEvent *event)
                         || (secMode == SectionDisplay_Default && _showDisasm);
                     const bool effectiveGraphics = (secMode == SectionDisplay_Graphics)
                         || (secMode == SectionDisplay_Default && _showGraphicsPanel);
+                    const bool suppressAsciiSelection = isSelectedByte
+                        && (secMode == SectionDisplay_Audio || secMode == SectionDisplay_Graphics);
+                    const bool asciiSelectedByte = isSelectedByte && !suppressAsciiSelection;
+                    QColor asciiBgColor = c;
+                    if (suppressAsciiSelection) {
+                        asciiBgColor = _asciiAreaColor;
+                        if (_showSections && _sectionModel) {
+                            const QColor sc = _sectionModel->colorAtOffset(_bPosFirst + bPosLine + colIdx);
+                            if (sc.isValid())
+                                asciiBgColor = sc;
+                        }
+                    }
                     // Per-section table: 1-based index into _allTables
                     TranslationTable *secTable = nullptr;
                     if (secMode > 0 && secMode <= _allTables.size())
@@ -2009,8 +2017,8 @@ void HexEditor::paintEvent(QPaintEvent *event)
                                     painter.fillRect(mnRect, _brushSelection.color());
                                     painter.setPen(_penSelection);
                                 } else {
-                                    if (c != _asciiAreaColor)
-                                        painter.fillRect(mnRect, c);
+                                    if (asciiBgColor != _asciiAreaColor)
+                                        painter.fillRect(mnRect, asciiBgColor);
                                     painter.setPen(QPen(instr->isBranch
                                         ? palette().color(QPalette::Link) : _asciiFontColor));
                                 }
@@ -2023,8 +2031,8 @@ void HexEditor::paintEvent(QPaintEvent *event)
                                     QRect spRect(textX, baseY, spW, _pxCharHeight);
                                     if (instrSel) {
                                         painter.fillRect(spRect, _brushSelection.color());
-                                    } else if (c != _asciiAreaColor) {
-                                        painter.fillRect(spRect, c);
+                                    } else if (asciiBgColor != _asciiAreaColor) {
+                                        painter.fillRect(spRect, asciiBgColor);
                                     }
                                     painter.setPen(instrSel ? _penSelection : QPen(_asciiFontColor));
                                     painter.drawText(spRect, Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral(" "));
@@ -2062,8 +2070,8 @@ void HexEditor::paintEvent(QPaintEvent *event)
                                             painter.fillRect(opRect, _brushSelection.color());
                                             painter.setPen(_penSelection);
                                         } else {
-                                            if (c != _asciiAreaColor)
-                                                painter.fillRect(opRect, c);
+                                            if (asciiBgColor != _asciiAreaColor)
+                                                painter.fillRect(opRect, asciiBgColor);
                                             if (usingSectionLabel)
                                                 painter.fillRect(opRect, _brushPointers.color());
                                             painter.setPen(QPen(instr->isBranch
@@ -2093,8 +2101,8 @@ void HexEditor::paintEvent(QPaintEvent *event)
                                             const int segW = paintFm.horizontalAdvance(seg);
                                             QRect segRect(segX, baseY, segW, _pxCharHeight);
 
-                                            if (c != _asciiAreaColor)
-                                                painter.fillRect(segRect, c);
+                                            if (asciiBgColor != _asciiAreaColor)
+                                                painter.fillRect(segRect, asciiBgColor);
                                             if (linked)
                                                 painter.fillRect(segRect, _brushPointers.color());
 
@@ -2166,14 +2174,14 @@ void HexEditor::paintEvent(QPaintEvent *event)
 
                     // Per-byte selection/section highlight on its sub-row
                     r.setRect(waveLeft, subY, waveW, subH);
-                    if (isSelectedByte)
+                    if (asciiSelectedByte)
                         painter.fillRect(r, _brushSelection.color());
-                    else if (c != _asciiAreaColor)
-                        painter.fillRect(r, c);
+                    else if (asciiBgColor != _asciiAreaColor)
+                        painter.fillRect(r, asciiBgColor);
 
                     // Waveform color
                     QColor waveColor;
-                    if (isSelectedByte)
+                    if (asciiSelectedByte)
                         waveColor = _penSelection.color();
                     else if (isHighlightedByte)
                         waveColor = _penHighlighted.color();
@@ -2245,9 +2253,9 @@ void HexEditor::paintEvent(QPaintEvent *event)
                     const int symWidthPx = baseSymWidthPx + slotGapPx(baseSymWidthPx);
                     r.setRect(pxPosAsciiX2 - 1, pxPosY - _pxCharHeight + _pxSelectionSub + 2,
                               qMax(1, symWidthPx), _pxCharHeight);
-                    if (c != _asciiAreaColor)
-                        painter.fillRect(r, c);
-                    if (isSelectedByte)
+                    if (asciiBgColor != _asciiAreaColor)
+                        painter.fillRect(r, asciiBgColor);
+                    if (asciiSelectedByte)
                         painter.setPen(_penSelection);
                     else if (isHighlightedByte)
                         painter.setPen(_penHighlighted);
@@ -2329,13 +2337,13 @@ void HexEditor::paintEvent(QPaintEvent *event)
                               qMax(1, symWidthPx), _pxCharHeight);
 
                     if (!isContinuationByte) {
-                        if (c != _asciiAreaColor)
-                            painter.fillRect(r, c);
+                        if (asciiBgColor != _asciiAreaColor)
+                            painter.fillRect(r, asciiBgColor);
 
                         if (isCursorGroupByte && _cursorCharColor.alpha() > 0)
                             painter.fillRect(QRect(r.x(), r.y() - 2, baseSymWidthPx, r.height() + 2), _cursorCharColor);
 
-                        if (isSelectedByte)
+                        if (asciiSelectedByte)
                             painter.setPen(_penSelection);
                         else if (isHighlightedByte)
                             painter.setPen(_penHighlighted);

@@ -277,8 +277,12 @@ GraphicsDockWidget::GraphicsDockWidget(QWidget *parent)
 
     // Signals
     connect(m_codecCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
-        if (!m_hasCustomPalette)
+        if (!m_hasCustomPalette) {
             updatePalettePreview();
+        } else {
+            // Clamp/expand existing custom palette to new codec bpp.
+            setPaletteColors(m_palPreview->colors());
+        }
         emit codecChanged(selectedCodec());
     });
 

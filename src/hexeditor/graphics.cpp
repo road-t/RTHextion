@@ -347,9 +347,6 @@ void HexEditor::paintGraphicsArea(QPainter &painter, int pxOfsX,
         return;
 
     const qint64 fileSize = _chunks->size();
-    const qint64 selBegin = getSelectionBegin();
-    const qint64 selEnd = getSelectionEnd();
-    const bool hasSelection = (selEnd - selBegin) > 0;
 
     const auto rowBytesThisRow = [this](int r) -> int {
         if (r < 0 || r >= _visualRowStartBytes.size())
@@ -624,38 +621,6 @@ void HexEditor::paintGraphicsArea(QPainter &painter, int pxOfsX,
                 painter.setRenderHint(QPainter::SmoothPixmapTransform, false);
                 painter.setRenderHint(QPainter::Antialiasing, false);
                 painter.drawImage(destRect, _tileCanvasBuffer, srcRect);
-
-                // Overlay selection: highlight the exact tile pixels affected by selected bytes.
-                if (hasSelection) {
-                    const int secVisualRow = tileRow * 8 + pr;
-                    const qint64 rowDataStart = dataStart + static_cast<qint64>(secVisualRow) * _bytesPerLine;
-                    const qint64 rowDataEnd = qMin(rowDataStart + _bytesPerLine, dataEnd);
-                    if (rowDataStart < rowDataEnd) {
-                        QColor selPix = _brushSelection.color();
-                        selPix.setAlpha(110);
-                        for (qint64 ofs = rowDataStart; ofs < rowDataEnd; ++ofs) {
-                            if (ofs < selBegin || ofs >= selEnd)
-                                continue;
-
-                            const qint64 byteInSection = ofs - dataStart;
-                            if (byteInSection < 0)
-                                continue;
-
-                            const int tileIndex = static_cast<int>(byteInSection / bpt);
-                            const int tileCol = tileIndex % tileCols;
-                            const int byteInTile = static_cast<int>(byteInSection % bpt);
-
-                            int py = 0, px0 = 0, pxCount = 0;
-                            tilePixelRangeForByte(codec, byteInTile, py, px0, pxCount);
-                            if (py != pr || pxCount <= 0)
-                                continue;
-
-                            const int x = gfxAreaX + (tileCol * 8 + px0) * pixW;
-                            const int w = qMax(1, pxCount * pixW);
-                            painter.fillRect(x, y, w, pixH, selPix);
-                        }
-                    }
-                }
 
                 ++screenRowsRendered;
             }

@@ -861,6 +861,11 @@ qint64 HexEditor::cursorPosition(QPoint pos)
                 _editAreaIsAscii = false;          // move focus to hex area
                 return _bPosFirst * 2 + rowByteStart * 2; // first byte of row
             }
+
+            const bool rowIsGraphicsSection = _sectionModel
+                && _sectionModel->displayModeAtOffset(rowAbsOffset) == SectionDisplay_Graphics;
+            if (rowIsGraphicsSection)
+                return -1;
         }
 
         const int rowSectionMode = _sectionModel

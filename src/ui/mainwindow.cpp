@@ -30,6 +30,7 @@
 #include <QStyleFactory>
 #include <QMouseEvent>
 #include <QChildEvent>
+#include <QFileOpenEvent>
 #include <QInputDialog>
 #include <QFile>
 #include <QPushButton>
@@ -363,6 +364,19 @@ void MainWindow::dropEvent(QDropEvent *event)
 
 bool MainWindow::event(QEvent *e)
 {
+    if (e && e->type() == QEvent::FileOpen) {
+        auto *foe = static_cast<QFileOpenEvent *>(e);
+        const QString filePath = foe ? foe->file() : QString();
+        if (!filePath.isEmpty()) {
+            if (!m_sessions.isEmpty() && isUntitled && hexEdit && !hexEdit->isModified())
+                loadFile(filePath);
+            else
+                loadFileInNewTab(filePath);
+            e->accept();
+            return true;
+        }
+    }
+
     // Track child widgets added to the main window (including internal separators)
     // and install event filters on potential dock area separators.
     if (e->type() == QEvent::ChildAdded) {
@@ -1144,6 +1158,7 @@ void MainWindow::showSearchDialog()
         s.replaceText = m_currentSession->searchReplaceText;
         s.replaceFormat = m_currentSession->searchReplaceFormat;
         s.relative    = m_currentSession->searchRelative;
+        s.sectionScope = m_currentSession->searchSectionScope;
         searchDialog->setDialogState(s);
     }
 

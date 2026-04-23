@@ -98,6 +98,7 @@ public:
     QString searchReplaceText;
     int     searchReplaceFormat = -1;
     bool    searchRelative      = false;
+    int     searchSectionScope  = 0;  // 0=All, 1=Text, 2=Code, 3=Sound, 4=Graphics
 
     // Per-tab Jump To dialog state
     QString jumpToText;
