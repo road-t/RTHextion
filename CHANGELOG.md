@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v3.0-alpha] - 2026-04-23
+
+### Added
+- **Integrated disassembly view** in the main editor for supported CPUs
+- **Graphics workflow** with graphics sections and a Graphics dock for tile/palette preview and direct editing
+- **Audio workflow** with audio sections and an Audio dock for preview/playback
+- **Search scopes by section type**: All, Text, Code, Sound, Graphics
+- **Advance sections features**: auto-highlight current section, drag-and-drop support, section-aware editing behavior
+
+### Changed
+- **Search and Go To dialogs** now remember their state per tab instead of sharing one global state
+- **Section-aware editing behavior** was refined so graphics and audio areas no longer behave like plain text/ASCII regions
+
 ## [v2.1.0] - 2026-04-10
 
 ### Added
