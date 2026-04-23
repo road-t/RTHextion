@@ -43,10 +43,19 @@
             <string>RTHextion Files</string>
             <key>CFBundleTypeRole</key>
             <string>Editor</string>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>*</string>
+            </array>
+            <key>CFBundleTypeMIMETypes</key>
+            <array>
+                <string>*/*</string>
+            </array>
             <key>LSHandlerRank</key>
-            <string>Alternate</string>
+            <string>Owner</string>
             <key>LSItemContentTypes</key>
             <array>
+                <string>public.item</string>
                 <string>public.data</string>
             </array>
         </dict>

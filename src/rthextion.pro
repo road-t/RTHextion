@@ -12,6 +12,7 @@ macx {
     ICON = images/tj.icns
     QMAKE_BUNDLE = RTHextion
     QMAKE_INFO_PLIST = Info.plist
+    QMAKE_POST_LINK += /bin/cp -f $$shell_path($$PWD/Info.plist) $$shell_path($$OUT_PWD/$${TARGET}.app/Contents/Info.plist)
     LIBS += -liconv
     OBJECTIVE_SOURCES += utils/macostheme.mm
     HEADERS += utils/macostheme.h

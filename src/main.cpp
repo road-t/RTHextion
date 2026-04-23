@@ -9,6 +9,7 @@
 #include <QTimer>
 #include <QByteArray>
 #include <QPalette>
+#include <QFileOpenEvent>
 
 #include "appinfo.h"
 #include "langtranslator.h"
@@ -16,6 +17,46 @@
 
 namespace
 {
+    class RTHextionApplication : public QApplication
+    {
+    public:
+        using QApplication::QApplication;
+
+        void setFileOpenHandler(const std::function<void(const QString &)> &handler)
+        {
+            m_fileOpenHandler = handler;
+            if (!m_fileOpenHandler)
+                return;
+
+            const auto pending = m_pendingFileOpenEvents;
+            m_pendingFileOpenEvents.clear();
+            for (const QString &path : pending)
+                m_fileOpenHandler(path);
+        }
+
+    protected:
+        bool event(QEvent *event) override
+        {
+            if (event && event->type() == QEvent::FileOpen) {
+                auto *foe = static_cast<QFileOpenEvent *>(event);
+                const QString path = foe ? foe->file() : QString();
+                if (!path.isEmpty()) {
+                    if (m_fileOpenHandler)
+                        m_fileOpenHandler(path);
+                    else
+                        m_pendingFileOpenEvents.append(path);
+                    event->accept();
+                    return true;
+                }
+            }
+            return QApplication::event(event);
+        }
+
+    private:
+        std::function<void(const QString &)> m_fileOpenHandler;
+        QStringList m_pendingFileOpenEvents;
+    };
+
     // Ensure all application settings have default values on first launch
     void initializeDefaultSettings()
     {
@@ -132,7 +173,7 @@ int main(int argc, char *argv[])
     qputenv("ApplePersistenceIgnoreState", QByteArray("YES"));
 #endif
 
-    QApplication app(argc, argv);
+    RTHextionApplication app(argc, argv);
     app.setApplicationName(AppInfo::Name);
     app.setApplicationDisplayName(QStringLiteral("RTHextion"));
     app.setApplicationVersion(AppInfo::Version);
@@ -179,6 +220,17 @@ int main(int argc, char *argv[])
     parser.process(app);
 
     MainWindow *mainWin = new MainWindow();
+
+    app.setFileOpenHandler([mainWin](const QString &filePath) {
+        if (filePath.isEmpty())
+            return;
+        if (!mainWin->isVisible()) {
+            mainWin->loadFile(filePath);
+            return;
+        }
+        mainWin->loadFileInNewTab(filePath);
+    });
+
     if (parser.positionalArguments().size() > 0)
     {
         mainWin->loadFile(parser.positionalArguments().at(0));
