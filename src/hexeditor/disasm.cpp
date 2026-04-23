@@ -611,7 +611,57 @@ const DisasmInstruction *HexEditor::disasmInstructionAtOffset(qint64 fileOffset)
     // Disassemble against the real file offsets so Capstone formats
     // PC-relative branch targets (BNE/BEQ/etc.) correctly in the operand text.
     const QByteArray fileData = _chunks->data(0, _chunks->size());
-    _disasmCache = _disasm->disassemble(fileData, startOfs, bytes);
+    const bool isZ80 = (effectiveRomType == RomType::GB || effectiveRomType == RomType::GBC
+        || effectiveRomType == RomType::SMS || effectiveRomType == RomType::GG
+        || effectiveRomType == RomType::SG1000 || effectiveRomType == RomType::ColecoVision);
+    if (isZ80) {
+        _disasmCache.clear();
+        _disasmCache.reserve(endIdx - startIdx + 1);
+
+        auto appendDataBoundary = [&](const InsnBoundary &boundary) {
+            DisasmInstruction di;
+            di.fileOffset = boundary.offset;
+            di.address = static_cast<quint64>(boundary.offset + _disasm->baseAddress());
+            di.size = boundary.size;
+            di.opcodeSize = boundary.size;
+            di.mnemonic = QStringLiteral("DC.B");
+            di.isBranch = false;
+            di.isCall = false;
+            di.isReturn = false;
+            di.branchTarget = -1;
+
+            QString bytesHex;
+            QStringList values;
+            values.reserve(boundary.size);
+            for (int b = 0; b < boundary.size; ++b) {
+                const quint8 value = static_cast<quint8>(fileData.at(static_cast<int>(boundary.offset + b)));
+                if (b > 0)
+                    bytesHex += QLatin1Char(' ');
+                bytesHex += QString::number(value, 16).toUpper().rightJustified(2, QLatin1Char('0'));
+                values.append(QStringLiteral("$%1").arg(value, 2, 16, QLatin1Char('0')).toUpper());
+            }
+            di.bytes = bytesHex;
+            di.operands = values.join(QStringLiteral(","));
+            _disasmCache.append(di);
+        };
+
+        for (int boundaryIdx = startIdx; boundaryIdx <= endIdx; ++boundaryIdx) {
+            const auto &boundary = _disasmBoundaries[boundaryIdx];
+            if (boundary.isData) {
+                appendDataBoundary(boundary);
+                continue;
+            }
+
+            const auto decoded = _disasm->disassemble(fileData, boundary.offset, boundary.size, 1);
+            if (!decoded.isEmpty()) {
+                _disasmCache.append(decoded.first());
+            } else {
+                appendDataBoundary(boundary);
+            }
+        }
+    } else {
+        _disasmCache = _disasm->disassemble(fileData, startOfs, bytes);
+    }
     _disasmCacheStart = startOfs;
     _disasmCacheEnd = endOfs;
     _disasmCacheRomType = effectiveRomType;

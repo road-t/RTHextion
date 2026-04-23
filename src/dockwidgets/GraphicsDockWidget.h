@@ -18,6 +18,7 @@ class PalettePreview : public QWidget
 public:
     explicit PalettePreview(QWidget *parent = nullptr);
     void setPalette(const QVector<QRgb> &colors);
+    void setVisibleColorCount(int count);
     void setDimmed(bool dimmed);
     const QVector<QRgb> &colors() const { return m_colors; }
 
@@ -37,6 +38,7 @@ protected:
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override;
 private:
+    int visibleColorCount() const;
     int columnCountForWidth(int availWidth) const;
     void updateHeightForCurrentWidth();
 
@@ -44,6 +46,7 @@ private:
     int m_leftIndex  = 0;
     int m_rightIndex = 1;
     bool m_dimmed = false;
+    int m_visibleColorCount = 0;
 };
 
 class GraphicsDockWidget : public BaseDockWidget

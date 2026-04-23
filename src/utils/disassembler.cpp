@@ -1,6 +1,7 @@
 #include "disassembler.h"
 
 #include <capstone/capstone.h>
+#include <QMap>
 #include <QSet>
 #include <algorithm>
 
@@ -23,12 +24,12 @@ inline bool isZ80RomType(RomType type)
 
 inline QString hex8(quint8 v)
 {
-    return QStringLiteral("0x%1").arg(v, 2, 16, QLatin1Char('0'));
+    return QStringLiteral("$%1").arg(v, 2, 16, QLatin1Char('0')).toUpper();
 }
 
 inline QString hex16(quint16 v)
 {
-    return QStringLiteral("0x%1").arg(v, 4, 16, QLatin1Char('0'));
+    return QStringLiteral("$%1").arg(v, 4, 16, QLatin1Char('0')).toUpper();
 }
 
 struct Z80Decoded {
@@ -38,8 +39,215 @@ struct Z80Decoded {
     bool isBranch = false;
     bool isCall = false;
     bool isReturn = false;
+    bool hasFallthrough = true;
     qint64 cpuTarget = -1;
 };
+
+enum class Z80IndexMode {
+    None,
+    IX,
+    IY,
+};
+
+inline QString z80IndexName(Z80IndexMode mode)
+{
+    switch (mode) {
+    case Z80IndexMode::IX: return QStringLiteral("IX");
+    case Z80IndexMode::IY: return QStringLiteral("IY");
+    default: return QStringLiteral("HL");
+    }
+}
+
+inline QString z80BaseReg8Name(int reg)
+{
+    static const char *reg8[] = {"B", "C", "D", "E", "H", "L", "(HL)", "A"};
+    return QString::fromLatin1(reg8[reg & 0x7]);
+}
+
+inline QString z80ConditionName(int cond)
+{
+    static const char *cc[] = {"NZ", "Z", "NC", "C", "PO", "PE", "P", "M"};
+    return QString::fromLatin1(cc[cond & 0x7]);
+}
+
+inline QString z80RotateName(int op)
+{
+    static const char *rot[] = {"RLC", "RRC", "RL", "RR", "SLA", "SRA", "SLL", "SRL"};
+    return QString::fromLatin1(rot[op & 0x7]);
+}
+
+inline QString z80AluName(int op)
+{
+    static const char *alu[] = {"ADD", "ADC", "SUB", "SBC", "AND", "XOR", "OR", "CP"};
+    return QString::fromLatin1(alu[op & 0x7]);
+}
+
+inline QString z80MiscName(int op)
+{
+    static const char *misc[] = {"RLCA", "RRCA", "RLA", "RRA", "DAA", "CPL", "SCF", "CCF"};
+    return QString::fromLatin1(misc[op & 0x7]);
+}
+
+inline QString z80PairName(int pair, Z80IndexMode indexMode)
+{
+    static const char *pairs[] = {"BC", "DE", "HL", "SP"};
+    if (indexMode != Z80IndexMode::None && (pair & 0x3) == 2)
+        return z80IndexName(indexMode);
+    return QString::fromLatin1(pairs[pair & 0x3]);
+}
+
+inline QString z80PushPairName(int pair, Z80IndexMode indexMode)
+{
+    static const char *pairs[] = {"BC", "DE", "HL", "AF"};
+    if (indexMode != Z80IndexMode::None && (pair & 0x3) == 2)
+        return z80IndexName(indexMode);
+    return QString::fromLatin1(pairs[pair & 0x3]);
+}
+
+inline QString z80IndexedMemoryOperand(Z80IndexMode mode, qint8 disp)
+{
+    if (mode == Z80IndexMode::None)
+        return QStringLiteral("(HL)");
+
+    const QString index = z80IndexName(mode);
+    if (disp == 0)
+        return QStringLiteral("(") + index + QStringLiteral(")");
+
+    const QString sign = (disp < 0) ? QStringLiteral("-") : QStringLiteral("+");
+    const quint8 mag = static_cast<quint8>(qAbs(static_cast<int>(disp)));
+    return QStringLiteral("(") + index + sign + hex8(mag) + QStringLiteral(")");
+}
+
+inline QString z80Reg8Name(int reg, Z80IndexMode indexMode = Z80IndexMode::None,
+                           bool useIndexedMemory = false, qint8 disp = 0)
+{
+    if (indexMode != Z80IndexMode::None) {
+        switch (reg & 0x7) {
+        case 4: return (indexMode == Z80IndexMode::IX) ? QStringLiteral("IXH") : QStringLiteral("IYH");
+        case 5: return (indexMode == Z80IndexMode::IX) ? QStringLiteral("IXL") : QStringLiteral("IYL");
+        case 6:
+            if (useIndexedMemory)
+                return z80IndexedMemoryOperand(indexMode, disp);
+            break;
+        default:
+            break;
+        }
+    }
+    return z80BaseReg8Name(reg);
+}
+
+inline Z80Decoded decodeZ80Instruction(const uint8_t *code, size_t size, quint64 cpuAddr);
+
+inline qint64 z80CpuToFileOffset(qint64 cpuTarget, qint64 baseAddress)
+{
+    return cpuTarget - baseAddress;
+}
+
+static QVector<qint64> z80SeedFileOffsets(const QByteArray &data, RomType romType,
+                                          bool seedPlatformEntries, bool seedRangeStart,
+                                          qint64 rangeBegin)
+{
+    QVector<qint64> seeds;
+    auto addSeed = [&](qint64 seed) {
+        if (seed < 0 || seed >= data.size() || seeds.contains(seed))
+            return;
+        seeds.append(seed);
+    };
+
+    if (seedPlatformEntries) {
+        switch (romType) {
+        case RomType::GB:
+        case RomType::GBC:
+            if (data.size() > 0x100)
+                addSeed(0x100);
+            break;
+        case RomType::SMS:
+        case RomType::GG:
+        case RomType::SG1000:
+        case RomType::ColecoVision:
+            addSeed(0);
+            break;
+        default:
+            break;
+        }
+    }
+
+    if (seedRangeStart || seeds.isEmpty())
+        addSeed(rangeBegin);
+
+    return seeds;
+}
+
+static QMap<qint64, int> z80ReachableInstructions(const QByteArray &data, qint64 offset,
+                                                  int available, qint64 baseAddress,
+                                                  RomType romType, bool seedPlatformEntries,
+                                                  bool seedRangeStart)
+{
+    QMap<qint64, int> reachable;
+    if (available <= 0 || offset < 0 || offset >= data.size())
+        return reachable;
+
+    const qint64 rangeBegin = offset;
+    const qint64 rangeEnd = offset + available;
+    const qint64 analysisBegin = seedPlatformEntries ? 0 : rangeBegin;
+    const qint64 analysisEnd = seedPlatformEntries ? data.size() : rangeEnd;
+    QVector<qint64> worklist;
+    QSet<qint64> queued;
+    QSet<qint64> visited;
+    const QVector<qint64> seeds = z80SeedFileOffsets(data, romType, seedPlatformEntries,
+                                                     seedRangeStart, rangeBegin);
+    for (qint64 seed : seeds) {
+        worklist.append(seed);
+        queued.insert(seed);
+    }
+
+    while (!worklist.isEmpty()) {
+        qint64 pos = worklist.takeLast();
+        while (pos >= analysisBegin && pos < analysisEnd) {
+            if (visited.contains(pos))
+                break;
+
+            const int rem = static_cast<int>(analysisEnd - pos);
+            Z80Decoded z = decodeZ80Instruction(
+                reinterpret_cast<const uint8_t *>(data.constData() + pos),
+                static_cast<size_t>(rem),
+                static_cast<quint64>(pos + baseAddress));
+            const int size = qMax(1, qMin(z.size, rem));
+
+            if (z.mnemonic.isEmpty())
+                break;
+
+            visited.insert(pos);
+            if (pos >= rangeBegin && pos < rangeEnd)
+                reachable.insert(pos, qMin(size, static_cast<int>(rangeEnd - pos)));
+
+            if (z.cpuTarget >= 0) {
+                const qint64 targetOfs = z80CpuToFileOffset(z.cpuTarget, baseAddress);
+                if (targetOfs >= analysisBegin && targetOfs < analysisEnd
+                    && !visited.contains(targetOfs) && !queued.contains(targetOfs)) {
+                    worklist.append(targetOfs);
+                    queued.insert(targetOfs);
+                }
+            }
+
+            if (!z.hasFallthrough)
+                break;
+
+            pos += size;
+        }
+    }
+
+    return reachable;
+}
+
+static int z80DataRunSize(const QMap<qint64, int> &reachable, qint64 pos, qint64 rangeEnd,
+                          int maxBytesPerDirective = 8)
+{
+    auto it = reachable.upperBound(pos);
+    const qint64 nextReachable = (it != reachable.end()) ? it.key() : rangeEnd;
+    const qint64 rawRun = qMax<qint64>(1, nextReachable - pos);
+    return static_cast<int>(qMin<qint64>(rawRun, maxBytesPerDirective));
+}
 
 inline int z80BaseLen(quint8 op)
 {
@@ -136,12 +344,67 @@ inline Z80Decoded decodeZ80Instruction(const uint8_t *code, size_t size, quint64
 {
     Z80Decoded d;
     if (!code || size == 0) {
-        d.mnemonic = QStringLiteral("DB");
         return d;
     }
 
-    const quint8 op = code[0];
     d.size = z80InstructionSize(code, size);
+
+    const quint8 prefix = code[0];
+    Z80IndexMode indexMode = Z80IndexMode::None;
+    int opcodePos = 0;
+
+    if (prefix == 0xDD || prefix == 0xFD) {
+        indexMode = (prefix == 0xDD) ? Z80IndexMode::IX : Z80IndexMode::IY;
+        opcodePos = 1;
+        if (size < 2) {
+            d.size = 1;
+            return d;
+        }
+        if (code[1] == 0xCB) {
+            if (size < 4) {
+                d.size = static_cast<int>(size);
+                return d;
+            }
+
+            const qint8 disp = static_cast<qint8>(code[2]);
+            const quint8 cbOp = code[3];
+            const int x = (cbOp >> 6) & 0x3;
+            const int y = (cbOp >> 3) & 0x7;
+            const int z = cbOp & 0x7;
+            const QString mem = z80IndexedMemoryOperand(indexMode, disp);
+
+            if (x == 0) {
+                d.mnemonic = z80RotateName(y);
+                d.operands = (z == 6) ? mem : (mem + QStringLiteral(", ") + z80BaseReg8Name(z));
+                return d;
+            }
+            if (x == 1) {
+                d.mnemonic = QStringLiteral("BIT");
+                d.operands = QString::number(y) + QStringLiteral(", ") + mem;
+                return d;
+            }
+
+            d.mnemonic = (x == 2) ? QStringLiteral("RES") : QStringLiteral("SET");
+            d.operands = QString::number(y) + QStringLiteral(", ") + mem;
+            if (z != 6)
+                d.operands += QStringLiteral(", ") + z80BaseReg8Name(z);
+            return d;
+        }
+
+        if (code[1] == 0xED || code[1] == 0xDD || code[1] == 0xFD) {
+            d.size = 1;
+            return d;
+        }
+    }
+
+    const quint8 op = code[opcodePos];
+    const bool indexed = (indexMode != Z80IndexMode::None);
+    const bool hasIndexedMemory = indexed && z80BaseNeedsDispForIndex(op);
+    const qint8 disp = (hasIndexedMemory && (opcodePos + 1) < static_cast<int>(size))
+        ? static_cast<qint8>(code[opcodePos + 1])
+        : 0;
+    const int firstImmPos = opcodePos + 1;
+    const int imm8Pos = opcodePos + (hasIndexedMemory ? 2 : 1);
 
     auto relTarget = [&](int relPos) -> qint64 {
         if (relPos >= static_cast<int>(size))
@@ -155,173 +418,396 @@ inline Z80Decoded decodeZ80Instruction(const uint8_t *code, size_t size, quint64
         return static_cast<qint64>(static_cast<quint16>(code[pos] | (code[pos + 1] << 8)));
     };
 
-    // CB prefixed bit ops are currently shown as generic prefixed ops.
-    if (op == 0xCB) {
-        d.mnemonic = QStringLiteral("CB");
-        if (size >= 2)
-            d.operands = hex8(code[1]);
+    if (opcodePos == 0 && op == 0xCB) {
+        if (size < 2) {
+            d.size = 1;
+            return d;
+        }
+
+        const quint8 cbOp = code[1];
+        const int x = (cbOp >> 6) & 0x3;
+        const int y = (cbOp >> 3) & 0x7;
+        const int z = cbOp & 0x7;
+        const QString target = z80BaseReg8Name(z);
+
+        if (x == 0) {
+            d.mnemonic = z80RotateName(y);
+            d.operands = target;
+        } else if (x == 1) {
+            d.mnemonic = QStringLiteral("BIT");
+            d.operands = QString::number(y) + QStringLiteral(", ") + target;
+        } else if (x == 2) {
+            d.mnemonic = QStringLiteral("RES");
+            d.operands = QString::number(y) + QStringLiteral(", ") + target;
+        } else {
+            d.mnemonic = QStringLiteral("SET");
+            d.operands = QString::number(y) + QStringLiteral(", ") + target;
+        }
         return d;
     }
 
-    // ED prefixed extended ops: detect RETN/RETI for function scanning/navigation.
-    if (op == 0xED) {
-        if (size >= 2 && (code[1] == 0x45 || code[1] == 0x4D)) {
-            d.mnemonic = (code[1] == 0x4D) ? QStringLiteral("RETI") : QStringLiteral("RETN");
+    if (opcodePos == 0 && op == 0xED) {
+        if (size < 2) {
+            d.size = 1;
+            return d;
+        }
+
+        const quint8 edOp = code[1];
+        const int x = (edOp >> 6) & 0x3;
+        const int y = (edOp >> 3) & 0x7;
+        const int z = edOp & 0x7;
+        const int p = y >> 1;
+        const int q = y & 0x1;
+
+        if (x == 1) {
+            switch (z) {
+            case 0:
+                d.mnemonic = QStringLiteral("IN");
+                d.operands = (y == 6)
+                    ? QStringLiteral("(C)")
+                    : (z80BaseReg8Name(y) + QStringLiteral(", (C)"));
+                return d;
+            case 1:
+                d.mnemonic = QStringLiteral("OUT");
+                d.operands = (y == 6)
+                    ? QStringLiteral("(C), 0")
+                    : (QStringLiteral("(C), ") + z80BaseReg8Name(y));
+                return d;
+            case 2:
+                d.mnemonic = q ? QStringLiteral("ADC") : QStringLiteral("SBC");
+                d.operands = QStringLiteral("HL, ") + z80PairName(p, Z80IndexMode::None);
+                return d;
+            case 3:
+                d.mnemonic = QStringLiteral("LD");
+                if (const qint64 v = imm16(2); v >= 0) {
+                    if (q == 0) {
+                        d.operands = QStringLiteral("(") + hex16(static_cast<quint16>(v))
+                                   + QStringLiteral("), ") + z80PairName(p, Z80IndexMode::None);
+                    } else {
+                        d.operands = z80PairName(p, Z80IndexMode::None) + QStringLiteral(", (")
+                                   + hex16(static_cast<quint16>(v)) + QStringLiteral(")");
+                    }
+                }
+                return d;
+            case 4:
+                d.mnemonic = QStringLiteral("NEG");
+                return d;
+            case 5:
+                d.mnemonic = (edOp == 0x4D) ? QStringLiteral("RETI") : QStringLiteral("RETN");
+                d.isReturn = true;
+                d.isBranch = true;
+                d.hasFallthrough = false;
+                return d;
+            case 6: {
+                static const int imModes[] = {0, 0, 1, 2, 0, 0, 1, 2};
+                d.mnemonic = QStringLiteral("IM");
+                d.operands = QString::number(imModes[y]);
+                return d;
+            }
+            case 7:
+                switch (y) {
+                case 0: d.mnemonic = QStringLiteral("LD"); d.operands = QStringLiteral("I, A"); return d;
+                case 1: d.mnemonic = QStringLiteral("LD"); d.operands = QStringLiteral("R, A"); return d;
+                case 2: d.mnemonic = QStringLiteral("LD"); d.operands = QStringLiteral("A, I"); return d;
+                case 3: d.mnemonic = QStringLiteral("LD"); d.operands = QStringLiteral("A, R"); return d;
+                case 4: d.mnemonic = QStringLiteral("RRD"); return d;
+                case 5: d.mnemonic = QStringLiteral("RLD"); return d;
+                default: return d;
+                }
+            }
+        }
+
+        if (x == 2 && z <= 3 && y >= 4) {
+            static const char *blockOps[4][4] = {
+                {"LDI", "CPI", "INI", "OUTI"},
+                {"LDD", "CPD", "IND", "OUTD"},
+                {"LDIR", "CPIR", "INIR", "OTIR"},
+                {"LDDR", "CPDR", "INDR", "OTDR"},
+            };
+            d.mnemonic = QString::fromLatin1(blockOps[y - 4][z]);
+            return d;
+        }
+
+        return d;
+    }
+
+    const int x = (op >> 6) & 0x3;
+    const int y = (op >> 3) & 0x7;
+    const int z = op & 0x7;
+    const int p = y >> 1;
+    const int q = y & 0x1;
+
+    if (x == 0) {
+        if (z == 0) {
+            switch (y) {
+            case 0:
+                d.mnemonic = QStringLiteral("NOP");
+                return d;
+            case 1:
+                d.mnemonic = QStringLiteral("EX");
+                d.operands = QStringLiteral("AF, AF'");
+                return d;
+            case 2:
+                d.mnemonic = QStringLiteral("DJNZ");
+                d.isBranch = true;
+                d.cpuTarget = relTarget(firstImmPos);
+                if (d.cpuTarget >= 0)
+                    d.operands = hex16(static_cast<quint16>(d.cpuTarget));
+                return d;
+            case 3:
+                d.mnemonic = QStringLiteral("JR");
+                d.isBranch = true;
+                d.hasFallthrough = false;
+                d.cpuTarget = relTarget(firstImmPos);
+                if (d.cpuTarget >= 0)
+                    d.operands = hex16(static_cast<quint16>(d.cpuTarget));
+                return d;
+            default: {
+                d.mnemonic = QStringLiteral("JR");
+                d.isBranch = true;
+                d.cpuTarget = relTarget(firstImmPos);
+                const QString cond = z80ConditionName(y - 4);
+                d.operands = (d.cpuTarget >= 0)
+                    ? (cond + QStringLiteral(", ") + hex16(static_cast<quint16>(d.cpuTarget)))
+                    : cond;
+                return d;
+            }
+            }
+        }
+
+        if (z == 1) {
+            if (q == 0) {
+                d.mnemonic = QStringLiteral("LD");
+                d.operands = z80PairName(p, indexMode);
+                if (const qint64 v = imm16(firstImmPos); v >= 0)
+                    d.operands += QStringLiteral(", ") + hex16(static_cast<quint16>(v));
+            } else {
+                d.mnemonic = QStringLiteral("ADD");
+                d.operands = z80IndexName(indexMode) + QStringLiteral(", ") + z80PairName(p, indexMode);
+            }
+            return d;
+        }
+
+        if (z == 2) {
+            if (q == 0) {
+                d.mnemonic = QStringLiteral("LD");
+                switch (p) {
+                case 0: d.operands = QStringLiteral("(BC), A"); return d;
+                case 1: d.operands = QStringLiteral("(DE), A"); return d;
+                case 2:
+                    if (const qint64 v = imm16(firstImmPos); v >= 0)
+                        d.operands = QStringLiteral("(") + hex16(static_cast<quint16>(v)) + QStringLiteral("), ")
+                                   + z80PairName(2, indexMode);
+                    return d;
+                case 3:
+                    if (const qint64 v = imm16(firstImmPos); v >= 0)
+                        d.operands = QStringLiteral("(") + hex16(static_cast<quint16>(v)) + QStringLiteral("), A");
+                    return d;
+                }
+            } else {
+                d.mnemonic = QStringLiteral("LD");
+                switch (p) {
+                case 0: d.operands = QStringLiteral("A, (BC)"); return d;
+                case 1: d.operands = QStringLiteral("A, (DE)"); return d;
+                case 2:
+                    if (const qint64 v = imm16(firstImmPos); v >= 0)
+                        d.operands = z80PairName(2, indexMode) + QStringLiteral(", (")
+                                   + hex16(static_cast<quint16>(v)) + QStringLiteral(")");
+                    return d;
+                case 3:
+                    if (const qint64 v = imm16(firstImmPos); v >= 0)
+                        d.operands = QStringLiteral("A, (") + hex16(static_cast<quint16>(v)) + QStringLiteral(")");
+                    return d;
+                }
+            }
+        }
+
+        if (z == 3) {
+            d.mnemonic = (q == 0) ? QStringLiteral("INC") : QStringLiteral("DEC");
+            d.operands = z80PairName(p, indexMode);
+            return d;
+        }
+
+        if (z == 4) {
+            d.mnemonic = QStringLiteral("INC");
+            d.operands = z80Reg8Name(y, indexMode, indexed && y == 6, disp);
+            return d;
+        }
+
+        if (z == 5) {
+            d.mnemonic = QStringLiteral("DEC");
+            d.operands = z80Reg8Name(y, indexMode, indexed && y == 6, disp);
+            return d;
+        }
+
+        if (z == 6) {
+            d.mnemonic = QStringLiteral("LD");
+            d.operands = z80Reg8Name(y, indexMode, indexed && y == 6, disp);
+            if (imm8Pos < static_cast<int>(size))
+                d.operands += QStringLiteral(", ") + hex8(code[imm8Pos]);
+            return d;
+        }
+
+        if (z == 7) {
+            d.mnemonic = z80MiscName(y);
+            return d;
+        }
+    }
+
+    if (x == 1) {
+        if (op == 0x76) {
+            d.mnemonic = QStringLiteral("HALT");
+            return d;
+        }
+        d.mnemonic = QStringLiteral("LD");
+        d.operands = z80Reg8Name(y, indexMode, indexed && y == 6, disp)
+                   + QStringLiteral(", ")
+                   + z80Reg8Name(z, indexMode, indexed && z == 6, disp);
+        return d;
+    }
+
+    if (x == 2) {
+        d.mnemonic = z80AluName(y);
+        d.operands = z80Reg8Name(z, indexMode, indexed && z == 6, disp);
+        return d;
+    }
+
+    if (x == 3) {
+        if (z == 0) {
+            d.mnemonic = QStringLiteral("RET");
+            d.isBranch = true;
             d.isReturn = true;
-            d.isBranch = true;
-        } else {
-            d.mnemonic = QStringLiteral("ED");
-            if (size >= 2)
-                d.operands = hex8(code[1]);
+            d.operands = z80ConditionName(y);
+            return d;
         }
-        return d;
-    }
 
-    // DD/FD indexed prefixes: detect JP (IX)/(IY), keep others generic for now.
-    if (op == 0xDD || op == 0xFD) {
-        const QString idx = (op == 0xDD) ? QStringLiteral("IX") : QStringLiteral("IY");
-        if (size >= 2 && code[1] == 0xE9) {
+        if (z == 1) {
+            if (q == 0) {
+                d.mnemonic = QStringLiteral("POP");
+                d.operands = z80PushPairName(p, indexMode);
+            } else {
+                switch (p) {
+                case 0:
+                    d.mnemonic = QStringLiteral("RET");
+                    d.isBranch = true;
+                    d.isReturn = true;
+                    d.hasFallthrough = false;
+                    break;
+                case 1:
+                    d.mnemonic = QStringLiteral("EXX");
+                    break;
+                case 2:
+                    d.mnemonic = QStringLiteral("JP");
+                    d.operands = QStringLiteral("(") + z80IndexName(indexMode) + QStringLiteral(")");
+                    d.isBranch = true;
+                    d.hasFallthrough = false;
+                    break;
+                case 3:
+                    d.mnemonic = QStringLiteral("LD");
+                    d.operands = QStringLiteral("SP, ") + z80IndexName(indexMode);
+                    break;
+                }
+            }
+            return d;
+        }
+
+        if (z == 2) {
             d.mnemonic = QStringLiteral("JP");
-            d.operands = QStringLiteral("(") + idx + QStringLiteral(")");
             d.isBranch = true;
-        } else {
-            d.mnemonic = idx;
-            if (size >= 2)
-                d.operands = hex8(code[1]);
+            d.cpuTarget = imm16(firstImmPos);
+            const QString cond = z80ConditionName(y);
+            d.operands = (d.cpuTarget >= 0)
+                ? (cond + QStringLiteral(", ") + hex16(static_cast<quint16>(d.cpuTarget)))
+                : cond;
+            return d;
         }
-        return d;
+
+        if (z == 3) {
+            switch (y) {
+            case 0:
+                d.mnemonic = QStringLiteral("JP");
+                d.isBranch = true;
+                d.hasFallthrough = false;
+                d.cpuTarget = imm16(firstImmPos);
+                if (d.cpuTarget >= 0)
+                    d.operands = hex16(static_cast<quint16>(d.cpuTarget));
+                return d;
+            case 2:
+                d.mnemonic = QStringLiteral("OUT");
+                if (firstImmPos < static_cast<int>(size))
+                    d.operands = QStringLiteral("(") + hex8(code[firstImmPos]) + QStringLiteral("), A");
+                return d;
+            case 3:
+                d.mnemonic = QStringLiteral("IN");
+                if (firstImmPos < static_cast<int>(size))
+                    d.operands = QStringLiteral("A, (") + hex8(code[firstImmPos]) + QStringLiteral(")");
+                return d;
+            case 4:
+                d.mnemonic = QStringLiteral("EX");
+                d.operands = QStringLiteral("(SP), ") + z80IndexName(indexMode);
+                return d;
+            case 5:
+                d.mnemonic = QStringLiteral("EX");
+                d.operands = QStringLiteral("DE, HL");
+                return d;
+            case 6:
+                d.mnemonic = QStringLiteral("DI");
+                return d;
+            case 7:
+                d.mnemonic = QStringLiteral("EI");
+                return d;
+            default:
+                return d;
+            }
+        }
+
+        if (z == 4) {
+            d.mnemonic = QStringLiteral("CALL");
+            d.isBranch = true;
+            d.isCall = true;
+            d.cpuTarget = imm16(firstImmPos);
+            const QString cond = z80ConditionName(y);
+            d.operands = (d.cpuTarget >= 0)
+                ? (cond + QStringLiteral(", ") + hex16(static_cast<quint16>(d.cpuTarget)))
+                : cond;
+            return d;
+        }
+
+        if (z == 5) {
+            if (q == 0) {
+                d.mnemonic = QStringLiteral("PUSH");
+                d.operands = z80PushPairName(p, indexMode);
+                return d;
+            }
+            if (p == 0) {
+                d.mnemonic = QStringLiteral("CALL");
+                d.isBranch = true;
+                d.isCall = true;
+                d.cpuTarget = imm16(firstImmPos);
+                if (d.cpuTarget >= 0)
+                    d.operands = hex16(static_cast<quint16>(d.cpuTarget));
+                return d;
+            }
+            return d;
+        }
+
+        if (z == 6) {
+            d.mnemonic = z80AluName(y);
+            if (firstImmPos < static_cast<int>(size))
+                d.operands = hex8(code[firstImmPos]);
+            return d;
+        }
+
+        if (z == 7) {
+            d.mnemonic = QStringLiteral("RST");
+            d.isBranch = true;
+            d.isCall = true;
+            d.cpuTarget = static_cast<qint64>(op & 0x38);
+            d.operands = hex8(static_cast<quint8>(op & 0x38));
+            return d;
+        }
     }
 
-    // Common control-flow decode for navigation/function scans.
-    switch (op) {
-    case 0x00: d.mnemonic = QStringLiteral("NOP"); return d;
-    case 0x3E:
-        d.mnemonic = QStringLiteral("LD");
-        if (size >= 2)
-            d.operands = QStringLiteral("A, ") + hex8(code[1]);
-        else
-            d.operands = QStringLiteral("A");
-        return d;
-    case 0x32:
-        d.mnemonic = QStringLiteral("LD");
-        if (const qint64 t = imm16(1); t >= 0)
-            d.operands = QStringLiteral("(") + hex16(static_cast<quint16>(t)) + QStringLiteral("), A");
-        return d;
-    case 0x3A:
-        d.mnemonic = QStringLiteral("LD");
-        if (const qint64 t = imm16(1); t >= 0)
-            d.operands = QStringLiteral("A, (") + hex16(static_cast<quint16>(t)) + QStringLiteral(")");
-        return d;
-    case 0xAF:
-        d.mnemonic = QStringLiteral("XOR");
-        d.operands = QStringLiteral("A");
-        return d;
-    case 0x10:
-        d.mnemonic = QStringLiteral("DJNZ");
-        d.isBranch = true;
-        d.cpuTarget = relTarget(1);
-        if (d.cpuTarget >= 0)
-            d.operands = hex16(static_cast<quint16>(d.cpuTarget));
-        return d;
-    case 0x18:
-        d.mnemonic = QStringLiteral("JR");
-        d.isBranch = true;
-        d.cpuTarget = relTarget(1);
-        if (d.cpuTarget >= 0)
-            d.operands = hex16(static_cast<quint16>(d.cpuTarget));
-        return d;
-    case 0x20: case 0x28: case 0x30: case 0x38: {
-        static const char *cc[] = {"NZ", "Z", "NC", "C"};
-        d.mnemonic = QStringLiteral("JR");
-        d.isBranch = true;
-        d.cpuTarget = relTarget(1);
-        const int idx = (op - 0x20) / 0x08;
-        if (d.cpuTarget >= 0)
-            d.operands = QString::fromLatin1(cc[idx]) + QStringLiteral(", ")
-                       + hex16(static_cast<quint16>(d.cpuTarget));
-        else
-            d.operands = QString::fromLatin1(cc[idx]);
-        return d;
-    }
-    case 0xC3:
-        d.mnemonic = QStringLiteral("JP");
-        d.isBranch = true;
-        d.cpuTarget = imm16(1);
-        if (d.cpuTarget >= 0)
-            d.operands = hex16(static_cast<quint16>(d.cpuTarget));
-        return d;
-    case 0xCD:
-        d.mnemonic = QStringLiteral("CALL");
-        d.isBranch = true;
-        d.isCall = true;
-        d.cpuTarget = imm16(1);
-        if (d.cpuTarget >= 0)
-            d.operands = hex16(static_cast<quint16>(d.cpuTarget));
-        return d;
-    case 0xC9:
-        d.mnemonic = QStringLiteral("RET");
-        d.isReturn = true;
-        return d;
-    case 0xE9:
-        d.mnemonic = QStringLiteral("JP");
-        d.isBranch = true;
-        d.operands = QStringLiteral("(HL)");
-        return d;
-    default:
-        break;
-    }
-
-    // RET cc
-    if ((op & 0xC7) == 0xC0) {
-        static const char *cc[] = {"NZ", "Z", "NC", "C", "PO", "PE", "P", "M"};
-        d.mnemonic = QStringLiteral("RET");
-        d.isBranch = true;
-        d.isReturn = true;
-        d.operands = QString::fromLatin1(cc[(op >> 3) & 0x7]);
-        return d;
-    }
-
-    // JP cc,nn
-    if ((op & 0xC7) == 0xC2) {
-        static const char *cc[] = {"NZ", "Z", "NC", "C", "PO", "PE", "P", "M"};
-        d.mnemonic = QStringLiteral("JP");
-        d.isBranch = true;
-        d.cpuTarget = imm16(1);
-        const QString cond = QString::fromLatin1(cc[(op >> 3) & 0x7]);
-        if (d.cpuTarget >= 0)
-            d.operands = cond + QStringLiteral(", ") + hex16(static_cast<quint16>(d.cpuTarget));
-        else
-            d.operands = cond;
-        return d;
-    }
-
-    // CALL cc,nn
-    if ((op & 0xC7) == 0xC4) {
-        static const char *cc[] = {"NZ", "Z", "NC", "C", "PO", "PE", "P", "M"};
-        d.mnemonic = QStringLiteral("CALL");
-        d.isBranch = true;
-        d.isCall = true;
-        d.cpuTarget = imm16(1);
-        const QString cond = QString::fromLatin1(cc[(op >> 3) & 0x7]);
-        if (d.cpuTarget >= 0)
-            d.operands = cond + QStringLiteral(", ") + hex16(static_cast<quint16>(d.cpuTarget));
-        else
-            d.operands = cond;
-        return d;
-    }
-
-    // RST n
-    if ((op & 0xC7) == 0xC7) {
-        d.mnemonic = QStringLiteral("RST");
-        d.isBranch = true;
-        d.isCall = true;
-        d.cpuTarget = static_cast<qint64>(op & 0x38);
-        d.operands = hex8(static_cast<quint8>(op & 0x38));
-        return d;
-    }
-
-    d.mnemonic = QStringLiteral("DB");
-    d.operands = hex8(op);
     return d;
 }
 
@@ -777,22 +1263,65 @@ QVector<DisasmInstruction> Disassembler::disassemble(const QByteArray &data, qin
         if (available <= 0)
             return result;
 
+        const bool usePlatformSeeds = (m_romType == RomType::GB || m_romType == RomType::GBC)
+            && offset == 0 && available == data.size() && data.size() >= 0x150;
         const uint8_t *code = reinterpret_cast<const uint8_t *>(data.constData() + offset);
         int pos = 0;
         const int limit = (maxInstr > 0) ? maxInstr : INT_MAX;
+        const QMap<qint64, int> reachable = usePlatformSeeds
+            ? z80ReachableInstructions(data, offset, available, m_baseAddress,
+                                       m_romType, true, false)
+            : QMap<qint64, int>();
         while (pos < available && result.size() < limit) {
-            const int rem = available - pos;
-            Z80Decoded z = decodeZ80Instruction(code + pos, static_cast<size_t>(rem),
-                                                static_cast<quint64>(offset + pos + m_baseAddress));
-            z.size = qMax(1, qMin(z.size, rem));
-
             DisasmInstruction di;
             di.fileOffset = offset + pos;
             di.address = static_cast<quint64>(di.fileOffset + m_baseAddress);
-            di.size = z.size;
-            di.opcodeSize = z.size;
-            di.mnemonic = z.mnemonic.isEmpty() ? QStringLiteral("DB") : z.mnemonic;
-            di.operands = z.operands;
+
+            const auto it = usePlatformSeeds ? reachable.constFind(di.fileOffset) : reachable.constEnd();
+            if (usePlatformSeeds && it == reachable.constEnd()) {
+                di.size = z80DataRunSize(reachable, di.fileOffset, offset + available);
+                di.opcodeSize = di.size;
+                di.mnemonic = QStringLiteral("DC.B");
+                QStringList values;
+                values.reserve(di.size);
+                for (int b = 0; b < di.size; ++b)
+                    values.append(hex8(code[pos + b]));
+                di.operands = values.join(QStringLiteral(","));
+                di.isBranch = false;
+                di.isCall = false;
+                di.isReturn = false;
+                di.branchTarget = -1;
+            } else {
+                const int rem = available - pos;
+                Z80Decoded z = decodeZ80Instruction(code + pos, static_cast<size_t>(rem),
+                                                    static_cast<quint64>(offset + pos + m_baseAddress));
+                z.size = usePlatformSeeds
+                    ? qMax(1, qMin(it.value(), rem))
+                    : qMax(1, qMin(z.size, rem));
+                di.size = z.size;
+                di.opcodeSize = z.size;
+                if (z.mnemonic.isEmpty()) {
+                    di.mnemonic = QStringLiteral("DC.B");
+                    QStringList values;
+                    values.reserve(di.size);
+                    for (int b = 0; b < di.size; ++b)
+                        values.append(hex8(code[pos + b]));
+                    di.operands = values.join(QStringLiteral(","));
+                    di.isBranch = false;
+                    di.isCall = false;
+                    di.isReturn = false;
+                    di.branchTarget = -1;
+                } else {
+                    di.mnemonic = z.mnemonic;
+                    di.operands = z.operands;
+                    di.isBranch = z.isBranch;
+                    di.isCall = z.isCall;
+                    di.isReturn = z.isReturn;
+                    di.branchTarget = (z.cpuTarget >= 0)
+                        ? resolveTarget(static_cast<quint64>(z.cpuTarget))
+                        : -1;
+                }
+            }
 
             QString bytesHex;
             for (int b = 0; b < di.size; ++b) {
@@ -802,13 +1331,6 @@ QVector<DisasmInstruction> Disassembler::disassemble(const QByteArray &data, qin
                                 .toUpper().rightJustified(2, QLatin1Char('0'));
             }
             di.bytes = bytesHex;
-
-            di.isBranch = z.isBranch;
-            di.isCall = z.isCall;
-            di.isReturn = z.isReturn;
-            di.branchTarget = (z.cpuTarget >= 0)
-                ? resolveTarget(static_cast<quint64>(z.cpuTarget))
-                : -1;
 
             result.append(di);
             pos += di.size;
@@ -902,14 +1424,36 @@ QVector<InsnBoundary> Disassembler::scanBoundaries(
         if (available <= 0)
             return result;
 
-        const uint8_t *code = reinterpret_cast<const uint8_t *>(data.constData() + offset);
+        const bool usePlatformSeeds = (m_romType == RomType::GB || m_romType == RomType::GBC)
+            && offset == 0 && available == data.size() && data.size() >= 0x150;
         int pos = 0;
         result.reserve(available / 2);
+        const QMap<qint64, int> reachable = usePlatformSeeds
+            ? z80ReachableInstructions(data, offset, available, m_baseAddress,
+                                       m_romType, true, false)
+            : QMap<qint64, int>();
         while (pos < available) {
-            const int rem = available - pos;
-            int sz = z80InstructionSize(code + pos, static_cast<size_t>(rem));
-            sz = qMax(1, qMin(sz, rem));
-            result.append({offset + pos, sz});
+            const qint64 fileOffset = offset + pos;
+            int sz = 1;
+            bool isData = false;
+            if (usePlatformSeeds) {
+                const auto it = reachable.constFind(fileOffset);
+                if (it == reachable.constEnd()) {
+                    sz = z80DataRunSize(reachable, fileOffset, offset + available);
+                    isData = true;
+                } else {
+                    sz = qMax(1, qMin(it.value(), available - pos));
+                }
+            } else {
+                const int rem = available - pos;
+                Z80Decoded z = decodeZ80Instruction(
+                    reinterpret_cast<const uint8_t *>(data.constData() + fileOffset),
+                    static_cast<size_t>(rem),
+                    static_cast<quint64>(fileOffset + m_baseAddress));
+                sz = qMax(1, qMin(z.size, rem));
+                isData = z.mnemonic.isEmpty();
+            }
+            result.append({offset + pos, sz, isData});
             pos += sz;
         }
         return result;
@@ -958,35 +1502,39 @@ QVector<DetectedFunction> Disassembler::scanFunctions(
 
         const qint64 fileStart = offset;
         const qint64 fileEnd = offset + available;
-        const uint8_t *code = reinterpret_cast<const uint8_t *>(data.constData() + offset);
 
         QSet<qint64> callTargets;
         QVector<qint64> retEndOffsets;
 
-        int pos = 0;
-        int nextProgress = qMax(1, available / 100);
-        while (pos < available) {
-            const int rem = available - pos;
-            const quint64 cpuAddr = static_cast<quint64>(offset + pos + m_baseAddress);
-            Z80Decoded z = decodeZ80Instruction(code + pos, static_cast<size_t>(rem), cpuAddr);
-            z.size = qMax(1, qMin(z.size, rem));
+        const bool usePlatformSeeds = (m_romType == RomType::GB || m_romType == RomType::GBC);
+        const QMap<qint64, int> reachable = z80ReachableInstructions(
+            data, offset, available, m_baseAddress, m_romType, usePlatformSeeds, !usePlatformSeeds);
 
-            if (z.isCall && z.cpuTarget >= 0) {
+        int processed = 0;
+        const int totalReachable = qMax(1, reachable.size());
+        for (auto it = reachable.constBegin(); it != reachable.constEnd(); ++it) {
+            const qint64 fileOffset = it.key();
+            const int rem = static_cast<int>(fileEnd - fileOffset);
+            Z80Decoded z = decodeZ80Instruction(
+                reinterpret_cast<const uint8_t *>(data.constData() + fileOffset),
+                static_cast<size_t>(rem),
+                static_cast<quint64>(fileOffset + m_baseAddress));
+            z.size = qMax(1, qMin(it.value(), rem));
+
+            if (!z.mnemonic.isEmpty() && z.isCall && z.cpuTarget >= 0) {
                 const qint64 targetFile = resolveTarget(static_cast<quint64>(z.cpuTarget));
                 if (targetFile >= fileStart && targetFile < fileEnd) {
                     callTargets.insert(targetFile);
                     if (outCallPointers && z.size >= 3)
-                        outCallPointers->append({offset + pos + 1, targetFile, 2});
+                        outCallPointers->append({fileOffset + z.size - 2, targetFile, 2});
                 }
             }
-            if (z.isReturn)
-                retEndOffsets.append(offset + pos + z.size);
+            if (!z.mnemonic.isEmpty() && z.isReturn)
+                retEndOffsets.append(fileOffset + z.size);
 
-            pos += z.size;
-            if (progressCb && pos >= nextProgress) {
-                progressCb(pos * 50 / available);
-                nextProgress = pos + qMax(1, available / 100);
-            }
+            ++processed;
+            if (progressCb)
+                progressCb(processed * 50 / totalReachable);
         }
 
         if (callTargets.isEmpty())

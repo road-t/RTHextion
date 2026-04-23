@@ -105,7 +105,11 @@ struct DisasmInstruction {
 };
 
 /// Lightweight instruction boundary for fast full-file scanning.
-struct InsnBoundary { qint64 offset; int size; };
+struct InsnBoundary {
+    qint64 offset;
+    int size;
+    bool isData = false;
+};
 
 /// Detected function entry with its start/end file offsets.
 struct DetectedFunction {

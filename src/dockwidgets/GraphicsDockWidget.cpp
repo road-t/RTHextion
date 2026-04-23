@@ -74,6 +74,24 @@ void PalettePreview::setPalette(const QVector<QRgb> &colors)
     update();
 }
 
+void PalettePreview::setVisibleColorCount(int count)
+{
+    const int normalized = qMax(0, count);
+    if (m_visibleColorCount == normalized)
+        return;
+    m_visibleColorCount = normalized;
+    updateHeightForCurrentWidth();
+    updateGeometry();
+    update();
+}
+
+int PalettePreview::visibleColorCount() const
+{
+    if (m_visibleColorCount > 0)
+        return qMin(m_colors.size(), m_visibleColorCount);
+    return m_colors.size();
+}
+
 void PalettePreview::setDimmed(bool dimmed)
 {
     if (m_dimmed == dimmed)
@@ -84,8 +102,9 @@ void PalettePreview::setDimmed(bool dimmed)
 
 QSize PalettePreview::sizeHint() const
 {
-    const int cols = qMax(1, qMin(m_colors.size(), 8));
-    const int rows = qMax(1, (m_colors.size() + cols - 1) / cols);
+    const int count = visibleColorCount();
+    const int cols = qMax(1, qMin(count, 8));
+    const int rows = qMax(1, (count + cols - 1) / cols);
     return QSize(cols * kPaletteCellSize, rows * kPaletteCellSize);
 }
 
@@ -102,7 +121,7 @@ void PalettePreview::resizeEvent(QResizeEvent *event)
 
 int PalettePreview::columnCountForWidth(int availWidth) const
 {
-    const int n = m_colors.size();
+    const int n = visibleColorCount();
     if (n <= 0)
         return 1;
     const int maxColsByWidth = qMax(1, availWidth / kPaletteCellSize);
@@ -112,7 +131,7 @@ int PalettePreview::columnCountForWidth(int availWidth) const
 void PalettePreview::updateHeightForCurrentWidth()
 {
     const int cols = columnCountForWidth(width());
-    const int rows = qMax(1, (m_colors.size() + cols - 1) / cols);
+    const int rows = qMax(1, (visibleColorCount() + cols - 1) / cols);
     const int h = rows * kPaletteCellSize;
     setMinimumHeight(h);
     setMaximumHeight(h);
@@ -123,7 +142,7 @@ void PalettePreview::paintEvent(QPaintEvent *)
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, false);
 
-    const int n = m_colors.size();
+    const int n = visibleColorCount();
     if (n == 0) {
         p.fillRect(rect(), Qt::black);
         return;
@@ -174,11 +193,11 @@ void PalettePreview::paintEvent(QPaintEvent *)
 
 void PalettePreview::mousePressEvent(QMouseEvent *event)
 {
-    if (m_colors.isEmpty())
+    if (visibleColorCount() <= 0)
         return;
 
     const int cols = columnCountForWidth(width());
-    const int rows = (m_colors.size() + cols - 1) / cols;
+    const int rows = (visibleColorCount() + cols - 1) / cols;
     const int cellW = kPaletteCellSize;
     const int cellH = kPaletteCellSize;
     if (event->pos().x() < 0 || event->pos().x() >= cols * cellW
@@ -187,7 +206,7 @@ void PalettePreview::mousePressEvent(QMouseEvent *event)
     const int col = event->pos().x() / cellW;
     const int row = event->pos().y() / cellH;
     const int idx = row * cols + col;
-    if (idx < 0 || idx >= m_colors.size())
+    if (idx < 0 || idx >= visibleColorCount())
         return;
 
     if (event->button() == Qt::LeftButton) {
@@ -203,11 +222,11 @@ void PalettePreview::mousePressEvent(QMouseEvent *event)
 
 void PalettePreview::mouseDoubleClickEvent(QMouseEvent *event)
 {
-    if (m_colors.isEmpty() || event->button() != Qt::LeftButton)
+    if (visibleColorCount() <= 0 || event->button() != Qt::LeftButton)
         return;
 
     const int cols = columnCountForWidth(width());
-    const int rows = (m_colors.size() + cols - 1) / cols;
+    const int rows = (visibleColorCount() + cols - 1) / cols;
     const int cellW = kPaletteCellSize;
     const int cellH = kPaletteCellSize;
     if (event->pos().x() < 0 || event->pos().x() >= cols * cellW
@@ -216,7 +235,7 @@ void PalettePreview::mouseDoubleClickEvent(QMouseEvent *event)
     const int col = event->pos().x() / cellW;
     const int row = event->pos().y() / cellH;
     const int idx = row * cols + col;
-    if (idx < 0 || idx >= m_colors.size())
+    if (idx < 0 || idx >= visibleColorCount())
         return;
 
     const QColor initial = QColor::fromRgba(m_colors[idx]);
@@ -333,13 +352,23 @@ void GraphicsDockWidget::setSectionActive(bool active)
 
 void GraphicsDockWidget::setCodec(TileCodec codec)
 {
+    bool changed = false;
     const QSignalBlocker blocker(m_codecCombo);
     const int wanted = static_cast<int>(codec);
     for (int i = 0; i < m_codecCombo->count(); ++i) {
         if (m_codecCombo->itemData(i).toInt() == wanted) {
+            changed = (m_codecCombo->currentIndex() != i);
             m_codecCombo->setCurrentIndex(i);
-            return;
+            break;
         }
+    }
+
+    if (changed) {
+        m_palPreview->setVisibleColorCount(1 << tileCodecBpp(selectedCodec()));
+        if (!m_hasCustomPalette)
+            updatePalettePreview();
+        else
+            setPaletteColors(m_palPreview->colors());
     }
 }
 
@@ -354,12 +383,13 @@ void GraphicsDockWidget::setTileColsDisplay(int cols)
 void GraphicsDockWidget::setPaletteColors(const QVector<QRgb> &pal)
 {
     m_hasCustomPalette = !pal.isEmpty();
+    const int colors = 1 << tileCodecBpp(selectedCodec());
+    m_palPreview->setVisibleColorCount(colors);
     if (pal.isEmpty()) {
         updatePalettePreview();
         return;
     }
 
-    const int colors = 1 << tileCodecBpp(selectedCodec());
     QVector<QRgb> normalized = pal;
     if (normalized.size() > colors)
         normalized.resize(colors);
@@ -408,6 +438,7 @@ void GraphicsDockWidget::updatePalettePreview()
     const TileCodec codec = selectedCodec();
     const int bpp = tileCodecBpp(codec);
     const int colors = 1 << bpp;
+    m_palPreview->setVisibleColorCount(colors);
     QVector<QRgb> pal(colors);
 
     // Replicate the palette generation from HexEditor::initGraphicsPalette

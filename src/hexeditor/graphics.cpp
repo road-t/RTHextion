@@ -724,12 +724,25 @@ void HexEditor::gfxSetPixel(Qt::MouseButton button)
     if (tileData.size() < bpt)
         return;
 
+    const QByteArray oldTileData = tileData;
+
     // Modify the pixel
     setTilePixel(codec, reinterpret_cast<uint8_t *>(tileData.data()),
                  _gfxClickPixX, _gfxClickPixY, palIdx);
 
-    // Write back the tile (in REPLACE mode)
-    replace(tileFileOfs, bpt, tileData);
+    if (tileData == oldTileData)
+        return;
+
+    // Write only changed bytes into explicit undo macro to keep drawing undoable.
+    _undoStack->beginMacro(tr("Draw graphics pixel"));
+    for (int i = 0; i < bpt; ++i) {
+        if (oldTileData.at(i) == tileData.at(i))
+            continue;
+        _undoStack->overwrite(tileFileOfs + i, tileData.at(i));
+    }
+    _undoStack->endMacro();
+
+    refresh();
 
     viewport()->update();
 }

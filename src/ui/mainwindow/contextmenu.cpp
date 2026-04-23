@@ -308,6 +308,7 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         QAction *copyAddress = nullptr;
         QAction *cut = nullptr;
         QAction *copy = nullptr;
+        QAction *copyHex = nullptr;
         QAction *copyToNewTab = nullptr;
         QAction *paste = nullptr;
     };
@@ -330,6 +331,8 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         else
             acts.copy = menu.addAction(tr("Copy"));
         acts.copy->setShortcut(QKeySequence::Copy);
+        if (isHexArea && clickedDisasm)
+            acts.copyHex = menu.addAction(tr("Copy hex values"));
         acts.copyToNewTab = menu.addAction(tr("Copy to a new tab"));
         acts.copyToNewTab->setEnabled(hasSelection);
         if (isHexArea)
@@ -424,6 +427,19 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
                 // Hex area: space-separated uppercase hex pairs
                 QApplication::clipboard()->setText(QString::fromLatin1(raw.toHex(' ')).toUpper());
             }
+            return true;
+        }
+
+        if (chosen == acts.copyHex && acts.copyHex)
+        {
+            qint64 selBegin = hexEdit->getSelectionBegin();
+            qint64 selEnd   = hexEdit->getSelectionEnd();
+            if (selEnd - selBegin < 1) {
+                selBegin = bytePos;
+                selEnd = bytePos + 1;
+            }
+            const QByteArray raw = hexEdit->dataAt(selBegin, selEnd - selBegin);
+            QApplication::clipboard()->setText(QString::fromLatin1(raw.toHex(' ')).toUpper());
             return true;
         }
 
