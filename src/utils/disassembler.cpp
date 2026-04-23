@@ -1,6 +1,9 @@
 #include "disassembler.h"
 
+#ifdef HAVE_CAPSTONE
 #include <capstone/capstone.h>
+#endif
+
 #include <QMap>
 #include <QSet>
 #include <algorithm>
@@ -823,10 +826,12 @@ Disassembler::~Disassembler()
 void Disassembler::close()
 {
     if (m_open) {
+#ifdef HAVE_CAPSTONE
         if (m_handle != 0) {
             csh h = static_cast<csh>(m_handle);
             cs_close(&h);
         }
+#endif
         m_open = false;
         m_handle = 0;
     }
@@ -834,16 +839,13 @@ void Disassembler::close()
 
 bool Disassembler::isSupported(RomType type)
 {
-    switch (type) {
-    // Z80-based
-    case RomType::GB:
-    case RomType::GBC:
-    case RomType::SMS:
-    case RomType::GG:
-    case RomType::SG1000:
-    case RomType::ColecoVision:
+    if (isZ80RomType(type))
         return true;
 
+#ifndef HAVE_CAPSTONE
+    return false;
+#else
+    switch (type) {
     // 6502-based
     case RomType::NES:
     case RomType::Atari2600:
@@ -883,6 +885,7 @@ bool Disassembler::isSupported(RomType type)
     default:
         return false;
     }
+#endif
 }
 
 bool Disassembler::setRomType(RomType type)
@@ -899,6 +902,9 @@ bool Disassembler::setRomType(RomType type)
         return true;
     }
 
+#ifndef HAVE_CAPSTONE
+    return false;
+#else
     cs_arch arch;
     cs_mode mode;
 
@@ -972,6 +978,7 @@ bool Disassembler::setRomType(RomType type)
     m_baseAddress = -defaultPointerOffset(type);
 
     return true;
+#endif
 }
 
 qint64 Disassembler::resolveTarget(quint64 cpuTarget) const
@@ -981,6 +988,7 @@ qint64 Disassembler::resolveTarget(quint64 cpuTarget) const
     return fileOffset;
 }
 
+#ifdef HAVE_CAPSTONE
 /// Check if an instruction is a branch/jump type
 static bool isBranchInstruction(csh handle, const cs_insn *insn, cs_arch arch)
 {
@@ -1250,6 +1258,7 @@ static qint64 extractBranchTarget(const cs_insn *insn, cs_arch arch)
 
     return -1;
 }
+#endif
 
 QVector<DisasmInstruction> Disassembler::disassemble(const QByteArray &data, qint64 offset,
                                                       int maxBytes, int maxInstr)
@@ -1339,6 +1348,11 @@ QVector<DisasmInstruction> Disassembler::disassemble(const QByteArray &data, qin
         return result;
     }
 
+#ifndef HAVE_CAPSTONE
+    Q_UNUSED(maxBytes);
+    Q_UNUSED(maxInstr);
+    return result;
+#else
     const int available = qMin(maxBytes, static_cast<int>(data.size() - offset));
     if (available <= 0)
         return result;
@@ -1410,6 +1424,7 @@ QVector<DisasmInstruction> Disassembler::disassemble(const QByteArray &data, qin
 
     cs_free(insn, 1);
     return result;
+#endif
 }
 
 QVector<InsnBoundary> Disassembler::scanBoundaries(
@@ -1459,6 +1474,10 @@ QVector<InsnBoundary> Disassembler::scanBoundaries(
         return result;
     }
 
+#ifndef HAVE_CAPSTONE
+    Q_UNUSED(maxBytes);
+    return result;
+#else
     const int available = qMin(maxBytes, static_cast<int>(data.size() - offset));
     if (available <= 0)
         return result;
@@ -1484,6 +1503,7 @@ QVector<InsnBoundary> Disassembler::scanBoundaries(
 
     cs_free(insn, 1);
     return result;
+#endif
 }
 
 QVector<DetectedFunction> Disassembler::scanFunctions(
@@ -1579,6 +1599,12 @@ QVector<DetectedFunction> Disassembler::scanFunctions(
         return funcs;
     }
 
+#ifndef HAVE_CAPSTONE
+    Q_UNUSED(maxBytes);
+    Q_UNUSED(progressCb);
+    Q_UNUSED(outCallPointers);
+    return funcs;
+#else
     const int available = qMin(maxBytes, static_cast<int>(data.size() - offset));
     if (available <= 0)
         return funcs;
@@ -1732,4 +1758,5 @@ QVector<DetectedFunction> Disassembler::scanFunctions(
     }
 
     return funcs;
+#endif
 }
