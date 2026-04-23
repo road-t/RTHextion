@@ -5,7 +5,6 @@
 #include <QByteArray>
 #include <QVector>
 #include <QBuffer>
-#include <QAudioFormat>
 #include <memory>
 #include "audiodetector.h"
 

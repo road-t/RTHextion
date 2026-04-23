@@ -1,5 +1,12 @@
-QT += core gui widgets concurrent network multimedia
+QT += core gui widgets concurrent network
 CONFIG += c++17
+
+qtHaveModule(multimedia) {
+    QT += multimedia
+    DEFINES += HAVE_QT_MULTIMEDIA
+} else {
+    warning("Qt Multimedia module not found; audio playback will be disabled")
+}
 
 TEMPLATE = app
 TARGET = RTHextion

@@ -1,7 +1,11 @@
 #include "audioplayer.h"
+
+#ifdef HAVE_QT_MULTIMEDIA
 #include <QAudioSink>
 #include <QMediaDevices>
 #include <QAudioDevice>
+#endif
+
 #include <QFile>
 #include <QDataStream>
 #include <QtEndian>
@@ -55,6 +59,11 @@ void AudioPlayer::play()
 
 void AudioPlayer::play(int sampleRateOverride, double speedMultiplier)
 {
+#ifndef HAVE_QT_MULTIMEDIA
+    Q_UNUSED(sampleRateOverride);
+    Q_UNUSED(speedMultiplier);
+    return;
+#else
     stop();
 
     if (m_pcmPayload.isEmpty() || m_sampleRate <= 0)
@@ -83,10 +92,12 @@ void AudioPlayer::play(int sampleRateOverride, double speedMultiplier)
     m_audioBuffer.open(QIODevice::ReadOnly);
     m_audioSink->start(&m_audioBuffer);
     emit playbackStarted();
+#endif
 }
 
 void AudioPlayer::stop()
 {
+#ifdef HAVE_QT_MULTIMEDIA
     if (m_audioSink) {
         disconnect(m_audioSink, nullptr, this, nullptr);
         m_audioSink->stop();
@@ -95,11 +106,16 @@ void AudioPlayer::stop()
     }
     if (m_audioBuffer.isOpen())
         m_audioBuffer.close();
+#endif
 }
 
 bool AudioPlayer::isPlaying() const
 {
+#ifdef HAVE_QT_MULTIMEDIA
     return m_audioSink && m_audioSink->state() == QAudio::ActiveState;
+#else
+    return false;
+#endif
 }
 
 int AudioPlayer::durationMs() const
