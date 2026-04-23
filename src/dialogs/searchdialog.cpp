@@ -11,6 +11,7 @@
 #include <QRegularExpressionValidator>
 #include <QStringDecoder>
 #include <QStringEncoder>
+#include "SectionListModel.h"
 
 SearchDialog::SearchDialog(HexEditor *hexEdit, QWidget *parent) :
     QDialog(parent),
@@ -40,6 +41,13 @@ SearchDialog::SearchDialog(HexEditor *hexEdit, QWidget *parent) :
     cmbFindTable->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
     cbRelative = new QCheckBox(tr("Relative search"), this);
+    cmbSectionScope = new QComboBox(this);
+    cmbSectionScope->addItem(tr("All"), 0);
+    cmbSectionScope->addItem(tr("Text"), 1);
+    cmbSectionScope->addItem(tr("Code"), 2);
+    cmbSectionScope->addItem(tr("Sound"), 3);
+    cmbSectionScope->addItem(tr("Graphics"), 4);
+    cmbSectionScope->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::Fixed);
     lbMatchStatus = new QLabel(tr("No active match"), this);
     lbMatchStatus->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     lbMatchStatus->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
@@ -53,7 +61,8 @@ SearchDialog::SearchDialog(HexEditor *hexEdit, QWidget *parent) :
     findGrid->addWidget(pbFindPrev, 1, 3);
 
     // Row 2: relative checkbox
-    findGrid->addWidget(cbRelative, 2, 0, 1, 2);
+    findGrid->addWidget(cbRelative, 2, 0, 1, 1);
+    findGrid->addWidget(cmbSectionScope, 2, 1, 1, 1);
     findGrid->addWidget(lbMatchStatus, 2, 2, 1, 2);
 
     findGrid->setColumnStretch(1, 1);
@@ -106,6 +115,8 @@ SearchDialog::SearchDialog(HexEditor *hexEdit, QWidget *parent) :
             this, &SearchDialog::onReplaceTableChanged);
         connect(cbFind->lineEdit(), &QLineEdit::textChanged, this, [this]() { clearMatchStatus(); });
         connect(cbRelative, &QCheckBox::toggled, this, [this]() { clearMatchStatus(); });
+        connect(cmbSectionScope, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this]() { clearMatchStatus(); });
 
     resize(480, 0);
 }
@@ -125,11 +136,15 @@ SearchDialog::State SearchDialog::dialogState() const
             cmbFindTable->currentData().toInt(),
             cbReplace->currentText(),
             cmbReplaceTable->currentData().toInt(),
-            cbRelative->isChecked()};
+            cbRelative->isChecked(),
+            cmbSectionScope ? cmbSectionScope->currentData().toInt() : 0};
 }
 
 void SearchDialog::setDialogState(const State &s)
 {
+    m_pendingState = s;
+    m_hasPendingState = true;
+
     cbFind->setEditText(s.findText);
     {
         // Select matching table combo item by data value
@@ -163,6 +178,12 @@ void SearchDialog::setDialogState(const State &s)
             QRegularExpression("[0-9A-Fa-f ]*"), le) : nullptr);
     }
     cbRelative->setChecked(s.relative);
+    if (cmbSectionScope) {
+        int idx = cmbSectionScope->findData(s.sectionScope);
+        if (idx < 0)
+            idx = 0;
+        cmbSectionScope->setCurrentIndex(idx);
+    }
 }
 
 void SearchDialog::setAvailableTables(const QVector<TableTab> &tables, int activeIndex, bool useTable)
@@ -175,6 +196,9 @@ void SearchDialog::setAvailableTables(const QVector<TableTab> &tables, int activ
 void SearchDialog::showEvent(QShowEvent *ev)
 {
     QDialog::showEvent(ev);
+
+    // Preserve current values because table combos are repopulated on each show.
+    const State stateBeforePopulate = m_hasPendingState ? m_pendingState : dialogState();
 
     // Populate both table comboboxes
     auto populateTableCombo = [this](QComboBox *combo) {
@@ -203,7 +227,92 @@ void SearchDialog::showEvent(QShowEvent *ev)
     };
     m_findTable = tableFromCombo(cmbFindTable);
     m_replaceTable = tableFromCombo(cmbReplaceTable);
+    setDialogState(stateBeforePopulate);
+    m_hasPendingState = false;
     clearMatchStatus();
+}
+
+bool SearchDialog::offsetMatchesScope(qint64 offset) const
+{
+    if (!_hexEdit)
+        return false;
+
+    const int scope = cmbSectionScope ? cmbSectionScope->currentData().toInt() : 0;
+    if (scope == 0)
+        return true;
+
+    SectionListModel *model = _hexEdit->sectionModel();
+    const int mode = model ? model->displayModeAtOffset(offset) : SectionDisplay_Default;
+
+    switch (scope) {
+    case 1: // Text
+        return mode != SectionDisplay_Disasm
+            && mode != SectionDisplay_Audio
+            && mode != SectionDisplay_Graphics;
+    case 2: // Code
+        return mode == SectionDisplay_Disasm;
+    case 3: // Sound
+        return mode == SectionDisplay_Audio;
+    case 4: // Graphics
+        return mode == SectionDisplay_Graphics;
+    default:
+        return true;
+    }
+}
+
+qint64 SearchDialog::findMatchingOccurrence(bool forward, qint64 from, const QByteArray &needle,
+                                           bool relativeMode, bool allowWrap, bool *wrappedOut) const
+{
+    if (!_hexEdit || needle.isEmpty())
+        return -1;
+
+    const qint64 fileSize = _hexEdit->dataSize();
+    const qint64 lastPossibleStart = qMax<qint64>(0, fileSize - needle.size());
+    if (lastPossibleStart < 0)
+        return -1;
+
+    bool wrapped = false;
+    qint64 cursor = qBound<qint64>(0, from, lastPossibleStart);
+
+    while (true) {
+        qint64 idx = forward
+            ? _hexEdit->findNextIndex(needle, cursor, relativeMode)
+            : _hexEdit->findPreviousIndex(needle, cursor, relativeMode);
+
+        if (idx < 0) {
+            if (!allowWrap || wrapped)
+                break;
+
+            cursor = forward ? 0 : lastPossibleStart;
+            wrapped = true;
+            continue;
+        }
+
+        if (offsetMatchesScope(idx)) {
+            if (wrappedOut)
+                *wrappedOut = wrapped;
+            return idx;
+        }
+
+        if (forward) {
+            if (idx >= lastPossibleStart)
+                idx = -1;
+            cursor = idx >= 0 ? (idx + 1) : -1;
+        } else {
+            cursor = idx - 1;
+        }
+
+        if (cursor < 0 || cursor > lastPossibleStart) {
+            if (!allowWrap || wrapped)
+                break;
+            cursor = forward ? 0 : lastPossibleStart;
+            wrapped = true;
+        }
+    }
+
+    if (wrappedOut)
+        *wrappedOut = false;
+    return -1;
 }
 
 void SearchDialog::onFindTableChanged(int /*index*/)
@@ -309,24 +418,16 @@ SearchDialog::SearchResult SearchDialog::findOccurrence(bool forward, bool allow
         from = forward ? (selectionBegin + 1) : (selectionBegin - 1);
 
     if (forward) {
-        result.index = _hexEdit->findNextIndex(_findBa, from, relativeMode);
-        if (result.index < 0 && allowWrap) {
-            result.index = _hexEdit->findNextIndex(_findBa, 0, relativeMode);
-            result.wrapped = result.index >= 0;
-        }
+        result.index = findMatchingOccurrence(true, from, _findBa, relativeMode, allowWrap, &result.wrapped);
     } else {
-        result.index = _hexEdit->findPreviousIndex(_findBa, from, relativeMode);
-        if (result.index < 0 && allowWrap) {
-            result.index = _hexEdit->findPreviousIndex(_findBa, lastPossibleStart, relativeMode);
-            result.wrapped = result.index >= 0;
-        }
+        result.index = findMatchingOccurrence(false, from, _findBa, relativeMode, allowWrap, &result.wrapped);
     }
 
     if (result.index >= 0) {
         _hexEdit->highlightMatch(result.index, _findBa.size());
 
         for (qint64 scanFrom = 0; scanFrom <= lastPossibleStart; ) {
-            const qint64 matchIndex = _hexEdit->findNextIndex(_findBa, scanFrom, relativeMode);
+            const qint64 matchIndex = findMatchingOccurrence(true, scanFrom, _findBa, relativeMode, false, nullptr);
             if (matchIndex < 0)
                 break;
 
@@ -393,7 +494,7 @@ void SearchDialog::on_pbReplaceAll_clicked()
     qint64 searchFrom = 0;
 
     while (searchFrom <= qMax<qint64>(0, _hexEdit->dataSize() - _findBa.size())) {
-        const qint64 idx = _hexEdit->findNextIndex(_findBa, searchFrom, relativeMode);
+        const qint64 idx = findMatchingOccurrence(true, searchFrom, _findBa, relativeMode, false, nullptr);
         if (idx < 0)
             break;
 
@@ -466,6 +567,17 @@ void SearchDialog::changeEvent(QEvent *event)
 {
     if (event->type() == QEvent::LanguageChange) {
         setWindowTitle(tr("Find/Replace"));
+        if (cmbSectionScope) {
+            const int currentScope = cmbSectionScope->currentData().toInt();
+            cmbSectionScope->setItemText(0, tr("All"));
+            cmbSectionScope->setItemText(1, tr("Text"));
+            cmbSectionScope->setItemText(2, tr("Code"));
+            cmbSectionScope->setItemText(3, tr("Sound"));
+            cmbSectionScope->setItemText(4, tr("Graphics"));
+            const int idx = cmbSectionScope->findData(currentScope);
+            if (idx >= 0)
+                cmbSectionScope->setCurrentIndex(idx);
+        }
     }
     QDialog::changeEvent(event);
 }

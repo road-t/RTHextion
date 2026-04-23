@@ -28,6 +28,7 @@ public:
         QString replaceText;
         int     replaceFormat = -1;
         bool    relative      = false;
+        int     sectionScope  = 0;    // 0=All, 1=Text, 2=Code, 3=Sound, 4=Graphics
     };
     State dialogState() const;
     void  setDialogState(const State &s);
@@ -54,6 +55,9 @@ private:
     };
 
     SearchResult findOccurrence(bool forward, bool allowWrap = true);
+    bool offsetMatchesScope(qint64 offset) const;
+    qint64 findMatchingOccurrence(bool forward, qint64 from, const QByteArray &needle,
+                                  bool relativeMode, bool allowWrap, bool *wrappedOut = nullptr) const;
     bool selectionMatchesPattern(const QByteArray &needle, bool relativeMode) const;
     void updateMatchStatus(const SearchResult &result, bool hasPattern, bool found);
     void clearMatchStatus();
@@ -74,6 +78,7 @@ private:
     QComboBox *cbFind;
     QComboBox *cmbFindTable;
     QCheckBox *cbRelative;
+    QComboBox *cmbSectionScope;
     QLabel *lbMatchStatus;
     QPushButton *pbFind;
     QPushButton *pbFindPrev;
@@ -84,6 +89,9 @@ private:
     QPushButton *pbReplaceAll;
 
     QPushButton *pbCancel;
+
+    State m_pendingState;
+    bool m_hasPendingState = false;
 };
 
 #endif // SEARCHDIALOG_H
