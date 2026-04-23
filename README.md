@@ -1,20 +1,28 @@
-# RTHextion v2.1 - Retrogames Translation Hex Editor
+# RTHextion v3.0-alpha - Retrogames Translation Hex Editor
 
-A hex editor for retrogames translation and ROMHacking, a tribute to 00's Translhextion by Januschan. 
+A powerful hex-editor for retrogames translation and ROMHacking. 
+
 
 ## Features
 - Translation projects support:
   - Multiple tables support
-  - Pointers/data list
+  - Integrated disassembly with multiple CPU support
+  - Tile Graphics display and editing
+  - Audio display, playback and import/export
+  - Pointers list
   - Original data import/preservation for safe editing and comparison
   - IPS patch generation and import
   - Quick original content view
+  - Sections with separate view type and groupping
 - **Multi-tab workspace** with persistent session — open multiple files/projects simultaneously, all tabs and their state saved and restored on restart
 - Dock widgets for convenient workflow:
   - **Sections dock** — organize file structure with nested sections, auto-highlight current section by cursor position, full drag-drop support
   - **Pointers dock** — search data pointers and navigate to referenced locations with real-time preview
   - **Translation tables dock** — view, edit, and switch between translation tables without leaving the editor
   - **Changes dock** — track all modifications to the current file
+  - **Graphics dock** — preview and edit tile graphics with palette-aware rendering and direct drawing tools
+  - **Audio dock** — preview supported audio sections directly inside the app
+- **Integrated disassembly** with raw/code views, function detection, and section-aware code/data rendering
 - Translation tables support with built-in editor and semi-automatic translation tables generation
 - Advanced data pointers search and navigation
 - Script dump and import with insertion to offset and automatic pointers update; IPS patch generation and import
@@ -34,6 +42,15 @@ A hex editor for retrogames translation and ROMHacking, a tribute to 00's Transl
 
 #### Virtual formatting for structured data visualization and editing
 <img src="assets/sections.png" alt="Sections and virtual formatting" width="800" />
+
+#### Tile graphics display and editing
+<img src="assets/gfx.png" alt="General view" width="800" />
+
+#### Audio decoding with import/export support
+<img src="assets/audio.png" alt="General view" width="800" />
+
+#### Disassembly view with navigation and pointer detection
+<img src="assets/asm.png" alt="General view" width="800" />
 
 #### Pointers search and navigation with real-time preview and highlighting
 <img src="assets/general_view_2.png" alt="General view" width="800" />
