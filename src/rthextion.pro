@@ -20,22 +20,14 @@ contains(CONFIG, disable_capstone) {
 } else:contains(CONFIG, force_capstone) {
     capstone_enabled = true
 } else:macx {
-    capstone_host_arch = $$system("/usr/bin/uname -m")
     capstone_info = $$system("/usr/bin/lipo -info $$shell_path($$PWD/libs/capstone/libcapstone.a) 2>/dev/null")
-
-    capstone_enabled = true
-    contains(capstone_host_arch, arm64) {
-        !contains(capstone_info, arm64) {
-            capstone_enabled = false
-        }
-    } else {
-        !contains(capstone_info, x86_64) {
-            capstone_enabled = false
-        }
+    capstone_enabled = false
+    !isEmpty(capstone_info) {
+        capstone_enabled = true
     }
 }
 
-capstone_enabled {
+equals(capstone_enabled, true) {
     INCLUDEPATH += $$PWD/libs/capstone/include
     LIBS += -L$$PWD/libs/capstone -lcapstone
     DEFINES += HAVE_CAPSTONE
