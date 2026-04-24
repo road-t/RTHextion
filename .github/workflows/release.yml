@@ -180,26 +180,30 @@ jobs:
         id: vcpkg-cache
         with:
           path: C:/vcpkg/installed/x64-windows-static
-          key: vcpkg-libiconv-x64-windows-static-${{ hashFiles('C:/vcpkg/versions/l-/libiconv.json') }}
-          restore-keys: vcpkg-libiconv-x64-windows-static-
+          key: vcpkg-x64-windows-static-v2
+          restore-keys: vcpkg-x64-windows-static-
+
+      - name: Setup vcpkg (C:/vcpkg)
+        shell: pwsh
+        run: |
+          if (!(Test-Path 'C:/vcpkg/vcpkg.exe')) {
+            if (!(Test-Path 'C:/vcpkg')) {
+              git clone https://github.com/microsoft/vcpkg C:/vcpkg
+            }
+            & C:/vcpkg/bootstrap-vcpkg.bat -disableMetrics
+          }
+          "VCPKG_ROOT=C:/vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "VCPKG_INSTALLATION_ROOT=C:/vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Using VCPKG_ROOT=C:/vcpkg"
 
       - name: Install libiconv (vcpkg)
         if: steps.vcpkg-cache.outputs.cache-hit != 'true'
-        run: vcpkg install libiconv:x64-windows-static
+        run: C:\vcpkg\vcpkg.exe install libiconv:x64-windows-static --triplet x64-windows-static --disable-metrics
         shell: cmd
 
       - name: Install Capstone (vcpkg)
-        run: vcpkg install capstone:x64-windows-static
+        run: C:\vcpkg\vcpkg.exe install capstone:x64-windows-static --triplet x64-windows-static --disable-metrics
         shell: cmd
-
-      - name: Detect vcpkg root
-        shell: pwsh
-        run: |
-          $vcpkgExe = (Get-Command vcpkg).Source
-          $vcpkgRoot = Split-Path -Parent $vcpkgExe
-          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "VCPKG_INSTALLATION_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "Using VCPKG_ROOT=$vcpkgRoot"
 
       - name: Setup MSVC environment
         uses: ilammy/msvc-dev-cmd@v1
@@ -209,11 +213,51 @@ jobs:
       - name: Build
         shell: cmd
         run: |
+          setlocal EnableDelayedExpansion
+          set VCPKG_ROOT=C:\vcpkg
+          set VCPKG_ROOT_FWD=%VCPKG_ROOT:\=/%
+          echo Using VCPKG_ROOT=%VCPKG_ROOT_FWD%
+
+          set CAPSTONE_LIB=
+          set ICONV_LIB=
+          set CAPSTONE_TRIPLET=
+
+          for %%T in (x64-windows-static x64-windows) do (
+            if exist "%VCPKG_ROOT%\installed\%%T\lib\capstone.lib" (
+              set CAPSTONE_LIB=%VCPKG_ROOT_FWD%/installed/%%T/lib/capstone.lib
+              set CAPSTONE_TRIPLET=%%T
+            )
+            if exist "%VCPKG_ROOT%\installed\%%T\lib\capstone_static.lib" (
+              if "!CAPSTONE_LIB!"=="" set CAPSTONE_LIB=%VCPKG_ROOT_FWD%/installed/%%T/lib/capstone_static.lib
+              if "!CAPSTONE_TRIPLET!"=="" set CAPSTONE_TRIPLET=%%T
+            )
+            if exist "%VCPKG_ROOT%\installed\%%T\lib\iconv.lib" (
+              if "!ICONV_LIB!"=="" set ICONV_LIB=%VCPKG_ROOT_FWD%/installed/%%T/lib/iconv.lib
+            )
+          )
+
+          if "%CAPSTONE_LIB%"=="" (
+            echo ERROR: capstone library was not found under %VCPKG_ROOT%\installed\*\lib
+            dir "%VCPKG_ROOT%\installed" /s /b | findstr /i capstone
+            exit /b 1
+          )
+          if "%ICONV_LIB%"=="" (
+            echo ERROR: iconv library was not found under %VCPKG_ROOT%\installed\*\lib
+            dir "%VCPKG_ROOT%\installed" /s /b | findstr /i iconv
+            exit /b 1
+          )
+
+          echo Using CAPSTONE_LIB=%CAPSTONE_LIB%
+          echo Using ICONV_LIB=%ICONV_LIB%
+          echo Using CAPSTONE_TRIPLET=%CAPSTONE_TRIPLET%
+
           mkdir build_ci
           cd build_ci
           "%QT_ROOT_DIR%\bin\qmake" ..\src\rthextion.pro CONFIG+=release ^
-            "INCLUDEPATH+=C:/vcpkg/installed/x64-windows-static/include" ^
-            "LIBS+=C:/vcpkg/installed/x64-windows-static/lib/iconv.lib"
+            CONFIG+=capstone_from_cli ^
+            "INCLUDEPATH+=%VCPKG_ROOT_FWD%/installed/%CAPSTONE_TRIPLET%/include" ^
+            "LIBS+=%ICONV_LIB%" ^
+            "LIBS+=%CAPSTONE_LIB%"
           nmake
 
       - name: Deploy Qt dependencies

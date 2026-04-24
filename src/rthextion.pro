@@ -23,6 +23,10 @@ contains(CONFIG, disable_capstone) {
 
 capstone_enabled = false
 
+contains(CONFIG, capstone_from_cli) {
+    capstone_enabled = true
+}
+
 contains(CONFIG, force_capstone) {
     capstone_enabled = true
     INCLUDEPATH += $$PWD/libs/capstone/include
@@ -57,6 +61,18 @@ contains(CONFIG, force_capstone) {
 
 !equals(capstone_enabled, true) {
     win32 {
+        # If Capstone library is already passed via qmake CLI LIBS, accept it.
+        for(capstone_lib_arg, LIBS) {
+            contains(capstone_lib_arg, [Cc]apstone(_static)?\\.lib) {
+                capstone_enabled = true
+                break()
+            }
+        }
+    }
+}
+
+!equals(capstone_enabled, true) {
+    win32 {
         capstone_vcpkg_root = $$(VCPKG_ROOT)
         isEmpty(capstone_vcpkg_root) {
             capstone_vcpkg_root = $$(VCPKG_INSTALLATION_ROOT)
@@ -64,6 +80,9 @@ contains(CONFIG, force_capstone) {
         isEmpty(capstone_vcpkg_root) {
             capstone_vcpkg_root = C:/vcpkg
         }
+        capstone_vcpkg_root ~= s,\\\\,/,g
+        capstone_vcpkg_root ~= s,\\,/,g
+        capstone_vcpkg_root ~= s,/$$,,g
 
         capstone_vcpkg_triplets = x64-windows-static x64-windows
         capstone_vcpkg_lib_names = capstone.lib capstone_static.lib
