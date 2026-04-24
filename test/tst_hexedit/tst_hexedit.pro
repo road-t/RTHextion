@@ -38,8 +38,85 @@ HEADERS += \
     ../../src/utils/Datas.h
 
 macx: LIBS += -liconv
-macx: LIBS += -L../../../src/libs/capstone -lcapstone
-macx: DEFINES += HAVE_CAPSTONE
 
-INCLUDEPATH += ../../src ../../src/hexeditor ../../src/document ../../src/utils ../../src/audio ../../src/libs/capstone/include
+capstone_enabled = false
+
+!equals(capstone_enabled, true):macx {
+    capstone_target_archs = $$QMAKE_APPLE_DEVICE_ARCHS
+    isEmpty(capstone_target_archs) {
+        capstone_target_archs = $$system("/usr/bin/uname -m")
+    }
+
+    capstone_bundled_lib = $$PWD/../../src/libs/capstone/libcapstone.a
+    capstone_archs = $$system("/usr/bin/lipo -archs $$shell_path($$capstone_bundled_lib) 2>/dev/null")
+
+    capstone_bundled_ok = true
+    isEmpty(capstone_archs) {
+        capstone_bundled_ok = false
+    }
+    equals(capstone_bundled_ok, true) {
+        for(cap_arch, capstone_target_archs) {
+            !contains(capstone_archs, $$cap_arch) {
+                capstone_bundled_ok = false
+            }
+        }
+    }
+
+    equals(capstone_bundled_ok, true) {
+        capstone_enabled = true
+        INCLUDEPATH += $$PWD/../../src/libs/capstone/include
+        LIBS += -L$$PWD/../../src/libs/capstone -lcapstone
+    }
+}
+
+!equals(capstone_enabled, true):macx {
+    capstone_brew_prefix = $$system("brew --prefix capstone 2>/dev/null")
+    !isEmpty(capstone_brew_prefix) {
+        capstone_target_archs = $$QMAKE_APPLE_DEVICE_ARCHS
+        isEmpty(capstone_target_archs) {
+            capstone_target_archs = $$system("/usr/bin/uname -m")
+        }
+
+        capstone_brew_lib = $$capstone_brew_prefix/lib/libcapstone.dylib
+        !exists($$capstone_brew_lib) {
+            capstone_brew_lib = $$capstone_brew_prefix/lib/libcapstone.a
+        }
+        capstone_brew_archs = $$system("/usr/bin/lipo -archs $$shell_path($$capstone_brew_lib) 2>/dev/null")
+
+        capstone_brew_ok = true
+        isEmpty(capstone_brew_archs) {
+            capstone_brew_ok = false
+        }
+        equals(capstone_brew_ok, true) {
+            for(cap_arch, capstone_target_archs) {
+                !contains(capstone_brew_archs, $$cap_arch) {
+                    capstone_brew_ok = false
+                }
+            }
+        }
+
+        equals(capstone_brew_ok, true) {
+            capstone_enabled = true
+            INCLUDEPATH += $$capstone_brew_prefix/include
+            LIBS += -L$$capstone_brew_prefix/lib -lcapstone
+        }
+    }
+}
+
+!equals(capstone_enabled, true):!macx {
+    capstone_pkg = $$system("pkg-config --exists capstone && echo yes")
+    contains(capstone_pkg, yes) {
+        capstone_enabled = true
+        CONFIG += link_pkgconfig
+        PKGCONFIG += capstone
+    }
+}
+
+equals(capstone_enabled, true) {
+    DEFINES += HAVE_CAPSTONE
+} else {
+    warning("Capstone not found for tst_hexedit; disassembly-dependent code will be disabled")
+}
+
+INCLUDEPATH += ../../src ../../src/hexeditor ../../src/document ../../src/utils ../../src/audio
 DEFINES += HEXEDITOR_EXPORTS

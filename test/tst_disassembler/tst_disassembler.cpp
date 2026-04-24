@@ -36,14 +36,26 @@ private slots:
 
     void romTypeSupportAndSelection()
     {
-        QVERIFY(Disassembler::isSupported(RomType::NES));
         QVERIFY(Disassembler::isSupported(RomType::GB));
-        QVERIFY(Disassembler::isSupported(RomType::GBA));
         QVERIFY(!Disassembler::isSupported(RomType::SNES));
 
         Disassembler d;
-        QVERIFY(d.setRomType(RomType::NES));
-        QCOMPARE(d.romType(), RomType::NES);
+        const bool nesSupported = Disassembler::isSupported(RomType::NES);
+        const bool gbaSupported = Disassembler::isSupported(RomType::GBA);
+        const bool mdSupported = Disassembler::isSupported(RomType::MD);
+
+        QCOMPARE(d.setRomType(RomType::NES), nesSupported);
+        if (nesSupported)
+            QCOMPARE(d.romType(), RomType::NES);
+
+        QCOMPARE(d.setRomType(RomType::GBA), gbaSupported);
+        if (gbaSupported)
+            QCOMPARE(d.romType(), RomType::GBA);
+
+        QCOMPARE(d.setRomType(RomType::MD), mdSupported);
+        if (mdSupported)
+            QCOMPARE(d.romType(), RomType::MD);
+
         QVERIFY(!d.setRomType(RomType::SNES));
     }
 
@@ -204,6 +216,9 @@ private slots:
 
     void disassembleAndBoundariesFor6502()
     {
+        if (!Disassembler::isSupported(RomType::NES))
+            QSKIP("6502 backend is not available in this Capstone build");
+
         // 0x00: JSR $8006
         // 0x03: RTS
         // 0x04: NOP
@@ -242,6 +257,9 @@ private slots:
 
     void scanFunctionsFindsCallTarget()
     {
+        if (!Disassembler::isSupported(RomType::NES))
+            QSKIP("6502 backend is not available in this Capstone build");
+
         const QByteArray data = QByteArray::fromHex("20068060EAEAA90160");
 
         Disassembler d;
@@ -277,7 +295,8 @@ private slots:
 
     void megaDriveSupportAndBasicDisassembly()
     {
-        QVERIFY(Disassembler::isSupported(RomType::MD));
+        if (!Disassembler::isSupported(RomType::MD))
+            QSKIP("M68K backend is not available in this Capstone build");
 
         Disassembler d;
         QVERIFY(d.setRomType(RomType::MD));
