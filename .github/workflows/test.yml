@@ -37,20 +37,25 @@ jobs:
           echo "QT_ROOT_DIR=$HOME/Qt/6.7.3/gcc_64" >> "$GITHUB_ENV"
           echo "$HOME/Qt/6.7.3/gcc_64/bin" >> "$GITHUB_PATH"
 
+      - name: Install Capstone (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install capstone pkg-config
+
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 \
-            libegl1 libfontconfig1
+            libegl1 libfontconfig1 libcapstone-dev pkg-config
 
       - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen
-          QT_PLUGIN_PATH: ${{ env.QT_ROOT_DIR }}/plugins
         run: |
           export PATH="${QT_ROOT_DIR}/bin:$PATH"
           export QMAKE="${QT_ROOT_DIR}/bin/qmake"
+          export QT_PLUGIN_PATH="${QT_ROOT_DIR}/plugins"
           cd test
           # Override qmake path in run_tests.sh
           sed -i.bak "s|QMAKE=qmake6|QMAKE=${QMAKE}|" run_tests.sh

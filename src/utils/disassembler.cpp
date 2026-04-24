@@ -1,7 +1,13 @@
 #include "disassembler.h"
 
 #ifdef HAVE_CAPSTONE
+#if __has_include(<capstone/capstone.h>)
 #include <capstone/capstone.h>
+#elif __has_include(<capstone.h>)
+#include <capstone.h>
+#else
+#error "HAVE_CAPSTONE is set but Capstone headers were not found"
+#endif
 #endif
 
 #include <QMap>

@@ -25,10 +25,14 @@ jobs:
           arch: 'clang_64'
           cache: true
 
+      - name: Install Capstone (macOS arm64)
+        run: |
+          brew install capstone pkg-config
+
       - name: Build
         run: |
           mkdir build_ci && cd build_ci
-          ${{ env.QT_ROOT_DIR }}/bin/qmake ../src/rthextion.pro CONFIG+=release QMAKE_APPLE_DEVICE_ARCHS=arm64
+          ${QT_ROOT_DIR}/bin/qmake ../src/rthextion.pro CONFIG+=release QMAKE_APPLE_DEVICE_ARCHS=arm64
           make -j$(sysctl -n hw.logicalcpu)
 
       - name: Install DMG packager
@@ -41,7 +45,7 @@ jobs:
           MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
           MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
         run: |
-          ${{ env.QT_ROOT_DIR }}/bin/macdeployqt build_ci/RTHextion.app
+          ${QT_ROOT_DIR}/bin/macdeployqt build_ci/RTHextion.app
           xattr -cr build_ci/RTHextion.app
 
           if [ -n "${MACOS_SIGN_IDENTITY}" ]; then
@@ -102,7 +106,7 @@ jobs:
       - name: Build
         run: |
           mkdir build_ci && cd build_ci
-          ${{ env.QT_ROOT_DIR }}/bin/qmake ../src/rthextion.pro CONFIG+=release QMAKE_APPLE_DEVICE_ARCHS=x86_64
+          ${QT_ROOT_DIR}/bin/qmake ../src/rthextion.pro CONFIG+=release QMAKE_APPLE_DEVICE_ARCHS=x86_64
           make -j$(sysctl -n hw.logicalcpu)
 
       - name: Install DMG packager
@@ -115,7 +119,7 @@ jobs:
           MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
           MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
         run: |
-          ${{ env.QT_ROOT_DIR }}/bin/macdeployqt build_ci/RTHextion.app
+          ${QT_ROOT_DIR}/bin/macdeployqt build_ci/RTHextion.app
           xattr -cr build_ci/RTHextion.app
 
           if [ -n "${MACOS_SIGN_IDENTITY}" ]; then
@@ -184,6 +188,10 @@ jobs:
         run: vcpkg install libiconv:x64-windows-static
         shell: cmd
 
+      - name: Install Capstone (vcpkg)
+        run: vcpkg install capstone:x64-windows-static
+        shell: cmd
+
       - name: Setup MSVC environment
         uses: ilammy/msvc-dev-cmd@v1
         with:
@@ -231,7 +239,7 @@ jobs:
             libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 \
             libfontconfig1-dev libfreetype6-dev libxrender-dev \
             libxext-dev libx11-dev libxcb1-dev \
-            libfuse2 imagemagick
+            libfuse2 imagemagick libcapstone-dev pkg-config
 
       - name: Build
         run: |
@@ -330,7 +338,7 @@ jobs:
             libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 \
             libfontconfig1-dev libfreetype6-dev libxrender-dev \
             libxext-dev libx11-dev libxcb1-dev \
-            libfuse2 imagemagick
+            libfuse2 imagemagick libcapstone-dev pkg-config
 
       - name: Build
         run: |

@@ -56,6 +56,23 @@ contains(CONFIG, force_capstone) {
 }
 
 !equals(capstone_enabled, true) {
+    win32 {
+        capstone_vcpkg_root = $$(VCPKG_ROOT)
+        isEmpty(capstone_vcpkg_root) {
+            capstone_vcpkg_root = C:/vcpkg
+        }
+        capstone_vcpkg_triplet = x64-windows-static
+        capstone_vcpkg_lib = $$capstone_vcpkg_root/installed/$$capstone_vcpkg_triplet/lib/capstone.lib
+
+        exists($$capstone_vcpkg_lib) {
+            capstone_enabled = true
+            INCLUDEPATH += $$capstone_vcpkg_root/installed/$$capstone_vcpkg_triplet/include
+            LIBS += $$capstone_vcpkg_lib
+        }
+    }
+}
+
+!equals(capstone_enabled, true) {
     capstone_pkg = $$system("pkg-config --exists capstone && echo yes")
     contains(capstone_pkg, yes) {
         capstone_enabled = true
