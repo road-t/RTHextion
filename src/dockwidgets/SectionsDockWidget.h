@@ -45,6 +45,8 @@ signals:
     void findSamplesInSectionRequested(qint64 startOffset, qint64 endOffset);
     void findFunctionsInSectionRequested(qint64 startOffset, qint64 endOffset);
     void splitSectionRequested(int sectionIndex, const QVector<qint64> &sizes);
+    void findPointersInSectionRequested(qint64 startOffset, qint64 endOffset);
+    void dropPointersInSectionRequested(qint64 startOffset, qint64 endOffset);
 
 public slots:
     void highlightOffset(qint64 offset);

@@ -250,6 +250,12 @@ void PointersDialog::setRomProfile(RomType type, qint64 offset)
     }
 }
 
+void PointersDialog::setRange(qint64 start, qint64 end)
+{
+    ui->leRangeBegin->setText(QString::number(start, 16).toUpper());
+    ui->leRangeEnd->setText(QString::number(end, 16).toUpper());
+}
+
 void PointersDialog::quickSearch(qint64 clickBytePos)
 {
     if (searchActive)

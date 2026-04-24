@@ -32,6 +32,7 @@ public:
     void quickSearch(qint64 clickBytePos = -1);
     void setHexEdit(HexEditor *he);
     void setRomProfile(RomType type, qint64 offset);
+    void setRange(qint64 start, qint64 end);
 
     /// Per-tab snapshot of user-controlled options (excluding ROM profile and range, which
     /// are derived from the current session and selection respectively).

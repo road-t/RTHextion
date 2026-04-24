@@ -871,6 +871,9 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
     QAction *findFunctionsAct = menu.addAction(tr("Find functions in section"));
     findFunctionsAct->setEnabled(m_currentRomType != RomType::Unknown);
     menu.addSeparator();
+    QAction *findPtrsAct = menu.addAction(tr("Find pointers"));
+    QAction *dropPtrsAct = menu.addAction(tr("Drop pointers"));
+    menu.addSeparator();
 
     // Display mode submenu
     QMenu *displayMenu = menu.addMenu(tr("Display mode"));
@@ -969,6 +972,10 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
         emit findSamplesInSectionRequested(secStart, secEnd);
     } else if (chosen == findFunctionsAct) {
         emit findFunctionsInSectionRequested(secStart, secEnd);
+    } else if (chosen == findPtrsAct) {
+        emit findPointersInSectionRequested(secStart, secEnd);
+    } else if (chosen == dropPtrsAct) {
+        emit dropPointersInSectionRequested(secStart, secEnd);
     } else if (chosen == splitAct) {
         // Show dialog with text edit for entering part sizes
         QDialog dlg(this);

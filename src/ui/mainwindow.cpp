@@ -1781,6 +1781,17 @@ void MainWindow::init()
                 // CPU is now resolved per-section inside HexEditor disasm path.
                 hexEdit->viewport()->update();
             });
+    connect(m_sectionsDock, &SectionsDockWidget::findPointersInSectionRequested, this,
+            [this](qint64 start, qint64 end) {
+                selectRangeInEditor(start, end, false);
+                showPointersDialog();
+                if (pointersDialog)
+                    pointersDialog->setRange(start, end);
+            });
+    connect(m_sectionsDock, &SectionsDockWidget::dropPointersInSectionRequested, this,
+            [this](qint64 start, qint64 end) {
+                dropPointersInRange(start, end);
+            });
     connect(m_sectionModel, &SectionListModel::sectionsChanged, this, [this]() {
         const bool restoring = m_restoringSession || m_restoringProjectUi;
         if (!restoring && m_document && m_document->sectionSnapshot != m_sectionModel->sections())

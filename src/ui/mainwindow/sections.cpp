@@ -1179,6 +1179,37 @@ void MainWindow::showPointersDialog()
 //  Audio sample detection and playback
 // ═══════════════════════════════════════════════════════════════════
 
+void MainWindow::dropPointersInRange(qint64 start, qint64 end)
+{
+    if (!hexEdit) return;
+    auto *model = hexEdit->pointers();
+    if (!model) return;
+
+    // Collect pointer offsets whose source OR target falls within the section range
+    QVector<qint64> toDrop;
+    QSet<qint64> unique;
+    for (qint64 ptrOfs : model->pointerKeys()) {
+        const qint64 targetOfs = model->getOffset(ptrOfs);
+        if ((ptrOfs >= start && ptrOfs < end) || (targetOfs >= start && targetOfs < end))
+            unique.insert(ptrOfs);
+    }
+    if (unique.isEmpty()) return;
+    toDrop.reserve(unique.size());
+    for (qint64 o : unique) toDrop.append(o);
+
+    QMessageBox confirm(QMessageBox::Question, QString(),
+                        tr("Drop %1 pointers from selection?").arg(toDrop.size()),
+                        QMessageBox::Yes | QMessageBox::Cancel, this);
+    if (confirm.exec() != QMessageBox::Yes) return;
+
+    if (hexEdit->removePointersUndoable(toDrop) > 0) {
+        pointersUpdated();
+        if (pointersDialog)
+            pointersDialog->refreshFromTable();
+        hexEdit->viewport()->update();
+    }
+}
+
 #include "audiodetector.h"
 #include "audioplayer.h"
 #include <QFileDialog>

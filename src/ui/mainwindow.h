@@ -97,6 +97,7 @@ private slots:
     void detectFunctionsInRange(qint64 rangeStart, qint64 rangeEnd);
     void selectRangeInEditor(qint64 start, qint64 end, bool focus = true);
     void showPointersDialog();
+    void dropPointersInRange(qint64 start, qint64 end);
     void pointersUpdated();
     void hexEditContextMenu(const QPoint &globalPos, qint64 bytePos);
     void onQuickSearchCompleted(int found);
