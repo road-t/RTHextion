@@ -1,6 +1,6 @@
 #include "internal.h"
 #include "encoding.h"
-#include "TranslationTable.h"
+#include "translationtable.h"
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Encoding codec tables, iconv helpers, and text decode/encode functions.

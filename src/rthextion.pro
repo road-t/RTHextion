@@ -12,9 +12,9 @@ TEMPLATE = app
 TARGET = RTHextion
 
 # Capstone disassembly engine (static, embedded in project)
-# The bundled archive is currently x86_64-only, so keep Capstone optional
-# to allow arm64/macOS CI builds to succeed with Z80-only disassembly.
-capstone_enabled = true
+# The bundled archive is a macOS Mach-O x86_64 static library, so it is only
+# usable on macOS builds and only when the requested architecture is present.
+capstone_enabled = false
 contains(CONFIG, disable_capstone) {
     capstone_enabled = false
 } else:contains(CONFIG, force_capstone) {
@@ -23,6 +23,7 @@ contains(CONFIG, disable_capstone) {
     capstone_host_arch = $$system("/usr/bin/uname -m")
     capstone_info = $$system("/usr/bin/lipo -info $$shell_path($$PWD/libs/capstone/libcapstone.a) 2>/dev/null")
 
+    capstone_enabled = true
     contains(capstone_host_arch, arm64) {
         !contains(capstone_info, arm64) {
             capstone_enabled = false
@@ -39,7 +40,7 @@ capstone_enabled {
     LIBS += -L$$PWD/libs/capstone -lcapstone
     DEFINES += HAVE_CAPSTONE
 } else {
-    warning("Bundled Capstone is unavailable for this target architecture; non-Z80 disassembly will be disabled")
+    warning("Bundled Capstone is unavailable for this platform/target; non-Z80 disassembly will be disabled")
 }
 
 macx {
