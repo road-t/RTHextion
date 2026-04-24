@@ -527,7 +527,7 @@ void MainWindow::onUpdateAvailable(const QString &version, const QString &url,
 {
     statusBar()->clearMessage();
     QMessageBox box(this);
-    box.setWindowTitle(tr("Update Available"));
+    box.setWindowTitle(tr("Update available"));
     box.setIcon(QMessageBox::Information);
     box.setTextFormat(Qt::RichText);
     box.setText(tr("A new version of %1 is available: <b>v%2</b><br>"
@@ -552,7 +552,7 @@ void MainWindow::onUpdateAvailable(const QString &version, const QString &url,
 void MainWindow::onUpToDate()
 {
     statusBar()->clearMessage();
-    QMessageBox::information(this, tr("No Updates"),
+    QMessageBox::information(this, tr("No updates"),
                              tr("%1 is up to date (v%2).")
                                  .arg(AppInfo::Name)
                                  .arg(QString::fromLatin1(AppInfo::Version)));
@@ -561,7 +561,7 @@ void MainWindow::onUpToDate()
 void MainWindow::onUpdateCheckFailed(const QString &error)
 {
     statusBar()->clearMessage();
-    QMessageBox::warning(this, tr("Update Check Failed"),
+    QMessageBox::warning(this, tr("Update check Failed"),
                          tr("Could not check for updates:\n%1").arg(error));
 }
 

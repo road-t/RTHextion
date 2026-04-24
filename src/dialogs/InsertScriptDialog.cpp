@@ -219,7 +219,7 @@ void InsertScriptDialog::on_bbControls_clicked(QAbstractButton *button)
             QVector<QPair<qint64, qint64>> pointerBatch;
             const bool hadChunks = !matches.isEmpty();
 
-            QProgressDialog progress(tr("Importing script..."), QString(), 0, hadChunks ? matches.size() : 1, this);
+            QProgressDialog progress(tr("Importing script") + "...", QString(), 0, hadChunks ? matches.size() : 1, this);
             progress.setWindowModality(Qt::ApplicationModal);
             progress.setMinimumDuration(0);
             progress.setCancelButton(nullptr);

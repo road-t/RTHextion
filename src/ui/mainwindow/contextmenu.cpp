@@ -140,7 +140,7 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         const QString name = QInputDialog::getText(
             this,
             tr("Add to section"),
-            tr("New section name:"),
+            tr("New section name") + QStringLiteral(":"),
             QLineEdit::Normal,
             tr("Section %1").arg(m_sectionModel ? (m_sectionModel->count() + 1) : 1),
             &ok);
@@ -224,7 +224,7 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         const QString name = QInputDialog::getText(
             this,
             tr("Rename offset"),
-            tr("Offset name:"),
+            tr("Offset name") + QStringLiteral(":"),
             QLineEdit::Normal,
             currentName,
             &ok);
@@ -1061,9 +1061,9 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
     if (cursorInAudio) {
         menu.addSeparator();
         playAudioAct = menu.addAction(tr("Play audio sample"));
-        exportAudioAct = menu.addAction(tr("Export audio sample (WAV)"));
+        exportAudioAct = menu.addAction(tr("Export WAV"));
         if (!isReadOnly)
-            importAudioAct = menu.addAction(tr("Import audio sample (WAV)"));
+            importAudioAct = menu.addAction(tr("Import WAV"));
     }
 
     QAction *chosen = menu.exec(globalPos);

@@ -54,9 +54,9 @@ void MainWindow::retranslateUi()
     // Actions - Changes
     showChangesAct->setText(tr("Show changes"));
     showChangesAct->setStatusTip(tr("Highlight bytes changed compared to project originals"));
-    createIpsPatchAct->setText(tr("Create IPS patch..."));
+    createIpsPatchAct->setText(tr("Create IPS patch") + QString("..."));
     createIpsPatchAct->setStatusTip(tr("Save current changes as an IPS patch file"));
-    loadIpsPatchAct->setText(tr("Load IPS patch..."));
+    loadIpsPatchAct->setText(tr("Load IPS patch") + QString("..."));
     loadIpsPatchAct->setStatusTip(tr("Load an IPS patch and apply it as changes"));
     loadOriginalAct->setText(tr("Load original..."));
     loadOriginalAct->setStatusTip(tr("Load the original (unmodified) file to compute changes"));
@@ -347,16 +347,16 @@ void MainWindow::createActions()
     showChangesAct->setStatusTip(tr("Highlight bytes changed compared to project originals"));
     connect(showChangesAct, &QAction::triggered, this, &MainWindow::toggleShowChanges);
 
-    createIpsPatchAct = new QAction(tr("Create IPS patch..."), this);
+    createIpsPatchAct = new QAction(tr("Create IPS patch") + QString("..."), this);
     createIpsPatchAct->setStatusTip(tr("Save current changes as an IPS patch file"));
     createIpsPatchAct->setEnabled(false);
     connect(createIpsPatchAct, &QAction::triggered, this, &MainWindow::createIpsPatch);
 
-    loadIpsPatchAct = new QAction(tr("Load IPS patch..."), this);
+    loadIpsPatchAct = new QAction(tr("Load IPS patch") + QString("..."), this);
     loadIpsPatchAct->setStatusTip(tr("Load an IPS patch and apply it as changes"));
     connect(loadIpsPatchAct, &QAction::triggered, this, &MainWindow::loadIpsPatch);
 
-    loadOriginalAct = new QAction(tr("Load original..."), this);
+    loadOriginalAct = new QAction(tr("Load original") + QString("..."), this);
     loadOriginalAct->setStatusTip(tr("Load the original (unmodified) file to compute changes"));
     loadOriginalAct->setEnabled(false);
     connect(loadOriginalAct, &QAction::triggered, this, &MainWindow::loadOriginal);

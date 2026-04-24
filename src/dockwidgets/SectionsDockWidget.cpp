@@ -638,14 +638,14 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
         if (chosen == renameAct) {
             bool ok = false;
             const QString name = QInputDialog::getText(
-                this, tr("Rename group"), tr("Group name:"),
+                this, tr("Rename group"), tr("Group name") + QStringLiteral(":"),
                 QLineEdit::Normal, m_model->groupAt(groupId).name, &ok);
             if (ok && !name.isEmpty())
                 m_model->renameGroup(groupId, name);
         } else if (chosen == subGroupAct) {
             bool ok = false;
             const QString name = QInputDialog::getText(
-                this, tr("Create sub-group"), tr("Sub-group name:"),
+                this, tr("Create sub-group"), tr("Sub-group name") + QStringLiteral(":"),
                 QLineEdit::Normal, tr("Sub-group"), &ok);
             if (ok && !name.isEmpty()) {
                 SectionGroup ng;
@@ -787,7 +787,7 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
         } else if (chosen == groupAct) {
             bool ok = false;
             const QString name = QInputDialog::getText(
-                this, tr("Group"), tr("Group name:"),
+                this, tr("Group"), tr("Group name") + QStringLiteral(":"),
                 QLineEdit::Normal, tr("Group"), &ok);
             if (ok && !name.isEmpty()) {
                 int parentGroupId = -1;
@@ -922,7 +922,7 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
     // Tile columns setting (only visible when in graphics mode)
     if (curMode == SectionDisplay_Graphics) {
         gfxMenu->addSeparator();
-        QMenu *colsMenu = gfxMenu->addMenu(tr("Tile columns: %1").arg(section.tileCols));
+        QMenu *colsMenu = gfxMenu->addMenu(tr("Tile columns") + QStringLiteral(": %1").arg(section.tileCols));
         for (int nc : {4, 8, 16, 24, 32}) {
             QAction *a = colsMenu->addAction(QString::number(nc));
             a->setCheckable(true);
@@ -1026,7 +1026,7 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
     } else if (chosen == groupAct) {
         bool ok = false;
         const QString name = QInputDialog::getText(
-            this, tr("Group"), tr("Group name:"),
+            this, tr("Group"), tr("Group name") + QStringLiteral(":"),
             QLineEdit::Normal, tr("Group"), &ok);
         if (ok && !name.isEmpty()) {
             SectionGroup ng;
@@ -1180,7 +1180,7 @@ void SectionsDockWidget::rebuildTree()
             displayName += QStringLiteral(" [Text: %1]").arg(
                 (s.displayMode - 1 >= 0 && s.displayMode - 1 < m_tableNames.size())
                     ? m_tableNames[s.displayMode - 1]
-                    : tr("Table %1").arg(s.displayMode));
+                    : tr("Table") + QStringLiteral(" %1").arg(s.displayMode));
 
         auto *child = new QTreeWidgetItem(parent, {displayName, offsetStr, sizeStr});
         child->setData(0, kRoleSectionOffset, s.startOffset);

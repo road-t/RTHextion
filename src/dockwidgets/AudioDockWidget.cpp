@@ -91,13 +91,13 @@ AudioDockWidget::AudioDockWidget(QWidget *parent)
     form->setSpacing(4);
 
     // ── Format ──
-    m_formatLabel = new QLabel(tr("Format:"), this);
+    m_formatLabel = new QLabel(tr("Format") + ":", this);
     m_formatCombo = new QComboBox(this);
     m_formatCombo->addItem(tr("Auto"), static_cast<int>(AudioSampleFormat::Unknown));
     form->addRow(m_formatLabel, m_formatCombo);
 
     // ── Sample rate ──
-    m_rateLabel = new QLabel(tr("Sample rate:"), this);
+    m_rateLabel = new QLabel(tr("Sample rate") + ":", this);
     m_rateCombo = new QComboBox(this);
     m_rateCombo->setEditable(true);
     m_rateCombo->addItems({
@@ -115,7 +115,7 @@ AudioDockWidget::AudioDockWidget(QWidget *parent)
     form->addRow(m_rateLabel, m_rateCombo);
 
     // ── Playback speed ──
-    m_speedLabel = new QLabel(tr("Speed:"), this);
+    m_speedLabel = new QLabel(tr("Speed") + QStringLiteral(":"), this);
     m_speedSpin = new QDoubleSpinBox(this);
     m_speedSpin->setRange(0.25, 4.0);
     m_speedSpin->setSingleStep(0.25);
@@ -225,9 +225,9 @@ void AudioDockWidget::setPlaybackSpeed(double speed)
 void AudioDockWidget::retranslateUi()
 {
     setWindowTitle(tr("Audio"));
-    m_formatLabel->setText(tr("Format:"));
-    m_rateLabel->setText(tr("Sample rate:"));
-    m_speedLabel->setText(tr("Speed:"));
+    m_formatLabel->setText(tr("Format") + ":");
+    m_rateLabel->setText(tr("Sample rate") + ":");
+    m_speedLabel->setText(tr("Speed") + ":");
 }
 
 void AudioDockWidget::onPaletteChanged()

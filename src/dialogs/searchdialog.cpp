@@ -389,7 +389,7 @@ void SearchDialog::updateMatchStatus(const SearchResult &result, bool hasPattern
 
     QString text = tr("Match %1 of %2").arg(result.matchNumber).arg(result.totalMatches);
     if (result.wrapped)
-        text += tr(" (wrapped)");
+        text += " (" + tr("wrapped") + ")";
     lbMatchStatus->setText(text);
 }
 

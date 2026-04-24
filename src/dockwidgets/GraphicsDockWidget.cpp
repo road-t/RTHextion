@@ -239,7 +239,7 @@ void PalettePreview::mouseDoubleClickEvent(QMouseEvent *event)
         return;
 
     const QColor initial = QColor::fromRgba(m_colors[idx]);
-    const QColor chosen = QColorDialog::getColor(initial, this, tr("Edit Palette Color"));
+    const QColor chosen = QColorDialog::getColor(initial, this, tr("Edit color"));
     if (chosen.isValid()) {
         m_colors[idx] = chosen.rgb();
         update();
@@ -268,13 +268,13 @@ GraphicsDockWidget::GraphicsDockWidget(QWidget *parent)
     form->setSpacing(4);
 
     // ── Codec ──
-    m_codecLabel = new QLabel(tr("Codec:"), this);
+    m_codecLabel = new QLabel(tr("Codec") + QStringLiteral(":"), this);
     m_codecCombo = new QComboBox(this);
     populateCodecs(m_currentRomType);
     form->addRow(m_codecLabel, m_codecCombo);
 
     // ── Tile columns ──
-    m_colsLabel = new QLabel(tr("Tile columns:"), this);
+    m_colsLabel = new QLabel(tr("Tile columns") + QStringLiteral(":"), this);
     m_colsSpin = new QSpinBox(this);
     m_colsSpin->setRange(1, 128);
     m_colsSpin->setValue(16);
@@ -283,7 +283,7 @@ GraphicsDockWidget::GraphicsDockWidget(QWidget *parent)
     layout->addLayout(form);
 
     // ── Palette preview (click to edit) ──
-    m_palLabel = new QLabel(tr("Palette (click to edit):"), this);
+    m_palLabel = new QLabel(tr("Palette (click to edit)") + QStringLiteral(":"), this);
     layout->addWidget(m_palLabel);
 
     m_palPreview = new PalettePreview(this);
@@ -498,9 +498,9 @@ void GraphicsDockWidget::populateCodecs(RomType romType)
 void GraphicsDockWidget::retranslateUi()
 {
     setWindowTitle(tr("Graphics"));
-    m_codecLabel->setText(tr("Codec:"));
-    m_colsLabel->setText(tr("Tile columns:"));
-    m_palLabel->setText(tr("Palette (click to edit):"));
+    m_codecLabel->setText(tr("Codec") + QStringLiteral(":"));
+    m_colsLabel->setText(tr("Tile columns") + QStringLiteral(":"));
+    m_palLabel->setText(tr("Palette (click to edit)") + QStringLiteral(":"));
 }
 
 void GraphicsDockWidget::onPaletteChanged()

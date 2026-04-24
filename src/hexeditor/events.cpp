@@ -1216,7 +1216,7 @@ void HexEditor::mouseDoubleClickEvent(QMouseEvent *event)
                         const QString newName = QInputDialog::getText(
                             this,
                             tr("Rename section"),
-                            tr("Section name:"),
+                            tr("Section name") + ":",
                             QLineEdit::Normal,
                             oldName,
                             &ok);

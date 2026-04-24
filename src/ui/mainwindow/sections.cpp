@@ -242,7 +242,7 @@ void MainWindow::addSectionFromSelection(int parentIdx)
     bool ok = false;
     const QString name = QInputDialog::getText(
         this, tr("Add section"),
-        tr("Section name:"), QLineEdit::Normal,
+        tr("Section name") + ":", QLineEdit::Normal,
         tr("Section %1").arg(n), &ok);
     if (!ok || name.isEmpty())
         return;
@@ -327,7 +327,7 @@ void MainWindow::addSectionFromSelection(int parentIdx)
 void MainWindow::parseSections()
 {
     if (m_sectionModel && m_sectionModel->count() > 0) {
-        auto reply = QMessageBox::warning(this, tr("Parse Sections"),
+        auto reply = QMessageBox::warning(this, tr("Parse sections"),
             tr("All existing sections will be replaced. Continue?"),
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
         if (reply != QMessageBox::Yes)
@@ -681,7 +681,7 @@ void MainWindow::detectFunctions()
     Disassembler disasm;
     if (!disasm.setRomType(romType)) {
         QMessageBox::warning(this, tr("Detect functions"),
-                             tr("Failed to initialize disassembler."));
+                             tr("Failed to initialize disassembler"));
         return;
     }
 
@@ -763,7 +763,7 @@ void MainWindow::detectFunctions()
 
     if (functions.isEmpty()) {
         progress.close();
-        QMessageBox::information(this, tr("Detect functions"), tr("No functions detected."));
+        QMessageBox::information(this, tr("Detect functions"), tr("No functions detected"));
         return;
     }
 
@@ -932,7 +932,7 @@ void MainWindow::detectFunctionsInRange(qint64 rangeStart, qint64 rangeEnd)
     Disassembler disasm;
     if (!disasm.setRomType(romType)) {
         QMessageBox::warning(this, tr("Detect functions"),
-                             tr("Failed to initialize disassembler."));
+                             tr("Failed to initialize disassembler"));
         return;
     }
 
@@ -973,7 +973,7 @@ void MainWindow::detectFunctionsInRange(qint64 rangeStart, qint64 rangeEnd)
 
     if (functions.isEmpty()) {
         progress.close();
-        QMessageBox::information(this, tr("Detect functions"), tr("No functions detected in section."));
+        QMessageBox::information(this, tr("Detect functions"), tr("No functions detected in section"));
         return;
     }
 
@@ -1209,7 +1209,7 @@ void MainWindow::detectAudioSamples()
 
     if (samples.isEmpty()) {
         QMessageBox::information(this, tr("Detect Audio Samples"),
-                                 tr("No audio samples detected in this ROM."));
+                                 tr("No audio samples detected in this ROM"));
         return;
     }
 
@@ -1303,7 +1303,7 @@ void MainWindow::detectAudioSamplesInRange(qint64 rangeStart, qint64 rangeEnd)
 
     if (samples.isEmpty()) {
         QMessageBox::information(this, tr("Detect Audio Samples"),
-                                 tr("No audio samples detected in this section."));
+                                 tr("No audio samples detected in this section"));
         return;
     }
 
@@ -1446,12 +1446,12 @@ void MainWindow::exportAudioSample()
     int rate = 0;
     const auto pcm = AudioDetector::decodeToPCM16(sampleData, fmt, &rate);
     if (pcm.isEmpty()) {
-        QMessageBox::warning(this, tr("Export Audio"), tr("Failed to decode sample data."));
+        QMessageBox::warning(this, tr("Export Audio"), tr("Failed to decode sample data"));
         return;
     }
 
     const QString path = QFileDialog::getSaveFileName(
-        this, tr("Export Audio Sample"), sec.name + QStringLiteral(".wav"), tr("WAV files (*.wav)"));
+        this, tr("Export sample"), sec.name + QStringLiteral(".wav"), tr("WAV files (*.wav)"));
     if (path.isEmpty()) return;
 
     const QByteArray wav = AudioPlayer::createWavData(pcm, rate);
@@ -1490,14 +1490,14 @@ void MainWindow::importAudioSample()
         targetRate = defaultSampleRateForAudioFormat(fmt);
 
     const QString path = QFileDialog::getOpenFileName(
-        this, tr("Import Audio Sample"), QString(), tr("WAV files (*.wav);;All files (*)"));
+        this, tr("Import audio"), QString(), tr("WAV files (*.wav);;All files (*)"));
     if (path.isEmpty()) return;
 
     const qint64 maxLen = secEnd - sec.startOffset;
     int sampleCount = 0;
     QByteArray encoded = AudioPlayer::importWav(path, fmt, targetRate, &sampleCount);
     if (encoded.isEmpty()) {
-        QMessageBox::warning(this, tr("Import Audio"), tr("Failed to import WAV file."));
+        QMessageBox::warning(this, tr("Import Audio"), tr("Failed to import WAV file"));
         return;
     }
 
