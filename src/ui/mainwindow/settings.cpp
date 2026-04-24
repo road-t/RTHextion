@@ -142,6 +142,11 @@ void MainWindow::readSettings()
             panelModeGraphicsAct->setChecked(true);
             hexEdit->setShowGraphicsPanel(true);
         }
+        else if (pm == QLatin1String("sound") && panelModeSoundAct) {
+            panelModeSoundAct->setChecked(true);
+            if (m_audioDock)
+                m_audioDock->show();
+        }
         else
             panelModeTextAct->setChecked(true);
     }

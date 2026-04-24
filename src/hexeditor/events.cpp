@@ -664,9 +664,10 @@ void HexEditor::keyPressEvent(QKeyEvent *event)
                             _bPosCurrent = getSelectionBegin();
                             remove(_bPosCurrent, getSelectionEnd() - getSelectionBegin());
                         }
-                        else
+                        else if (_bPosCurrent + 1 < dataSize())
                         {
-                            remove(_bPosCurrent, 1);
+                            // Delete removes byte AFTER cursor in INSERT mode
+                            remove(_bPosCurrent + 1, 1);
                         }
                         setCursorPosition(2 * _bPosCurrent);
                         resetSelection(2 * _bPosCurrent);

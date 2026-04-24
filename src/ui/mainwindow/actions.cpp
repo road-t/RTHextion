@@ -199,7 +199,7 @@ void MainWindow::retranslateUi()
     if (panelModeGraphicsAct)
         panelModeGraphicsAct->setText(tr("Graphics"));
     if (panelModeSoundAct)
-        panelModeSoundAct->setText(tr("Sound"));
+        panelModeSoundAct->setText(tr("Audio"));
     if (panelModeDisasmAct)
         panelModeDisasmAct->setText(tr("Disassembly"));
     showAddressGridAct->setText(tr("Show grid"));
@@ -780,6 +780,11 @@ void MainWindow::createActions()
     asciiAreaGroup->addAction(panelModeDisasmAct);
     asciiAreaMenu->addAction(panelModeDisasmAct);
 
+    panelModeSoundAct = new QAction(tr("Audio"), this);
+    panelModeSoundAct->setCheckable(true);
+    asciiAreaGroup->addAction(panelModeSoundAct);
+    asciiAreaMenu->addAction(panelModeSoundAct);
+
     showAddressGridAct = new QAction(tr("Show grid"), this);
     showAddressGridAct->setCheckable(true);
     showAddressGridAct->setChecked(true);
@@ -831,6 +836,13 @@ void MainWindow::createActions()
                     hexEdit->setAsciiArea(true);
                     hexEdit->setShowDisasm(true);
                     s.setValue("PanelMode", QStringLiteral("disasm"));
+                } else if (act == panelModeSoundAct) {
+                    hexEdit->setShowDisasm(false);
+                    hexEdit->setShowGraphicsPanel(false);
+                    hexEdit->setAsciiArea(true);
+                    s.setValue("PanelMode", QStringLiteral("sound"));
+                    if (m_audioDock)
+                        m_audioDock->show();
                 }
             });
     connect(showAddressGridAct, &QAction::toggled, this, [this](bool checked)
