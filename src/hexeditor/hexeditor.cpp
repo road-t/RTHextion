@@ -826,7 +826,7 @@ qint64 HexEditor::cursorPosition(QPoint pos)
             }
         }
         // ── Regular ASCII area click ──
-        else if (posX < (_pxPosAsciiX + kAsciiAreaLeftPaddingPx + static_cast<int>(_asciiAreaMaxWidth)))
+        else
         {
         _editAreaIsAscii = true;
         ensureTableDisplayCache();
@@ -872,6 +872,9 @@ qint64 HexEditor::cursorPosition(QPoint pos)
             ? _sectionModel->displayModeAtOffset(_visualRowStartBytes[row])
             : SectionDisplay_Default;
         const bool rowForcesRaw = (rowSectionMode == SectionDisplay_Raw);
+        TranslationTable *secTable = nullptr;
+        if (!rowForcesRaw && rowSectionMode > 0 && rowSectionMode <= _allTables.size())
+            secTable = _allTables[rowSectionMode - 1];
         const bool rowUsesTableDisplay = !rowForcesRaw && _tb && !_tbDisplayChars.isEmpty();
         const bool rowUsesTableWidthCache = !rowForcesRaw && _tb && !_tbSymbolWidthPxCache.isEmpty();
 
@@ -881,7 +884,22 @@ qint64 HexEditor::cursorPosition(QPoint pos)
         int byteCol = 0; // lead byte of the entry being hit
 
         bool hitSlot = false;
-        if (rowUsesTableDisplay)
+        if (secTable)
+        {
+            const QFontMetrics fm(font());
+            for (int col = 0; col < static_cast<int>(rowEnd - rowStart); ++col)
+            {
+                const uint8_t rowByte = static_cast<uint8_t>(_dataShown.at(rowStart + col));
+                const QString sym = secTable->encodeSymbol(static_cast<char>(rowByte));
+                const QString displaySym = sym.isEmpty() ? QString(_notInTableChar) : sym;
+                const int baseW = qMax(_pxCharWidth, fm.horizontalAdvance(displaySym));
+                const int slotW = baseW + slotGapPx(baseW);
+                byteCol = col;
+                if (xPx < accumulated + slotW) { hitSlot = true; break; }
+                accumulated += slotW;
+            }
+        }
+        else if (rowUsesTableDisplay)
         {
             const QFontMetrics fm(font());
             for (int col = 0; col < static_cast<int>(rowEnd - rowStart); ++col)
