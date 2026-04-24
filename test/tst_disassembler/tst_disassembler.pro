@@ -13,5 +13,6 @@ HEADERS += \
 
 macx: LIBS += -liconv
 macx: LIBS += -L../../../src/libs/capstone -lcapstone
+macx: DEFINES += HAVE_CAPSTONE
 
 INCLUDEPATH += ../../src ../../src/utils ../../src/libs/capstone/include

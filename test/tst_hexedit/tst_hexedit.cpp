@@ -909,7 +909,6 @@ private slots:
         Section section;
         section.name = QStringLiteral("Header");
         section.startOffset = 0;
-        section.endOffset = 16;
         section.color = Qt::red;
 
         model.addSection(section);
@@ -936,7 +935,6 @@ private slots:
         Section section;
         section.name = QStringLiteral("Header");
         section.startOffset = 0;
-        section.endOffset = 16;
         section.color = Qt::red;
 
         model.addSection(section);
@@ -961,20 +959,18 @@ private slots:
         Section parent;
         parent.name = QStringLiteral("Header");
         parent.startOffset = 0;
-        parent.endOffset = 32;
         parent.color = Qt::red;
         model.addSection(parent);
 
         Section child;
         child.name = QStringLiteral("Sub");
         child.startOffset = 8;
-        child.endOffset = 16;
-        child.parentIndex = 0;
         child.color = Qt::blue;
         model.addSection(child);
 
         model.removeSection(0);
-        QCOMPARE(model.count(), 0);
+        QCOMPARE(model.count(), 1);
+        QCOMPARE(model.at(0).name, QStringLiteral("Sub"));
 
         editor.undo();
         QCOMPARE(model.count(), 2);
@@ -982,7 +978,8 @@ private slots:
         QCOMPARE(model.at(1).name, QStringLiteral("Sub"));
 
         editor.redo();
-        QCOMPARE(model.count(), 0);
+        QCOMPARE(model.count(), 1);
+        QCOMPARE(model.at(0).name, QStringLiteral("Sub"));
     }
 
     // ═══════════════════════════════════════════════════════════════════════

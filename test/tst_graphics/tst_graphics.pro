@@ -18,6 +18,7 @@ SOURCES += tst_graphics.cpp \
     ../../src/hexeditor/hexscrollmap.cpp \
     ../../src/utils/disassembler.cpp \
     ../../src/utils/appsettings.cpp \
+    ../../src/audio/audiodetector.cpp \
     ../../src/document/SectionListModel.cpp \
     ../../src/document/translationtable.cpp \
     ../../src/document/PointerListModel.cpp \
@@ -30,6 +31,7 @@ HEADERS += \
     ../../src/hexeditor/chunks.h \
     ../../src/hexeditor/commands.h \
     ../../src/hexeditor/hexscrollmap.h \
+    ../../src/audio/audiodetector.h \
     ../../src/document/SectionListModel.h \
     ../../src/document/translationtable.h \
     ../../src/document/PointerListModel.h \
@@ -41,6 +43,7 @@ FORMS += ../../src/dialogs/InsertScriptDialog.ui
 
 macx: LIBS += -liconv
 macx: LIBS += -L../../../src/libs/capstone -lcapstone
+macx: DEFINES += HAVE_CAPSTONE
 
-INCLUDEPATH += ../../src ../../src/hexeditor ../../src/document ../../src/utils ../../src/dockwidgets ../../src/libs/capstone/include
+INCLUDEPATH += ../../src ../../src/hexeditor ../../src/document ../../src/utils ../../src/audio ../../src/dockwidgets ../../src/libs/capstone/include
 DEFINES += HEXEDITOR_EXPORTS

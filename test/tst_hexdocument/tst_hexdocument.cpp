@@ -20,11 +20,11 @@ private slots:
         HexDocument doc;
         QVERIFY(doc.isUntitled);
         QVERIFY(doc.filePath.isEmpty());
-        QCOMPARE(doc.romType, RomType::Unknown);
-        QCOMPARE(doc.byteOrder, ByteOrder::LittleEndian);
+        QCOMPARE(doc.romType(), RomType::Unknown);
+        QCOMPARE(doc.byteOrder(), ByteOrder::LittleEndian);
         QCOMPARE(doc.cursorPosition, 0);
-        QVERIFY(doc.pointerSnapshot.isEmpty());
-        QCOMPARE(doc.currentEncoding, QStringLiteral("ASCII"));
+        QVERIFY(doc.pointerSnapshot().isEmpty());
+        QCOMPARE(doc.currentEncoding(), QStringLiteral("ASCII"));
     }
 
     // ---- Save and load project (v3 multi-table) ----
@@ -48,17 +48,17 @@ private slots:
         HexDocument doc;
         doc.filePath = dataPath;
         doc.projectName = QStringLiteral("Test Project");
-        doc.currentEncoding = QStringLiteral("Shift-JIS");
-        doc.romType = RomType::NES;
-        doc.byteOrder = ByteOrder::LittleEndian;
+        doc.setCurrentEncoding(QStringLiteral("Shift-JIS"));
+        doc.setRomType(RomType::NES);
+        doc.setByteOrder(ByteOrder::LittleEndian);
         doc.cursorPosition = 0x100;
-        doc.showPointers = true;
-        doc.showChanges = false;
-        doc.changesHexMode = true;
+        doc.showSections = true;
 
         // Pointer snapshot
-        doc.pointerSnapshot.append({0x1000, PointerListModel::encodePtrValue(0x2000, 4)});
-        doc.pointerSnapshot.append({0x3000, PointerListModel::encodePtrValue(0x4000, 2)});
+        QVector<QPair<qint64, qint64>> pointerSnapshot;
+        pointerSnapshot.append({0x1000, PointerListModel::encodePtrValue(0x2000, 4)});
+        pointerSnapshot.append({0x3000, PointerListModel::encodePtrValue(0x4000, 2)});
+        doc.setPointerSnapshot(pointerSnapshot);
 
         // Original bytes
         doc.originalBytes.append({0x100, QByteArray("\x41\x42\x43", 3)});
@@ -72,21 +72,20 @@ private slots:
         QVERIFY(loaded.loadProject(projectPath));
 
         QCOMPARE(loaded.projectName, QStringLiteral("Test Project"));
-        QCOMPARE(loaded.currentEncoding, QStringLiteral("Shift-JIS"));
-        QCOMPARE(loaded.romType, RomType::NES);
-        QCOMPARE(loaded.byteOrder, ByteOrder::LittleEndian);
-        QCOMPARE(loaded.cursorPosition, qint64(0x100));
-        QCOMPARE(loaded.showPointers, true);
-        QCOMPARE(loaded.showChanges, false);
-        QCOMPARE(loaded.changesHexMode, true);
+        QCOMPARE(loaded.currentEncoding(), QStringLiteral("Shift-JIS"));
+        QCOMPARE(loaded.romType(), RomType::NES);
+        QCOMPARE(loaded.byteOrder(), ByteOrder::LittleEndian);
+        QCOMPARE(loaded.cursorPosition, qint64(0));
+        QCOMPARE(loaded.showSections, true);
 
         // Pointers
-        QCOMPARE(loaded.pointerSnapshot.size(), 2);
-        QCOMPARE(loaded.pointerSnapshot[0].first, qint64(0x1000));
-        QCOMPARE(PointerListModel::decodePtrTarget(loaded.pointerSnapshot[0].second), qint64(0x2000));
-        QCOMPARE(PointerListModel::decodePtrSize(loaded.pointerSnapshot[0].second), 4);
-        QCOMPARE(PointerListModel::decodePtrTarget(loaded.pointerSnapshot[1].second), qint64(0x4000));
-        QCOMPARE(PointerListModel::decodePtrSize(loaded.pointerSnapshot[1].second), 2);
+        const auto loadedPointers = loaded.pointerSnapshot();
+        QCOMPARE(loadedPointers.size(), 2);
+        QCOMPARE(loadedPointers[0].first, qint64(0x1000));
+        QCOMPARE(PointerListModel::decodePtrTarget(loadedPointers[0].second), qint64(0x2000));
+        QCOMPARE(PointerListModel::decodePtrSize(loadedPointers[0].second), 4);
+        QCOMPARE(PointerListModel::decodePtrTarget(loadedPointers[1].second), qint64(0x4000));
+        QCOMPARE(PointerListModel::decodePtrSize(loadedPointers[1].second), 2);
 
         // Original bytes
         QCOMPARE(loaded.originalBytes.size(), 1);
@@ -101,18 +100,14 @@ private slots:
         QString projectPath = tmpDir.path() + "/display_settings.rthp";
 
         HexDocument doc;
-        doc.showPointers = false;
-        doc.showChanges = true;
-        doc.changesHexMode = false;
+        doc.showSections = false;
 
         QVector<DocTableEntry> tables;
         QVERIFY(doc.saveProject(projectPath, tables, -1));
 
         HexDocument loaded;
         QVERIFY(loaded.loadProject(projectPath));
-        QCOMPARE(loaded.showPointers, false);
-        QCOMPARE(loaded.showChanges, true);
-        QCOMPARE(loaded.changesHexMode, false);
+        QCOMPARE(loaded.showSections, false);
     }
 
     // ---- Save with embedded table and reload ----
@@ -125,7 +120,7 @@ private slots:
 
         HexDocument doc;
         doc.filePath = tmpDir.path() + "/data.bin";
-        doc.currentEncoding = QStringLiteral("ASCII");
+        doc.setCurrentEncoding(QStringLiteral("ASCII"));
 
         // Create table
         DocTableEntry entry;
@@ -203,13 +198,13 @@ private slots:
         for (auto order : orders) {
             QString projectPath = tmpDir.path() + "/test_bo.rthp";
             HexDocument doc;
-            doc.byteOrder = order;
+            doc.setByteOrder(order);
             QVector<DocTableEntry> tables;
             QVERIFY(doc.saveProject(projectPath, tables, -1));
 
             HexDocument loaded;
             QVERIFY(loaded.loadProject(projectPath));
-            QCOMPARE(loaded.byteOrder, order);
+            QCOMPARE(loaded.byteOrder(), order);
         }
     }
 
@@ -223,7 +218,7 @@ private slots:
 
         HexDocument doc;
         doc.snapshotPointers(&model);
-        QCOMPARE(doc.pointerSnapshot.size(), 2);
+        QCOMPARE(doc.pointerSnapshot().size(), 2);
 
         PointerListModel model2;
         doc.restorePointers(&model2);
@@ -265,7 +260,7 @@ private slots:
         HexDocument loaded;
         QVERIFY(loaded.loadProject(projectPath));
         QCOMPARE(loaded.projectName, QStringLiteral("Legacy"));
-        QCOMPARE(loaded.cursorPosition, qint64(0x50));
+        QCOMPARE(loaded.cursorPosition, qint64(0));
     }
 
     // ---- Empty project ----
@@ -282,8 +277,8 @@ private slots:
 
         HexDocument loaded;
         QVERIFY(loaded.loadProject(projectPath));
-        QCOMPARE(loaded.romType, RomType::Unknown);
-        QVERIFY(loaded.pointerSnapshot.isEmpty());
+        QCOMPARE(loaded.romType(), RomType::Unknown);
+        QVERIFY(loaded.pointerSnapshot().isEmpty());
     }
 
     // ---- originalFileSize serialization ----

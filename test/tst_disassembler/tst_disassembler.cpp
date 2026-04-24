@@ -274,6 +274,23 @@ private slots:
             QVERIFY(cp.ptrFileOffset >= 0);
         }
     }
+
+    void megaDriveSupportAndBasicDisassembly()
+    {
+        QVERIFY(Disassembler::isSupported(RomType::MD));
+
+        Disassembler d;
+        QVERIFY(d.setRomType(RomType::MD));
+
+        // M68K: RTS
+        const QByteArray data = QByteArray::fromHex("4E75");
+        const auto insns = d.disassemble(data, 0, data.size());
+        QVERIFY(!insns.isEmpty());
+
+        QCOMPARE(insns[0].fileOffset, qint64(0));
+        QCOMPARE(insns[0].size, 2);
+        QVERIFY(insns[0].isReturn);
+    }
 };
 
 QTEST_APPLESS_MAIN(TstDisassembler)

@@ -9,6 +9,7 @@ SOURCES += tst_hexedit.cpp \
     ../../src/hexeditor/encoding.cpp \
     ../../src/hexeditor/events.cpp \
     ../../src/hexeditor/disasm.cpp \
+    ../../src/hexeditor/graphics.cpp \
     ../../src/hexeditor/pointers.cpp \
     ../../src/hexeditor/scrollmap.cpp \
     ../../src/hexeditor/layout.cpp \
@@ -17,6 +18,7 @@ SOURCES += tst_hexedit.cpp \
     ../../src/hexeditor/hexscrollmap.cpp \
     ../../src/utils/disassembler.cpp \
     ../../src/utils/appsettings.cpp \
+    ../../src/audio/audiodetector.cpp \
     ../../src/document/SectionListModel.cpp \
     ../../src/document/translationtable.cpp \
     ../../src/document/PointerListModel.cpp
@@ -28,6 +30,7 @@ HEADERS += \
     ../../src/hexeditor/chunks.h \
     ../../src/hexeditor/commands.h \
     ../../src/hexeditor/hexscrollmap.h \
+    ../../src/audio/audiodetector.h \
     ../../src/utils/disassembler.h \
     ../../src/document/SectionListModel.h \
     ../../src/document/translationtable.h \
@@ -36,6 +39,7 @@ HEADERS += \
 
 macx: LIBS += -liconv
 macx: LIBS += -L../../../src/libs/capstone -lcapstone
+macx: DEFINES += HAVE_CAPSTONE
 
-INCLUDEPATH += ../../src ../../src/hexeditor ../../src/document ../../src/utils ../../src/libs/capstone/include
+INCLUDEPATH += ../../src ../../src/hexeditor ../../src/document ../../src/utils ../../src/audio ../../src/libs/capstone/include
 DEFINES += HEXEDITOR_EXPORTS
