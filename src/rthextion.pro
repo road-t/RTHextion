@@ -11,29 +11,73 @@ qtHaveModule(multimedia) {
 TEMPLATE = app
 TARGET = RTHextion
 
-# Capstone disassembly engine (static, embedded in project)
-# The bundled archive is a macOS Mach-O x86_64 static library, so it is only
-# usable on macOS builds and only when the requested architecture is present.
-capstone_enabled = false
+# Capstone is mandatory for the application on all platforms.
+# Resolution order:
+# 1) Bundled static archive (when compatible with target architecture)
+# 2) System package via pkg-config
+# 3) macOS Homebrew fallback
+# If none are available, stop configuration with a hard error.
 contains(CONFIG, disable_capstone) {
-    capstone_enabled = false
-} else:contains(CONFIG, force_capstone) {
+    error("Capstone is mandatory; remove CONFIG+=disable_capstone")
+}
+
+capstone_enabled = false
+
+contains(CONFIG, force_capstone) {
     capstone_enabled = true
-} else:macx {
-    capstone_info = $$system("/usr/bin/lipo -info $$shell_path($$PWD/libs/capstone/libcapstone.a) 2>/dev/null")
-    capstone_enabled = false
-    !isEmpty(capstone_info) {
+    INCLUDEPATH += $$PWD/libs/capstone/include
+    LIBS += -L$$PWD/libs/capstone -lcapstone
+}
+
+!equals(capstone_enabled, true):macx {
+    capstone_archs = $$system("/usr/bin/lipo -archs $$shell_path($$PWD/libs/capstone/libcapstone.a) 2>/dev/null")
+    capstone_target_archs = $$QMAKE_APPLE_DEVICE_ARCHS
+    isEmpty(capstone_target_archs) {
+        capstone_target_archs = $$system("/usr/bin/uname -m")
+    }
+
+    capstone_bundled_ok = true
+    isEmpty(capstone_archs) {
+        capstone_bundled_ok = false
+    }
+    equals(capstone_bundled_ok, true) {
+        for(cap_arch, capstone_target_archs) {
+            !contains(capstone_archs, $$cap_arch) {
+                capstone_bundled_ok = false
+            }
+        }
+    }
+
+    equals(capstone_bundled_ok, true) {
         capstone_enabled = true
+        INCLUDEPATH += $$PWD/libs/capstone/include
+        LIBS += -L$$PWD/libs/capstone -lcapstone
     }
 }
 
-equals(capstone_enabled, true) {
-    INCLUDEPATH += $$PWD/libs/capstone/include
-    LIBS += -L$$PWD/libs/capstone -lcapstone
-    DEFINES += HAVE_CAPSTONE
-} else {
-    warning("Bundled Capstone is unavailable for this platform/target; non-Z80 disassembly will be disabled")
+!equals(capstone_enabled, true) {
+    capstone_pkg = $$system("pkg-config --exists capstone && echo yes")
+    contains(capstone_pkg, yes) {
+        capstone_enabled = true
+        CONFIG += link_pkgconfig
+        PKGCONFIG += capstone
+    }
 }
+
+!equals(capstone_enabled, true):macx {
+    capstone_brew_prefix = $$system("brew --prefix capstone 2>/dev/null")
+    !isEmpty(capstone_brew_prefix) {
+        capstone_enabled = true
+        INCLUDEPATH += $$capstone_brew_prefix/include
+        LIBS += -L$$capstone_brew_prefix/lib -lcapstone
+    }
+}
+
+!equals(capstone_enabled, true) {
+    error("Capstone is required but not found. Install system capstone (pkg-config), or provide a compatible $$PWD/libs/capstone/libcapstone.a for target architecture.")
+}
+
+DEFINES += HAVE_CAPSTONE
 
 macx {
     ICON = images/tj.icns
