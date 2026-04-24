@@ -59,15 +59,28 @@ contains(CONFIG, force_capstone) {
     win32 {
         capstone_vcpkg_root = $$(VCPKG_ROOT)
         isEmpty(capstone_vcpkg_root) {
+            capstone_vcpkg_root = $$(VCPKG_INSTALLATION_ROOT)
+        }
+        isEmpty(capstone_vcpkg_root) {
             capstone_vcpkg_root = C:/vcpkg
         }
-        capstone_vcpkg_triplet = x64-windows-static
-        capstone_vcpkg_lib = $$capstone_vcpkg_root/installed/$$capstone_vcpkg_triplet/lib/capstone.lib
 
-        exists($$capstone_vcpkg_lib) {
-            capstone_enabled = true
-            INCLUDEPATH += $$capstone_vcpkg_root/installed/$$capstone_vcpkg_triplet/include
-            LIBS += $$capstone_vcpkg_lib
+        capstone_vcpkg_triplets = x64-windows-static x64-windows
+        capstone_vcpkg_lib_names = capstone.lib capstone_static.lib
+
+        for(capstone_vcpkg_triplet, capstone_vcpkg_triplets) {
+            for(capstone_vcpkg_lib_name, capstone_vcpkg_lib_names) {
+                capstone_vcpkg_lib = $$capstone_vcpkg_root/installed/$$capstone_vcpkg_triplet/lib/$$capstone_vcpkg_lib_name
+                exists($$capstone_vcpkg_lib) {
+                    capstone_enabled = true
+                    INCLUDEPATH += $$capstone_vcpkg_root/installed/$$capstone_vcpkg_triplet/include
+                    LIBS += $$capstone_vcpkg_lib
+                    break()
+                }
+            }
+            equals(capstone_enabled, true) {
+                break()
+            }
         }
     }
 }

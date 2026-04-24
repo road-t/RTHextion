@@ -8,6 +8,10 @@
 #else
 #error "HAVE_CAPSTONE is set but Capstone headers were not found"
 #endif
+
+#if defined(CS_ARCH_MOS65XX) && defined(CS_MODE_MOS65XX_6502)
+#define HAVE_CAPSTONE_MOS65XX 1
+#endif
 #endif
 
 #include <QMap>
@@ -853,10 +857,13 @@ bool Disassembler::isSupported(RomType type)
 #else
     switch (type) {
     // 6502-based
+#if defined(HAVE_CAPSTONE_MOS65XX)
     case RomType::NES:
     case RomType::Atari2600:
+    case RomType::Atari5200:
     case RomType::Atari7800:
         return true;
+#endif
 
     // ARM (GBA)
     case RomType::GBA:
@@ -884,9 +891,7 @@ bool Disassembler::isSupported(RomType type)
 
     // Not yet supported (need separate decoders):
     // 65816: SNES variants
-    // 6502 (Atari 5200 uses 6502C — same as NES)
-    case RomType::Atari5200:
-        return true;
+    // 6502 variants when Capstone is built without MOS65XX backend.
 
     default:
         return false;
@@ -920,9 +925,13 @@ bool Disassembler::setRomType(RomType type)
     case RomType::Atari2600:
     case RomType::Atari5200:
     case RomType::Atari7800:
+#if defined(HAVE_CAPSTONE_MOS65XX)
         arch = CS_ARCH_MOS65XX;
         mode = CS_MODE_MOS65XX_6502;
         break;
+#else
+        return false;
+#endif
 
     // ARM — GBA uses ARM7TDMI (ARMv4T), mostly Thumb code
     case RomType::GBA:
@@ -1012,12 +1021,14 @@ static bool isBranchInstruction(csh handle, const cs_insn *insn, cs_arch arch)
     const QString mn = QString::fromLatin1(insn->mnemonic).toLower();
 
     switch (arch) {
+#if defined(HAVE_CAPSTONE_MOS65XX)
     case CS_ARCH_MOS65XX:
         if (mn == "jmp" || mn == "jsr" || mn == "bcc" || mn == "bcs" ||
             mn == "beq" || mn == "bne" || mn == "bmi" || mn == "bpl" ||
             mn == "bvc" || mn == "bvs")
             return true;
         break;
+#endif
 
     case CS_ARCH_M68K:
         if (mn.startsWith("bra") || mn.startsWith("bsr") || mn.startsWith("bcc") ||
@@ -1365,7 +1376,7 @@ QVector<DisasmInstruction> Disassembler::disassemble(const QByteArray &data, qin
 
     const uint8_t *code = reinterpret_cast<const uint8_t *>(data.constData() + offset);
     size_t codeSize = static_cast<size_t>(available);
-    quint64 addr = static_cast<quint64>(offset + m_baseAddress);
+    uint64_t addr = static_cast<uint64_t>(offset + m_baseAddress);
 
     csh h = static_cast<csh>(m_handle);
 
@@ -1490,7 +1501,7 @@ QVector<InsnBoundary> Disassembler::scanBoundaries(
 
     const uint8_t *code = reinterpret_cast<const uint8_t *>(data.constData() + offset);
     size_t codeSize = static_cast<size_t>(available);
-    quint64 addr = static_cast<quint64>(offset + m_baseAddress);
+    uint64_t addr = static_cast<uint64_t>(offset + m_baseAddress);
 
     csh h = static_cast<csh>(m_handle);
     cs_insn *insn = cs_malloc(h);
@@ -1618,7 +1629,7 @@ QVector<DetectedFunction> Disassembler::scanFunctions(
     const uint8_t *codeBase = reinterpret_cast<const uint8_t *>(data.constData() + offset);
     const uint8_t *code = codeBase;
     size_t codeSize = static_cast<size_t>(available);
-    quint64 addr = static_cast<quint64>(offset + m_baseAddress);
+    uint64_t addr = static_cast<uint64_t>(offset + m_baseAddress);
     const qint64 fileStart = offset;
     const qint64 fileEnd   = offset + available;
 
@@ -1680,6 +1691,7 @@ QVector<DetectedFunction> Disassembler::scanFunctions(
                         }
                         break;
                     }
+#if defined(HAVE_CAPSTONE_MOS65XX)
                     case CS_ARCH_MOS65XX: {
                         const QString mn = QString::fromLatin1(insn->mnemonic).toLower();
                         if (mn == "jsr" && insn->size == 3) {
@@ -1689,6 +1701,7 @@ QVector<DetectedFunction> Disassembler::scanFunctions(
                         }
                         break;
                     }
+#endif
                     default:
                         break;
                     }

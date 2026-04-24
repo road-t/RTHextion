@@ -192,6 +192,15 @@ jobs:
         run: vcpkg install capstone:x64-windows-static
         shell: cmd
 
+      - name: Detect vcpkg root
+        shell: pwsh
+        run: |
+          $vcpkgExe = (Get-Command vcpkg).Source
+          $vcpkgRoot = Split-Path -Parent $vcpkgExe
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "VCPKG_INSTALLATION_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Using VCPKG_ROOT=$vcpkgRoot"
+
       - name: Setup MSVC environment
         uses: ilammy/msvc-dev-cmd@v1
         with:
