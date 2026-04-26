@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v3.0.2-alpha] - 2026-04-26
+### Fixed
+- **Capstone 5.0 compatibility**: Updated Capstone integration to support both v4 and v5 APIs, ensuring disassembly features work correctly regardless of the installed Capstone version.
+  - Added compile-time checks for Capstone version and conditional code paths for API differences.
+  - Updated CI workflows to test against both Capstone v4 and v5 environments.
+- **Minor UI bugs**: Fixed various small issues in the new disassembly, graphics
+- Automatic update check fallback added
+
 ## [v3.0-alpha] - 2026-04-23
 
 ### Added
