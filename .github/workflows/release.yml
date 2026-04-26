@@ -202,7 +202,9 @@ jobs:
         shell: cmd
 
       - name: Install Capstone (vcpkg)
-        run: C:\vcpkg\vcpkg.exe install capstone:x64-windows-static --triplet x64-windows-static --disable-metrics
+        run: |
+          C:\vcpkg\vcpkg.exe remove capstone:x64-windows-static --recurse >nul 2>&1
+          C:\vcpkg\vcpkg.exe install capstone[arm,m68k,mips,x86,mos65xx]:x64-windows-static --triplet x64-windows-static --disable-metrics
         shell: cmd
 
       - name: Setup MSVC environment

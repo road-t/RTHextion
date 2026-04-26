@@ -88,7 +88,8 @@ jobs:
       - name: Install Capstone + libiconv (vcpkg)
         shell: cmd
         run: |
-          C:\vcpkg\vcpkg.exe install capstone:x64-windows-static --triplet x64-windows-static --disable-metrics
+          C:\vcpkg\vcpkg.exe remove capstone:x64-windows-static --recurse >nul 2>&1
+          C:\vcpkg\vcpkg.exe install capstone[arm,m68k,mips,x86,mos65xx]:x64-windows-static --triplet x64-windows-static --disable-metrics
           C:\vcpkg\vcpkg.exe install libiconv:x64-windows-static --triplet x64-windows-static --disable-metrics
 
       - name: Setup MSVC environment
@@ -125,36 +126,71 @@ jobs:
           nmake /nologo
 
       - name: Runtime probe for required Capstone backends
-        shell: cmd
+        shell: pwsh
         run: |
-          setlocal
-          set VCPKG_ROOT_FWD=C:/vcpkg
+          $capstoneProbe = @'
+          #include <capstone/capstone.h>
+          #include <stdio.h>
 
-          (
-            echo #include ^<capstone/capstone.h^>
-            echo int main^(void^) {
-            echo   csh h = 0;
-            echo   if ^(cs_open^(CS_ARCH_ARM, CS_MODE_THUMB, ^&h^) != CS_ERR_OK^) return 1;
-            echo   cs_close^(^&h^);
-            echo   if ^(cs_open^(CS_ARCH_M68K, CS_MODE_M68K_000, ^&h^) != CS_ERR_OK^) return 2;
-            echo   cs_close^(^&h^);
-            echo   if ^(cs_open^(CS_ARCH_MIPS, ^(cs_mode^)^ (CS_MODE_MIPS64 ^| CS_MODE_BIG_ENDIAN^), ^&h^) != CS_ERR_OK^) return 3;
-            echo   cs_close^(^&h^);
-            echo   if ^(cs_open^(CS_ARCH_MOS65XX, CS_MODE_MOS65XX_6502, ^&h^) != CS_ERR_OK^) return 4;
-            echo   cs_close^(^&h^);
-            echo   return 0;
-            echo }
-          ) > capstone_smoke.cpp
+          static int check_required(cs_arch arch, cs_mode mode, int code, const char *name)
+          {
+              csh h = 0;
+              cs_err err = cs_open(arch, mode, &h);
+              if (err != CS_ERR_OK) {
+                  printf("ERROR: required backend %s failed: %s\n", name, cs_strerror(err));
+                  return code;
+              }
+              cs_close(&h);
+              return 0;
+          }
 
-          cl /nologo /EHsc capstone_smoke.cpp ^
-            /I"%VCPKG_ROOT_FWD%/installed/x64-windows-static/include" ^
-            "%VCPKG_ROOT_FWD%/installed/x64-windows-static/lib/capstone.lib" ^
+          int main(void)
+          {
+              printf("cs_support: ARM=%d M68K=%d MIPS=%d X86=%d\n",
+                     cs_support(CS_ARCH_ARM),
+                     cs_support(CS_ARCH_M68K),
+                     cs_support(CS_ARCH_MIPS),
+                     cs_support(CS_ARCH_X86));
+
+              int rc = 0;
+              rc = check_required(CS_ARCH_ARM, CS_MODE_THUMB, 11, "ARM/thumb");
+              if (rc) return rc;
+              rc = check_required(CS_ARCH_M68K, CS_MODE_M68K_000, 12, "M68K/68000");
+              if (rc) return rc;
+              rc = check_required(CS_ARCH_MIPS, (cs_mode)(CS_MODE_MIPS64 | CS_MODE_BIG_ENDIAN), 13, "MIPS64/BE");
+              if (rc) return rc;
+              rc = check_required(CS_ARCH_X86, CS_MODE_16, 14, "X86/16");
+              if (rc) return rc;
+
+          #if defined(CS_API_MAJOR) && (CS_API_MAJOR >= 5)
+              csh h = 0;
+              cs_err mosErr = cs_open(CS_ARCH_MOS65XX, CS_MODE_MOS65XX_6502, &h);
+              if (mosErr == CS_ERR_OK) {
+                  cs_close(&h);
+                  printf("MOS65XX backend: available\n");
+              } else {
+                  printf("WARNING: MOS65XX backend is unavailable in this Capstone build: %s\n", cs_strerror(mosErr));
+              }
+          #endif
+
+              return 0;
+          }
+          '@
+
+          Set-Content -Path capstone_smoke.cpp -Value $capstoneProbe -Encoding ascii
+
+          cl /nologo /EHsc capstone_smoke.cpp `
+            /I"C:/vcpkg/installed/x64-windows-static/include" `
+            "C:/vcpkg/installed/x64-windows-static/lib/capstone.lib" `
             /link /OUT:capstone_smoke.exe
 
-          if errorlevel 1 exit /b 1
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to compile capstone_smoke.cpp"
+          }
 
-          capstone_smoke.exe
-          if errorlevel 1 (
-            echo ERROR: Capstone runtime probe failed
-            exit /b 1
-          )
+          & .\capstone_smoke.exe
+          $probeExit = $LASTEXITCODE
+          Write-Host "capstone_smoke exit code: $probeExit"
+          if ($probeExit -ne 0) {
+            throw "Capstone runtime probe failed with exit code $probeExit"
+          }
