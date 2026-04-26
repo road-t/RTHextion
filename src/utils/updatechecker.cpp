@@ -12,9 +12,12 @@
 #include <QDateTime>
 #include <QVersionNumber>
 #include <QString>
+#include <QUrl>
 
 static const char *kApiUrl =
     "https://api.github.com/repos/road-t/RTHextion/releases/latest";
+static const char *kHtmlLatestReleaseUrl =
+    "https://github.com/road-t/RTHextion/releases/latest";
 static const char *kSettingsLastCheck = "Updates/lastCheckTime";
 static const char *kSettingsGithubToken = "Updates/githubToken";
 
@@ -51,7 +54,8 @@ static QByteArray authHeaderValueForToken(const QString &token)
         || trimmed.startsWith(QStringLiteral("token "), Qt::CaseInsensitive))
         return trimmed.toUtf8();
 
-    return QByteArray("Bearer ") + trimmed.toUtf8();
+    // PATs commonly use the "token" scheme.
+    return QByteArray("token ") + trimmed.toUtf8();
 }
 
 static QString githubErrorMessageFromPayload(const QByteArray &payload)
@@ -73,6 +77,26 @@ static QString githubErrorMessageFromPayload(const QByteArray &payload)
     return message + QStringLiteral("\n") + docUrl;
 }
 
+static QString normalizeTagVersion(const QString &tagName)
+{
+    QString remoteVer = tagName.trimmed();
+    if (remoteVer.startsWith(QLatin1Char('v')) || remoteVer.startsWith(QLatin1Char('V')))
+        remoteVer = remoteVer.mid(1);
+    return remoteVer;
+}
+
+static QString extractTagFromReleaseUrl(const QUrl &url)
+{
+    const QString path = url.path();
+    const QString marker = QStringLiteral("/releases/tag/");
+    const int markerPos = path.indexOf(marker);
+    if (markerPos < 0)
+        return QString();
+
+    const QString encodedTag = path.mid(markerPos + marker.size());
+    return QUrl::fromPercentEncoding(encodedTag.toUtf8()).trimmed();
+}
+
 UpdateChecker::UpdateChecker(QObject *parent)
     : QObject(parent)
     , m_nam(new QNetworkAccessManager(this))
@@ -84,12 +108,19 @@ UpdateChecker::UpdateChecker(QObject *parent)
 void UpdateChecker::check(bool silent)
 {
     m_silent = silent;
+    startApiCheck();
+}
+
+void UpdateChecker::startApiCheck()
+{
+    constexpr auto kindAttr = static_cast<QNetworkRequest::Attribute>(QNetworkRequest::User);
 
     QNetworkRequest req(QUrl(QString::fromLatin1(kApiUrl)));
     req.setHeader(QNetworkRequest::UserAgentHeader,
                   QStringLiteral("RTHextion/%1").arg(AppInfo::Version));
     req.setRawHeader("Accept", "application/vnd.github+json");
     req.setRawHeader("X-GitHub-Api-Version", "2022-11-28");
+    req.setAttribute(kindAttr, static_cast<int>(RequestKind::ApiLatestRelease));
 
     const QString token = readGithubToken();
     const QByteArray authHeader = authHeaderValueForToken(token);
@@ -97,6 +128,19 @@ void UpdateChecker::check(bool silent)
         req.setRawHeader("Authorization", authHeader);
 
     m_nam->get(req);
+}
+
+void UpdateChecker::startHtmlFallbackCheck()
+{
+    constexpr auto kindAttr = static_cast<QNetworkRequest::Attribute>(QNetworkRequest::User);
+
+    QNetworkRequest req(QUrl(QString::fromLatin1(kHtmlLatestReleaseUrl)));
+    req.setHeader(QNetworkRequest::UserAgentHeader,
+                  QStringLiteral("RTHextion/%1").arg(AppInfo::Version));
+    req.setAttribute(kindAttr, static_cast<int>(RequestKind::HtmlLatestRelease));
+
+    // We can extract the real latest tag from 3xx redirect target.
+    m_nam->head(req);
 }
 
 bool UpdateChecker::shouldAutoCheck()
@@ -116,12 +160,77 @@ void UpdateChecker::markChecked()
 
 void UpdateChecker::onReplyFinished(QNetworkReply *reply)
 {
+    constexpr auto kindAttr = static_cast<QNetworkRequest::Attribute>(QNetworkRequest::User);
+
     reply->deleteLater();
+
+    const RequestKind requestKind =
+        (reply->request().attribute(kindAttr).toInt() == static_cast<int>(RequestKind::HtmlLatestRelease))
+            ? RequestKind::HtmlLatestRelease
+            : RequestKind::ApiLatestRelease;
 
     const QVariant statusVar = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
     const int statusCode = statusVar.isValid() ? statusVar.toInt() : 0;
     const QByteArray data = reply->readAll();
     const QString payloadError = githubErrorMessageFromPayload(data);
+
+    const bool rateLimitExceeded =
+        statusCode == 403
+        && (payloadError.contains(QStringLiteral("rate limit"), Qt::CaseInsensitive)
+            || reply->rawHeader("X-RateLimit-Remaining") == "0");
+
+    if (requestKind == RequestKind::ApiLatestRelease && rateLimitExceeded) {
+        startHtmlFallbackCheck();
+        return;
+    }
+
+    if (requestKind == RequestKind::HtmlLatestRelease) {
+        QString tagName;
+
+        const QVariant redirectVar = reply->attribute(QNetworkRequest::RedirectionTargetAttribute);
+        if (redirectVar.isValid()) {
+            QUrl redirectUrl = redirectVar.toUrl();
+            if (redirectUrl.isRelative())
+                redirectUrl = reply->url().resolved(redirectUrl);
+            tagName = extractTagFromReleaseUrl(redirectUrl);
+        }
+        if (tagName.isEmpty())
+            tagName = extractTagFromReleaseUrl(reply->url());
+
+        if (reply->error() != QNetworkReply::NoError || statusCode >= 400 || tagName.isEmpty()) {
+            if (!m_silent) {
+                QString err;
+                if (!payloadError.isEmpty()) {
+                    err = payloadError;
+                } else if (reply->error() != QNetworkReply::NoError) {
+                    err = reply->errorString();
+                } else if (tagName.isEmpty()) {
+                    err = QStringLiteral("Could not determine latest release tag from GitHub.");
+                }
+                if (err.isEmpty())
+                    err = QStringLiteral("Unknown error");
+
+                err += QStringLiteral("\n\nSet a GitHub token via environment variable RTHEX_GITHUB_TOKEN (or GITHUB_TOKEN / GH_TOKEN) ")
+                     + QStringLiteral("or in settings key Updates/githubToken to use authenticated requests.");
+                emit checkFailed(err);
+            }
+            return;
+        }
+
+        const QString remoteVer = normalizeTagVersion(tagName);
+        const QVersionNumber remote = QVersionNumber::fromString(remoteVer);
+        const QVersionNumber local  = QVersionNumber::fromString(QString::fromLatin1(AppInfo::Version));
+
+        markChecked();
+
+        if (remote > local) {
+            const QString releaseUrl = QString::fromLatin1(kHtmlLatestReleaseUrl);
+            emit updateAvailable(remoteVer, releaseUrl, QString());
+        } else if (!m_silent) {
+            emit upToDate();
+        }
+        return;
+    }
 
     if (reply->error() != QNetworkReply::NoError) {
         if (!m_silent) {
@@ -152,10 +261,7 @@ void UpdateChecker::onReplyFinished(QNetworkReply *reply)
     QString htmlUrl = obj.value(QLatin1String("html_url")).toString();
     QString body    = obj.value(QLatin1String("body")).toString();
 
-    // Strip leading 'v' from tag
-    QString remoteVer = tagName;
-    if (remoteVer.startsWith(QLatin1Char('v')) || remoteVer.startsWith(QLatin1Char('V')))
-        remoteVer = remoteVer.mid(1);
+    const QString remoteVer = normalizeTagVersion(tagName);
 
     QVersionNumber remote = QVersionNumber::fromString(remoteVer);
     QVersionNumber local  = QVersionNumber::fromString(QString::fromLatin1(AppInfo::Version));

@@ -31,6 +31,14 @@ private slots:
     void onReplyFinished(QNetworkReply *reply);
 
 private:
+    enum class RequestKind {
+        ApiLatestRelease,
+        HtmlLatestRelease
+    };
+
+    void startApiCheck();
+    void startHtmlFallbackCheck();
+
     QNetworkAccessManager *m_nam = nullptr;
     bool m_silent = false;
 };
