@@ -2359,31 +2359,29 @@ bool MainWindow::maybeSaveProject()
         return true;
 
     // Project data exists but has never been saved to a project file
-    if (m_document->projectFilePath.isEmpty()) {
-        if (!hasProjectData())
-            return true;
+    if (m_document->projectFilePath.isEmpty() && !hasProjectData())
+        return true;
 
-        QMessageBox::StandardButton result = QMessageBox::warning(
-            this,
-            QString::fromLatin1(AppInfo::Name),
-            tr("The project has unsaved changes.\nDo you want to save the project?"),
-            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+    // Show save dialog
+    QMessageBox msg(QMessageBox::Warning, QString::fromLatin1(AppInfo::Name),
+                    tr("The project has unsaved changes.\nDo you want to save the project?"), 
+                    QMessageBox::NoButton, this);
+    msg.addButton(tr("Save"), QMessageBox::AcceptRole);
+    msg.addButton(tr("Discard"), QMessageBox::DestructiveRole);
+    msg.addButton(tr("Cancel"), QMessageBox::RejectRole);
+    msg.setDefaultButton(0);
+    int result = msg.exec();
 
-        if (result == QMessageBox::Save)
+    QMessageBox::StandardButton stdResult = (result == 0) ? QMessageBox::Save : 
+                                             (result == 1) ? QMessageBox::Discard : QMessageBox::Cancel;
+
+    if (stdResult == QMessageBox::Save) {
+        if (m_document->projectFilePath.isEmpty())
             return saveProjectAs();
-        return result != QMessageBox::Cancel;
+        return saveProjectImpl(m_document->projectFilePath);
     }
 
-    QMessageBox::StandardButton result = QMessageBox::warning(
-        this,
-        QString::fromLatin1(AppInfo::Name),
-        tr("The project has unsaved changes.\nDo you want to save the project?"),
-        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
-
-    if (result == QMessageBox::Save)
-        return saveProjectImpl(m_document->projectFilePath);
-
-    return result != QMessageBox::Cancel;
+    return stdResult != QMessageBox::Cancel;
 }
 
 bool MainWindow::hasProjectData() const
@@ -2404,16 +2402,21 @@ bool MainWindow::maybeSave()
     if (!isWindowModified())
         return true;
 
-    QMessageBox::StandardButton result = QMessageBox::warning(
-        this,
-        QString::fromLatin1(AppInfo::Name),
-        tr("File has been modified.\nDo you want to save your changes?"),
-        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+    QMessageBox msg(QMessageBox::Warning, QString::fromLatin1(AppInfo::Name),
+                    tr("File has been modified.\nDo you want to save your changes?"), 
+                    QMessageBox::NoButton, this);
+    msg.addButton(tr("Save"), QMessageBox::AcceptRole);
+    msg.addButton(tr("Discard"), QMessageBox::DestructiveRole);
+    msg.addButton(tr("Cancel"), QMessageBox::RejectRole);
+    msg.setDefaultButton(0);
+    int result = msg.exec();
+    QMessageBox::StandardButton stdResult = (result == 0) ? QMessageBox::Save : 
+                                             (result == 1) ? QMessageBox::Discard : QMessageBox::Cancel;
 
-    if (result == QMessageBox::Save)
+    if (stdResult == QMessageBox::Save)
         return save();
 
-    return result != QMessageBox::Cancel;
+    return stdResult != QMessageBox::Cancel;
 }
 
 void MainWindow::updateActionStates()
