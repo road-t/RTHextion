@@ -224,8 +224,8 @@ jobs:
 
           for %%T in (x64-windows-static x64-windows) do (
             if exist "%VCPKG_ROOT%\installed\%%T\lib\capstone.lib" (
-              set CAPSTONE_LIB=%VCPKG_ROOT_FWD%/installed/%%T/lib/capstone.lib
-              set CAPSTONE_TRIPLET=%%T
+              if "!CAPSTONE_LIB!"=="" set CAPSTONE_LIB=%VCPKG_ROOT_FWD%/installed/%%T/lib/capstone.lib
+              if "!CAPSTONE_TRIPLET!"=="" set CAPSTONE_TRIPLET=%%T
             )
             if exist "%VCPKG_ROOT%\installed\%%T\lib\capstone_static.lib" (
               if "!CAPSTONE_LIB!"=="" set CAPSTONE_LIB=%VCPKG_ROOT_FWD%/installed/%%T/lib/capstone_static.lib
@@ -258,6 +258,18 @@ jobs:
             "INCLUDEPATH+=%VCPKG_ROOT_FWD%/installed/%CAPSTONE_TRIPLET%/include" ^
             "LIBS+=%ICONV_LIB%" ^
             "LIBS+=%CAPSTONE_LIB%"
+
+          if not exist Makefile (
+            echo ERROR: qmake did not generate Makefile
+            exit /b 1
+          )
+
+          findstr /i /c:"capstone" Makefile >nul
+          if errorlevel 1 (
+            echo ERROR: Generated Makefile does not contain capstone linkage
+            exit /b 1
+          )
+
           nmake
 
       - name: Deploy Qt dependencies

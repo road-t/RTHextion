@@ -9,16 +9,26 @@
 #error "HAVE_CAPSTONE is set but Capstone headers were not found"
 #endif
 
-#if defined(CS_ARCH_MOS65XX) && defined(CS_MODE_MOS65XX_6502)
+#if (defined(CS_API_MAJOR) && (CS_API_MAJOR >= 5)) \
+    || __has_include(<capstone/mos65xx.h>) \
+    || __has_include(<mos65xx.h>)
 #define HAVE_CAPSTONE_MOS65XX 1
 #endif
 #endif
 
 #include <QMap>
 #include <QSet>
+#include <QDebug>
 #include <algorithm>
 
 namespace {
+
+#ifdef HAVE_CAPSTONE
+inline bool capstoneArchAvailable(cs_arch arch)
+{
+    return cs_support(static_cast<int>(arch));
+}
+#endif
 
 inline bool isZ80RomType(RomType type)
 {
@@ -862,28 +872,28 @@ bool Disassembler::isSupported(RomType type)
     case RomType::Atari2600:
     case RomType::Atari5200:
     case RomType::Atari7800:
-        return true;
+        return capstoneArchAvailable(CS_ARCH_MOS65XX);
 #endif
 
     // ARM (GBA)
     case RomType::GBA:
-        return true;
+        return capstoneArchAvailable(CS_ARCH_ARM);
 
     // M68K (Genesis/MD, 32X)
     case RomType::MD:
     case RomType::X32:
-        return true;
+        return capstoneArchAvailable(CS_ARCH_M68K);
 
     // MIPS (N64)
     case RomType::N64:
     case RomType::N64_LE:
     case RomType::N64_V64:
-        return true;
+        return capstoneArchAvailable(CS_ARCH_MIPS);
 
     // x86-16 (WonderSwan — NEC V30MZ is 80186-compatible)
     case RomType::WonderSwan:
     case RomType::WonderSwanColor:
-        return true;
+        return capstoneArchAvailable(CS_ARCH_X86);
 
     // SH-2 (32X — main CPUs)
     // Capstone has SH support but 32X uses the M68K for main code,
@@ -973,10 +983,19 @@ bool Disassembler::setRomType(RomType type)
         return false;
     }
 
+    if (!capstoneArchAvailable(arch))
+        return false;
+
     csh h = 0;
     cs_err err = cs_open(arch, mode, &h);
-    if (err != CS_ERR_OK)
+    if (err != CS_ERR_OK) {
+        qWarning() << "Capstone initialization failed"
+                   << "romType=" << static_cast<int>(type)
+                   << "arch=" << static_cast<int>(arch)
+                   << "mode=0x" << QString::number(static_cast<qulonglong>(mode), 16)
+                   << "error=" << cs_strerror(err);
         return false;
+    }
 
     // Enable detail mode for branch detection
     cs_option(h, CS_OPT_DETAIL, CS_OPT_ON);
