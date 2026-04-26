@@ -60,3 +60,101 @@ jobs:
           # Override qmake path in run_tests.sh
           sed -i.bak "s|QMAKE=qmake6|QMAKE=${QMAKE}|" run_tests.sh
           bash run_tests.sh
+
+  windows-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt 6 (Windows)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          arch: 'win64_msvc2022_64'
+          cache: true
+
+      - name: Setup vcpkg (C:/vcpkg)
+        shell: pwsh
+        run: |
+          if (!(Test-Path 'C:/vcpkg/vcpkg.exe')) {
+            if (!(Test-Path 'C:/vcpkg')) {
+              git clone https://github.com/microsoft/vcpkg C:/vcpkg
+            }
+            & C:/vcpkg/bootstrap-vcpkg.bat -disableMetrics
+          }
+          "VCPKG_ROOT=C:/vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "VCPKG_INSTALLATION_ROOT=C:/vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Install Capstone + libiconv (vcpkg)
+        shell: cmd
+        run: |
+          C:\vcpkg\vcpkg.exe install capstone:x64-windows-static --triplet x64-windows-static --disable-metrics
+          C:\vcpkg\vcpkg.exe install libiconv:x64-windows-static --triplet x64-windows-static --disable-metrics
+
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build app and verify Capstone linkage
+        shell: cmd
+        run: |
+          setlocal
+          set VCPKG_ROOT_FWD=C:/vcpkg
+
+          mkdir build_smoke
+          cd build_smoke
+
+          "%QT_ROOT_DIR%\bin\qmake" ..\src\rthextion.pro CONFIG+=debug ^
+            CONFIG+=capstone_from_cli ^
+            "INCLUDEPATH+=%VCPKG_ROOT_FWD%/installed/x64-windows-static/include" ^
+            "LIBS+=%VCPKG_ROOT_FWD%/installed/x64-windows-static/lib/iconv.lib" ^
+            "LIBS+=%VCPKG_ROOT_FWD%/installed/x64-windows-static/lib/capstone.lib"
+
+          if not exist Makefile (
+            echo ERROR: qmake did not generate Makefile
+            exit /b 1
+          )
+
+          findstr /i /c:"capstone" Makefile >nul
+          if errorlevel 1 (
+            echo ERROR: Generated Makefile does not contain capstone linkage
+            exit /b 1
+          )
+
+          nmake /nologo
+
+      - name: Runtime probe for required Capstone backends
+        shell: cmd
+        run: |
+          setlocal
+          set VCPKG_ROOT_FWD=C:/vcpkg
+
+          (
+            echo #include ^<capstone/capstone.h^>
+            echo int main^(void^) {
+            echo   csh h = 0;
+            echo   if ^(cs_open^(CS_ARCH_ARM, CS_MODE_THUMB, ^&h^) != CS_ERR_OK^) return 1;
+            echo   cs_close^(^&h^);
+            echo   if ^(cs_open^(CS_ARCH_M68K, CS_MODE_M68K_000, ^&h^) != CS_ERR_OK^) return 2;
+            echo   cs_close^(^&h^);
+            echo   if ^(cs_open^(CS_ARCH_MIPS, ^(cs_mode^)^ (CS_MODE_MIPS64 ^| CS_MODE_BIG_ENDIAN^), ^&h^) != CS_ERR_OK^) return 3;
+            echo   cs_close^(^&h^);
+            echo   if ^(cs_open^(CS_ARCH_MOS65XX, CS_MODE_MOS65XX_6502, ^&h^) != CS_ERR_OK^) return 4;
+            echo   cs_close^(^&h^);
+            echo   return 0;
+            echo }
+          ) > capstone_smoke.cpp
+
+          cl /nologo /EHsc capstone_smoke.cpp ^
+            /I"%VCPKG_ROOT_FWD%/installed/x64-windows-static/include" ^
+            "%VCPKG_ROOT_FWD%/installed/x64-windows-static/lib/capstone.lib" ^
+            /link /OUT:capstone_smoke.exe
+
+          if errorlevel 1 exit /b 1
+
+          capstone_smoke.exe
+          if errorlevel 1 (
+            echo ERROR: Capstone runtime probe failed
+            exit /b 1
+          )
