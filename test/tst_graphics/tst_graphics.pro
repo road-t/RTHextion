@@ -17,6 +17,7 @@ SOURCES += tst_graphics.cpp \
     ../../src/hexeditor/commands.cpp \
     ../../src/hexeditor/hexscrollmap.cpp \
     ../../src/utils/disassembler.cpp \
+    ../../src/utils/palettedetector.cpp \
     ../../src/utils/appsettings.cpp \
     ../../src/audio/audiodetector.cpp \
     ../../src/document/SectionListModel.cpp \
@@ -36,6 +37,7 @@ HEADERS += \
     ../../src/document/translationtable.h \
     ../../src/document/PointerListModel.h \
     ../../src/utils/disassembler.h \
+    ../../src/utils/palettedetector.h \
     ../../src/utils/Datas.h \
     ../../src/dialogs/InsertScriptDialog.h
 

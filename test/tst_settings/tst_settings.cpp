@@ -9,6 +9,21 @@ static QString tabPrefix(int index)
     return QStringLiteral("Session/Tabs/") + QString::number(index);
 }
 
+static void writeDefaultView(QSettings &s, int index,
+                             const QString &mode,
+                             const QString &paletteFormat,
+                             int tileCodec,
+                             int audioFormat,
+                             int disasmCpu)
+{
+    const QString pfx = tabPrefix(index);
+    s.setValue(pfx + QStringLiteral("/defaultViewMode"), mode);
+    s.setValue(pfx + QStringLiteral("/defaultViewPaletteFormat"), paletteFormat);
+    s.setValue(pfx + QStringLiteral("/defaultViewTileCodec"), tileCodec);
+    s.setValue(pfx + QStringLiteral("/defaultViewAudioFormat"), audioFormat);
+    s.setValue(pfx + QStringLiteral("/defaultViewDisasmCpu"), disasmCpu);
+}
+
 // Helper: write a single tab entry to QSettings (same keys as writeSettings)
 static void writeTab(QSettings &s, int index,
                      const QString &type, const QString &path, qint64 cursor,
@@ -188,6 +203,64 @@ private slots:
             QCOMPARE(s.value(pfx + "/dockChangesCollapsed").toBool(), true);
             QCOMPARE(s.value(pfx + "/dockChangesExpandedWidth").toInt(), 280);
             QCOMPARE(s.value(pfx + "/dockChangesExpandedHeight").toInt(), 160);
+        }
+    }
+
+    void perTabDefaultView_roundtrip()
+    {
+        {
+            QSettings s;
+            writeTab(s, 0, QStringLiteral("file"), QStringLiteral("/tmp/rom.bin"), 0x100);
+            writeDefaultView(s, 0,
+                             QStringLiteral("audio"),
+                             QStringLiteral("rgb333"),
+                             7,
+                             3,
+                             5);
+            s.setValue(QStringLiteral("Session/TabCount"), 1);
+        }
+        {
+            QSettings s;
+            const QString pfx = tabPrefix(0);
+            QCOMPARE(s.value(pfx + QStringLiteral("/defaultViewMode")).toString(), QStringLiteral("audio"));
+            QCOMPARE(s.value(pfx + QStringLiteral("/defaultViewPaletteFormat")).toString(), QStringLiteral("rgb333"));
+            QCOMPARE(s.value(pfx + QStringLiteral("/defaultViewTileCodec")).toInt(), 7);
+            QCOMPARE(s.value(pfx + QStringLiteral("/defaultViewAudioFormat")).toInt(), 3);
+            QCOMPARE(s.value(pfx + QStringLiteral("/defaultViewDisasmCpu")).toInt(), 5);
+        }
+    }
+
+    void mixedProjectAndFileTabs_keepOwnMetadata()
+    {
+        {
+            QSettings s;
+            writeTab(s, 0, QStringLiteral("project"), QStringLiteral("/tmp/a.rthp"), 0x111);
+            writeDefaultView(s, 0,
+                             QStringLiteral("graphics"),
+                             QStringLiteral(""),
+                             2,
+                             0,
+                             0);
+            writeTab(s, 1, QStringLiteral("file"), QStringLiteral("/tmp/b.bin"), 0x222);
+            writeDefaultView(s, 1,
+                             QStringLiteral("text"),
+                             QStringLiteral("bgr555"),
+                             4,
+                             1,
+                             0);
+            s.setValue(QStringLiteral("Session/TabCount"), 2);
+            s.setValue(QStringLiteral("Session/ActiveTab"), 0);
+        }
+        {
+            QSettings s;
+            QCOMPARE(s.value(tabPrefix(0) + QStringLiteral("/type")).toString(), QStringLiteral("project"));
+            QCOMPARE(s.value(tabPrefix(0) + QStringLiteral("/path")).toString(), QStringLiteral("/tmp/a.rthp"));
+            QCOMPARE(s.value(tabPrefix(0) + QStringLiteral("/defaultViewMode")).toString(), QStringLiteral("graphics"));
+            QCOMPARE(s.value(tabPrefix(1) + QStringLiteral("/type")).toString(), QStringLiteral("file"));
+            QCOMPARE(s.value(tabPrefix(1) + QStringLiteral("/path")).toString(), QStringLiteral("/tmp/b.bin"));
+            QCOMPARE(s.value(tabPrefix(1) + QStringLiteral("/defaultViewPaletteFormat")).toString(), QStringLiteral("bgr555"));
+            QCOMPARE(s.value(tabPrefix(0) + QStringLiteral("/cursor")).toLongLong(), qint64(0x111));
+            QCOMPARE(s.value(tabPrefix(1) + QStringLiteral("/cursor")).toLongLong(), qint64(0x222));
         }
     }
 

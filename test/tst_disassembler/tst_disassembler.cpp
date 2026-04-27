@@ -310,6 +310,65 @@ private slots:
         QCOMPARE(insns[0].size, 2);
         QVERIFY(insns[0].isReturn);
     }
+
+    void megaDrivePeaPcReferenceProducesPointer()
+    {
+        if (!Disassembler::isSupported(RomType::MD))
+            QSKIP("M68K backend is not available in this Capstone build");
+
+        QByteArray data(0xC000, char(0x00));
+        data[0xBC2A] = char(0x48);
+        data[0xBC2B] = char(0x7A);
+        data[0xBC2C] = char(0xFD);
+        data[0xBC2D] = char(0xEE);
+        data[0xBC2E] = char(0x4E);
+        data[0xBC2F] = char(0x75);
+
+        Disassembler d;
+        QVERIFY(d.setRomType(RomType::MD));
+
+        QVector<CallPointer> callPointers;
+        const auto funcs = d.scanFunctions(data, 0xBC2A, 6, nullptr, &callPointers);
+
+        Q_UNUSED(funcs);
+        QVERIFY(!callPointers.isEmpty());
+
+        const auto it = std::find_if(callPointers.cbegin(), callPointers.cend(), [](const CallPointer &cp) {
+            return cp.ptrFileOffset == qint64(0xBC2C);
+        });
+        QVERIFY(it != callPointers.cend());
+        QCOMPARE(it->targetOffset, qint64(0xBA1A));
+        QCOMPARE(it->ptrSize, 2);
+        QVERIFY(!it->targetMustBeFunction);
+    }
+
+    void megaDrivePeaPcEmbeddedPointerScanProducesPointer()
+    {
+        if (!Disassembler::isSupported(RomType::MD))
+            QSKIP("M68K backend is not available in this Capstone build");
+
+        QByteArray data(0xC000, char(0x00));
+        data[0xBC2A] = char(0x48);
+        data[0xBC2B] = char(0x7A);
+        data[0xBC2C] = char(0xFD);
+        data[0xBC2D] = char(0xEE);
+        data[0xBC2E] = char(0x4E);
+        data[0xBC2F] = char(0x75);
+
+        Disassembler d;
+        QVERIFY(d.setRomType(RomType::MD));
+
+        const auto callPointers = d.scanEmbeddedPointers(data, 0xBC2A, 6);
+        QVERIFY(!callPointers.isEmpty());
+
+        const auto it = std::find_if(callPointers.cbegin(), callPointers.cend(), [](const CallPointer &cp) {
+            return cp.ptrFileOffset == qint64(0xBC2C);
+        });
+        QVERIFY(it != callPointers.cend());
+        QCOMPARE(it->targetOffset, qint64(0xBA1A));
+        QCOMPARE(it->ptrSize, 2);
+        QVERIFY(!it->targetMustBeFunction);
+    }
 };
 
 QTEST_APPLESS_MAIN(TstDisassembler)
