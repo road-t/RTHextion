@@ -21,6 +21,7 @@ Inspired by the original Translhextion editor created by [Brian 'Januschan' Benn
   - **Translation tables dock** — view, edit, and switch between translation tables without leaving the editor
   - **Changes dock** — track all modifications to the current file
   - **Graphics dock** — preview and edit tile graphics with palette-aware rendering and direct drawing tools
+  - **Palette dock** — detect, view and edit color palettes directly in the hex editor with multiple format support and auto-detection
   - **Audio dock** — preview supported audio sections directly inside the app
 - **Integrated disassembly** with raw/code views, function detection, and section-aware code/data rendering
 - Translation tables support with built-in editor and semi-automatic translation tables generation

@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v3.0.3-alpha] - 2026-04-27
+### Added
+- **Palette detection and editing**: New integrated palette workflow for detecting, viewing, and editing color palettes directly in the hex editor. Supports multiple palette formats (NES 6-bit indexed, RGB555 LE, MD CRAM9, SMS CRAM6, Game Gear RGB444) with automatic format detection. Palettes can be displayed as color grids inline in the hex view.
+  - Palette auto-detection from raw data with confidence scoring and suggested tile codecs
+  - Multiple palette storage format support with platform-specific auto-detection
+  - Palette dock integration for palette management and editing
+- **Disassembly embedded pointer detection**: The disassembler now automatically scans for and extracts embedded pointers within disassembled code sections, adding them to the Pointers dock for convenient navigation and cross-reference tracking.
+- **Audio playback cursor synchronization**: During audio playback, the hex editor cursor now moves in real-time with the playback position, allowing users to see exactly where they are in the audio stream. The cursor updates every 40ms for smooth visual feedback and viewport scrolling follows automatically.
+- **Enhanced menu system**: Added view mode switching in the main menu to quickly toggle between Graphics (tile), Audio, Disassembly, and Palette display modes. Each mode has its own dedicated UI state and settings.
+- **Section drag resizing**: Added the ability to resize sections by dragging the border with the mouse, providing a more intuitive way to adjust section boundaries directly in the hex view.
+
+### Changed
+- **Graphics dock improvements**: Enhanced Graphics dock widget with custom palette rendering in section lists, improved tile preview interactions, and better codec selection workflow.
+- **Audio codec naming**: Renamed "IMA ADPCM 4-bit (UMK3)" to "MD IMA ADPCM 4-bit (~6500 Hz)" across all UI labels in Audio dock, Sections dock, and context menus to more accurately reflect the technical characteristics of the codec.
+- **Settings and preferences**: Expanded settings system to persist palette format preferences, default view modes, and palette-specific editor states on a per-project basis.
+
+### Fixed
+- **Root-level audio sample detection**: When detecting audio samples from root sections where sections already exist, the application now warns the user, clears the existing sections, and applies the detected audio sections (matching the behavior of Parse dialog). Previously, the detection would silently fail to create new sections.
+
 ## [v3.0.2-alpha] - 2026-04-26
 ### Fixed
 - **Capstone 5.0 compatibility**: Updated Capstone integration to support both v4 and v5 APIs, ensuring disassembly features work correctly regardless of the installed Capstone version.
