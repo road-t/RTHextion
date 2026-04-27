@@ -17,6 +17,7 @@ SOURCES += tst_hexedit.cpp \
     ../../src/hexeditor/commands.cpp \
     ../../src/hexeditor/hexscrollmap.cpp \
     ../../src/utils/disassembler.cpp \
+    ../../src/utils/palettedetector.cpp \
     ../../src/utils/appsettings.cpp \
     ../../src/audio/audiodetector.cpp \
     ../../src/document/SectionListModel.cpp \
@@ -32,6 +33,7 @@ HEADERS += \
     ../../src/hexeditor/hexscrollmap.h \
     ../../src/audio/audiodetector.h \
     ../../src/utils/disassembler.h \
+    ../../src/utils/palettedetector.h \
     ../../src/document/SectionListModel.h \
     ../../src/document/translationtable.h \
     ../../src/document/PointerListModel.h \

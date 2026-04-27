@@ -21,6 +21,7 @@ SOURCES += tst_hexdocument.cpp \
     ../../src/hexeditor/commands.cpp \
     ../../src/hexeditor/hexscrollmap.cpp \
     ../../src/utils/disassembler.cpp \
+    ../../src/utils/palettedetector.cpp \
     ../../src/utils/appsettings.cpp \
     ../../src/audio/audiodetector.cpp
 
@@ -37,6 +38,7 @@ HEADERS += \
     ../../src/hexeditor/hexscrollmap.h \
     ../../src/audio/audiodetector.h \
     ../../src/utils/disassembler.h \
+    ../../src/utils/palettedetector.h \
     ../../src/utils/Datas.h \
     ../../src/utils/romdetect.h
 
