@@ -2149,7 +2149,38 @@ void MainWindow::init()
             m_currentSession->dockSectionsVisible = visible;
             m_currentSession->dockVisibilityInitialized = true;
         }
+
+        if (visible && hexEdit)
+            m_sectionsDock->highlightOffset(hexEdit->cursorPosition() / 2);
         
+        if (!m_restoringProjectUi)
+            saveProjectDockVisibilityState();
+        updateDockAreaActions();
+    });
+
+    connect(m_audioDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
+        if (m_currentSession) {
+            m_currentSession->dockAudioVisible = visible;
+            m_currentSession->dockVisibilityInitialized = true;
+        }
+
+        if (visible && hexEdit)
+            syncDisplayDocksForOffset(hexEdit->cursorPosition() / 2);
+
+        if (!m_restoringProjectUi)
+            saveProjectDockVisibilityState();
+        updateDockAreaActions();
+    });
+
+    connect(m_graphicsDock, &QDockWidget::visibilityChanged, this, [this](bool visible) {
+        if (m_currentSession) {
+            m_currentSession->dockGraphicsVisible = visible;
+            m_currentSession->dockVisibilityInitialized = true;
+        }
+
+        if (visible && hexEdit)
+            syncDisplayDocksForOffset(hexEdit->cursorPosition() / 2);
+
         if (!m_restoringProjectUi)
             saveProjectDockVisibilityState();
         updateDockAreaActions();
@@ -2246,7 +2277,7 @@ void MainWindow::syncDisplayDocksForOffset(qint64 offset)
         && hexEdit->showGraphicsPanel();
     const bool inAudioSection = idx >= 0 && m_sectionModel->at(idx).displayMode == SectionDisplay_Audio;
 
-    if (m_graphicsDock) {
+    if (m_graphicsDock && m_graphicsDock->isVisible()) {
         m_graphicsDock->setSectionActive(inGraphicsSection || inDefaultGraphicsView);
         if (idx >= 0) {
             const Section &sec = m_sectionModel->at(idx);
@@ -2262,7 +2293,7 @@ void MainWindow::syncDisplayDocksForOffset(qint64 offset)
         }
     }
 
-    if (m_audioDock) {
+    if (m_audioDock && m_audioDock->isVisible()) {
         m_audioDock->setSectionActive(inAudioSection || hexEdit->showAudioPanel());
         if (idx >= 0) {
             const Section &sec = m_sectionModel->at(idx);

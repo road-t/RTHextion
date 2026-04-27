@@ -1434,6 +1434,10 @@ void SectionsDockWidget::highlightOffset(qint64 offset)
 {
     m_lastHighlightedOffset = offset;
 
+    // Avoid forcing tree view relayout for hidden docks; we'll re-sync on show.
+    if (!isVisible())
+        return;
+
     if (!m_model) return;
 
     const int idx = m_model->sectionIndexAtOffset(offset);

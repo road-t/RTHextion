@@ -15,6 +15,25 @@
 #include <QMenu>
 #include <QKeyEvent>
 
+namespace {
+
+bool jumpToOffset(HexEditor *hexEdit, qint64 offset)
+{
+    if (!hexEdit)
+        return false;
+
+    const qint64 dataSize = hexEdit->dataSize();
+    if (dataSize <= 0)
+        return false;
+
+    const qint64 clampedOffset = qBound<qint64>(0, offset, dataSize - 1);
+    hexEdit->jumpTo(clampedOffset, false);
+    hexEdit->setFocus();
+    return true;
+}
+
+} // namespace
+
 PointersDockWidget::PointersDockWidget(QWidget *parent)
     : BaseDockWidget(tr("Pointers"), parent)
 {
@@ -183,14 +202,12 @@ void PointersDockWidget::onDoubleClicked(const QModelIndex &index)
     // Column 1 (Offset): go to pointer offset
     if (index.column() == 1) {
         const qint64 pointerOffset = index.data(PointerListModel::KeyRole).toLongLong();
-        m_hexEdit->setCursorPosition(pointerOffset * 2);
-        m_hexEdit->ensureVisible();
+        jumpToOffset(m_hexEdit, pointerOffset);
     }
     // Column 2 (Pointer): go to pointer target
     else if (index.column() == 2) {
         const qint64 targetOffset = index.data(PointerListModel::ValueRole).toLongLong();
-        m_hexEdit->setCursorPosition(targetOffset * 2);
-        m_hexEdit->ensureVisible();
+        jumpToOffset(m_hexEdit, targetOffset);
     }
 }
 
@@ -342,12 +359,10 @@ void PointersDockWidget::showContextMenu(const QPoint &pos)
 
     if (chosen == jumpToPointerAct && singleValid) {
         const qint64 ptrOffset = index.data(PointerListModel::KeyRole).toLongLong();
-        m_hexEdit->setCursorPosition(ptrOffset * 2);
-        m_hexEdit->ensureVisible();
+        jumpToOffset(m_hexEdit, ptrOffset);
     } else if (chosen == jumpToDataAct && singleValid) {
         const qint64 targetOffset = index.data(PointerListModel::ValueRole).toLongLong();
-        m_hexEdit->setCursorPosition(targetOffset * 2);
-        m_hexEdit->ensureVisible();
+        jumpToOffset(m_hexEdit, targetOffset);
     } else if (chosen == removeAct && hasSelection) {
         deleteSelectedPointers();
     }
