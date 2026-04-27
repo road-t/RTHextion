@@ -20,7 +20,9 @@ enum class TileCodec : int;
 #include "translationtable.h"
 #include "Datas.h"
 #include "PointerListModel.h"
+#include "audio/audiodetector.h"
 #include "hexscrollmap.h"
+#include "palettedetector.h"
 
 #include <QFutureWatcher>
 #include <QTimer>
@@ -592,6 +594,7 @@ public:
     bool showDisasm() const;
     void setShowDisasm(bool mode);
     void setDisasmRomType(RomType type);
+    RomType disasmRomType() const { return _disasmRomType; }
 
     bool showSections();
     void setShowSections(bool mode);
@@ -605,6 +608,14 @@ public:
     void setGlobalTileCols(int cols);
     TileCodec globalTileCodec() const;
     int       globalTileCols() const;
+    bool showAudioPanel() const;
+    void setShowAudioPanel(bool mode);
+    void setGlobalAudioFormat(AudioSampleFormat format);
+    AudioSampleFormat globalAudioFormat() const;
+    bool showPalettePanel() const;
+    void setShowPalettePanel(bool mode);
+    void setGlobalPaletteFormat(PaletteStorageFormat format);
+    PaletteStorageFormat globalPaletteFormat() const;
     void setGfxLeftPalIdx(int idx)  { _gfxLeftPalIdx = idx; }
     void setGfxRightPalIdx(int idx) { _gfxRightPalIdx = idx; }
 
@@ -710,6 +721,16 @@ private:
     void ensureEncodingDisplayCache();
     void ensureTableDisplayCache();
     void restoreTopVisibleByte(qint64 topByte);
+    bool paletteColorAtPoint(const QPoint &point,
+                             qint64 *colorStartOffset,
+                             int *bytesPerColor = nullptr,
+                             PaletteStorageFormat *format = nullptr,
+                             QRgb *color = nullptr) const;
+    bool sectionBoundaryAtPoint(const QPoint &point,
+                                int *sectionIndex = nullptr,
+                                qint64 *sectionStartOffset = nullptr) const;
+    qint64 sectionBoundaryDragOffsetForPoint(const QPoint &point,
+                                             int sectionIndex) const;
 
     // Virtual line break helpers
     qint64 totalVisualRows() const;
@@ -805,6 +826,8 @@ private:
     int _separatorDragStartX = 0;               // x position when separator drag started
     bool _addrDragging = false;                 // true while dragging address area boundary
     int _addrDragStartX = 0;                    // x position when addr drag started
+    bool _sectionBoundaryDragging = false;      // true while dragging a section start boundary
+    int _sectionBoundaryDragSectionIndex = -1;  // section whose start offset is being adjusted
     QByteArray _originalData;                   // original file data for "show original" display
     bool _showOriginal = false;                 // true when displaying original file contents
 
@@ -876,6 +899,14 @@ private:
     bool _showGraphicsPanel = false;
     TileCodec _globalTileCodec {};                  // default TileCodec::Linear1bpp (=0)
     int       _globalTileCols  = 16;
+
+    // Global audio panel mode
+    bool _showAudioPanel = false;
+    AudioSampleFormat _globalAudioFormat = AudioSampleFormat::Unknown;
+
+    // Global palette panel mode
+    bool _showPalettePanel = false;
+    PaletteStorageFormat _globalPaletteFormat = PaletteStorageFormat::RGB555_LE;
 
     // Graphics pixel highlight: tile that contains the cursor byte
     int _gfxHighlightTileCol = -1;  // tile column in the tile canvas

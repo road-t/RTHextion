@@ -32,6 +32,7 @@ void MainWindow::saveCurrentSession()
     m_currentSession->pointerOffset = m_pointerOffset;
     m_currentSession->pointerSize = m_pointerSize;
     m_currentSession->currentEncoding = m_currentEncoding;
+    captureDefaultViewState(m_currentSession);
     m_currentSession->showPointers = (showPointersAct && showPointersAct->isChecked());
     m_currentSession->showChanges = (showChangesAct && showChangesAct->isChecked());
     m_currentSession->changesHexMode = (m_changesDock && m_changesDock->hexMode());
@@ -133,6 +134,7 @@ void MainWindow::restoreSession(EditorSession *session)
     m_pointersDock->setHexEdit(hexEdit);
 
     hexEdit->setDisasmRomType(m_detectedRomType);
+    applyDefaultViewState(session);
 
     // Restore sections for this tab
     if (m_document && m_sectionModel)
@@ -171,6 +173,7 @@ void MainWindow::restoreSession(EditorSession *session)
             m_audioDock->setRomType(m_detectedRomType);
         if (m_graphicsDock)
             m_graphicsDock->setRomType(m_detectedRomType);
+        refreshPaletteSectionUiState();
     }
 
     // Restore the per-session table dock content. applySnapshot rebuilds the
@@ -353,6 +356,7 @@ void MainWindow::restoreSession(EditorSession *session)
     syncEncodingMenu();
 
     applySelectedTable();
+    rebuildDefaultViewMenu();
 
     toggleShowChanges();
 
@@ -360,6 +364,9 @@ void MainWindow::restoreSession(EditorSession *session)
 
     if (m_changesDock && m_changesDock->isVisible() && showChangesAct && showChangesAct->isChecked())
         refreshChangesView();
+
+    if (shouldTrackChangedBytes())
+        updateChangedBytesHighlight();
 
     // Sync status bar with restored session
     if (hexEdit) {

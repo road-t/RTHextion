@@ -692,6 +692,12 @@ qint64 HexEditor::cursorPosition(QPoint pos)
     }
     else if (_asciiArea && (posX >= _pxPosAsciiX))
     {
+        qint64 paletteColorOffset = -1;
+        if (paletteColorAtPoint(pos, &paletteColorOffset)) {
+            _editAreaIsAscii = false;
+            return paletteColorOffset * 2;
+        }
+
         int row = posY / rowStridePx;
         if (row < 0 || row >= _visualRowStartBytes.size())
             return -1;

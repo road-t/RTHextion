@@ -3,6 +3,7 @@
 
 #include "BaseDockWidget.h"
 #include "romdetect.h"
+#include <QHash>
 #include <QPointer>
 #include <QSet>
 #include <QTreeWidget>
@@ -10,6 +11,7 @@
 
 class QDropEvent;
 class SectionListModel;
+struct Section;
 
 class SectionsDockWidget : public BaseDockWidget
 {
@@ -24,6 +26,7 @@ public:
     void setRomTypeName(const QString &name);
     void setCurrentRomType(RomType type);
     void setTableNames(const QStringList &names);
+    void setPalettePreviewColors(const QHash<qint64, QVector<QRgb>> &palettePreviewColors);
     void refresh();
 
     void setSuppressRebuild(bool suppress) { m_suppressRebuild = suppress; }
@@ -41,8 +44,12 @@ signals:
     void showSectionsToggled(bool checked);
     void disasmCpuChanged(int sectionIdx, RomType cpu);
     void parseRequested();
+    void detectFunctionsRequested();
     void detectAudioRequested();
+    void detectPalettesRequested();
     void findSamplesInSectionRequested(qint64 startOffset, qint64 endOffset);
+    void findPalettesInSectionRequested(qint64 startOffset, qint64 endOffset);
+    void applyPaletteToGraphicsSectionRequested(qint64 paletteSectionStartOffset);
     void findFunctionsInSectionRequested(qint64 startOffset, qint64 endOffset);
     void splitSectionRequested(int sectionIndex, const QVector<qint64> &sizes);
     void findPointersInSectionRequested(qint64 startOffset, qint64 endOffset);
@@ -65,7 +72,7 @@ private slots:
 private:
     void rebuildTree();
     void handleDrop(QDropEvent *event);
-    QIcon colorSwatchIcon(const QColor &color) const;
+    QIcon colorSwatchIcon(const Section &section) const;
 
     QPointer<QTreeWidget>       m_tree;
     QToolButton                *m_showSectionsBtn = nullptr;
@@ -76,6 +83,7 @@ private:
     RomType                     m_currentRomType = RomType::Unknown;
     qint64                      m_fileSize = 0;
     qint64                      m_lastHighlightedOffset = -1;
+    QHash<qint64, QVector<QRgb>> m_palettePreviewColors;
     bool                        m_suppressRebuild = false;
     bool                        m_rebuildingTree  = false;
     QSet<int>                   m_forcedExpandedGroupIds;

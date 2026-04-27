@@ -9,12 +9,146 @@
 #include <QResizeEvent>
 #include <QColorDialog>
 #include <QSignalBlocker>
+#include <QApplication>
+#include <QStyledItemDelegate>
+#include <QStylePainter>
+#include <QStyleOptionComboBox>
 #include <cmath>
 #include <random>
 
 namespace {
 
 constexpr int kPaletteCellSize = 24;
+constexpr int kPaletteComboCellSize = 12;
+constexpr int kPaletteComboCellSpacing = 1;
+constexpr int kPaletteSectionStartRole = Qt::UserRole;
+constexpr int kPaletteSectionColorsRole = Qt::UserRole + 1;
+
+QVariantList paletteVariantList(const QVector<QRgb> &colors)
+{
+    QVariantList values;
+    values.reserve(colors.size());
+    for (QRgb color : colors)
+        values.append(static_cast<uint>(color));
+    return values;
+}
+
+QVector<QRgb> paletteFromVariant(const QVariant &value)
+{
+    QVector<QRgb> colors;
+    const QVariantList values = value.toList();
+    colors.reserve(values.size());
+    for (const QVariant &item : values)
+        colors.append(static_cast<QRgb>(item.toUInt()));
+    return colors;
+}
+
+void paintPaletteRow(QPainter *painter,
+                     const QRect &rect,
+                     const QVector<QRgb> &colors,
+                     const QPalette &palette,
+                     bool enabled)
+{
+    if (!painter || !rect.isValid())
+        return;
+
+    painter->save();
+    painter->setClipRect(rect);
+
+    if (colors.isEmpty()) {
+        painter->setPen(enabled ? palette.color(QPalette::Mid) : palette.color(QPalette::Disabled, QPalette::Mid));
+        painter->drawRect(rect.adjusted(0, 0, -1, -1));
+        painter->restore();
+        return;
+    }
+
+    const int cellSize = qMax(6, qMin(kPaletteComboCellSize, rect.height()));
+    const int cellStep = cellSize + kPaletteComboCellSpacing;
+    const int visibleCount = qMax(1, (rect.width() + kPaletteComboCellSpacing) / cellStep);
+    const int top = rect.top() + qMax(0, (rect.height() - cellSize) / 2);
+    const QColor border = enabled
+        ? palette.color(QPalette::Shadow).lighter(125)
+        : palette.color(QPalette::Disabled, QPalette::Mid);
+
+    for (int i = 0; i < visibleCount; ++i) {
+        const int colorIndex = (i * colors.size()) / visibleCount;
+        const int x = rect.left() + i * cellStep;
+        if (x + cellSize > rect.right() + 1)
+            break;
+
+        const QRect cellRect(x, top, cellSize, cellSize);
+        painter->fillRect(cellRect, QColor::fromRgb(colors[qBound(0, colorIndex, colors.size() - 1)]));
+        painter->setPen(border);
+        painter->drawRect(cellRect.adjusted(0, 0, -1, -1));
+    }
+
+    painter->restore();
+}
+
+class PaletteSectionItemDelegate final : public QStyledItemDelegate
+{
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+
+    void paint(QPainter *painter,
+               const QStyleOptionViewItem &option,
+               const QModelIndex &index) const override
+    {
+        QStyleOptionViewItem opt(option);
+        initStyleOption(&opt, index);
+        opt.text.clear();
+        opt.icon = QIcon();
+
+        const QWidget *widget = opt.widget;
+        QStyle *style = widget ? widget->style() : QApplication::style();
+
+        painter->save();
+        style->drawPrimitive(QStyle::PE_PanelItemViewItem, &opt, painter, widget);
+        paintPaletteRow(painter,
+                        opt.rect.adjusted(6, 2, -6, -2),
+                        paletteFromVariant(index.data(kPaletteSectionColorsRole)),
+                        opt.palette,
+                        opt.state.testFlag(QStyle::State_Enabled));
+        painter->restore();
+    }
+
+    QSize sizeHint(const QStyleOptionViewItem &option,
+                   const QModelIndex &index) const override
+    {
+        Q_UNUSED(option);
+        Q_UNUSED(index);
+        return QSize(140, kPaletteComboCellSize + 8);
+    }
+};
+
+class PaletteSectionComboBox final : public QComboBox
+{
+public:
+    using QComboBox::QComboBox;
+
+protected:
+    void paintEvent(QPaintEvent *event) override
+    {
+        Q_UNUSED(event);
+
+        QStylePainter painter(this);
+        QStyleOptionComboBox opt;
+        initStyleOption(&opt);
+        painter.drawComplexControl(QStyle::CC_ComboBox, opt);
+
+        const QVector<QRgb> colors = paletteFromVariant(currentData(kPaletteSectionColorsRole));
+        if (colors.isEmpty()) {
+            painter.drawControl(QStyle::CE_ComboBoxLabel, opt);
+            return;
+        }
+
+        const QRect editRect = style()->subControlRect(QStyle::CC_ComboBox,
+                                                       &opt,
+                                                       QStyle::SC_ComboBoxEditField,
+                                                       this).adjusted(2, 2, -2, -2);
+        paintPaletteRow(&painter, editRect, colors, opt.palette, isEnabled());
+    }
+};
 
 QVector<TileCodec> allTileCodecs()
 {
@@ -280,6 +414,15 @@ GraphicsDockWidget::GraphicsDockWidget(QWidget *parent)
     m_colsSpin->setValue(16);
     form->addRow(m_colsLabel, m_colsSpin);
 
+    // ── Palette sections ──
+    m_paletteSectionLabel = new QLabel(tr("Palette section") + QStringLiteral(":"), this);
+    m_paletteSectionCombo = new PaletteSectionComboBox(this);
+    m_paletteSectionCombo->setEnabled(false);
+    m_paletteSectionCombo->setMinimumHeight(kPaletteComboCellSize + 10);
+    m_paletteSectionCombo->setItemDelegate(new PaletteSectionItemDelegate(m_paletteSectionCombo));
+    m_paletteSectionCombo->setPlaceholderText(tr("No palette sections"));
+    form->addRow(m_paletteSectionLabel, m_paletteSectionCombo);
+
     layout->addLayout(form);
 
     // ── Palette preview (click to edit) ──
@@ -308,8 +451,23 @@ GraphicsDockWidget::GraphicsDockWidget(QWidget *parent)
     connect(m_colsSpin, QOverload<int>::of(&QSpinBox::valueChanged),
             this, &GraphicsDockWidget::tileColsChanged);
 
+    connect(m_paletteSectionCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
+        if (!m_paletteSectionCombo || index < 0)
+            return;
+
+        const QVector<QRgb> paletteColors = paletteFromVariant(
+            m_paletteSectionCombo->itemData(index, kPaletteSectionColorsRole));
+        if (paletteColors.isEmpty())
+            return;
+
+        m_hasCustomPalette = true;
+        setPaletteColors(paletteColors);
+        emit paletteChanged(m_palPreview->colors());
+    });
+
     connect(m_palPreview, &PalettePreview::colorEdited, this, [this](int, QRgb) {
         m_hasCustomPalette = true;
+        syncPaletteSectionSelection(m_palPreview->colors());
         emit paletteChanged(m_palPreview->colors());
     });
 
@@ -383,44 +541,51 @@ void GraphicsDockWidget::setTileColsDisplay(int cols)
 void GraphicsDockWidget::setPaletteColors(const QVector<QRgb> &pal)
 {
     m_hasCustomPalette = !pal.isEmpty();
-    const int colors = 1 << tileCodecBpp(selectedCodec());
-    m_palPreview->setVisibleColorCount(colors);
     if (pal.isEmpty()) {
         updatePalettePreview();
         return;
     }
-
-    QVector<QRgb> normalized = pal;
-    if (normalized.size() > colors)
-        normalized.resize(colors);
-
-    if (normalized.size() < colors) {
-        QVector<QRgb> fallback;
-        fallback.resize(colors);
-        fallback[0] = qRgb(0, 0, 0);
-        if (colors == 2) {
-            fallback[1] = qRgb(255, 255, 255);
-        } else if (colors == 4) {
-            fallback[1] = qRgb(96, 96, 210);
-            fallback[2] = qRgb(180, 80, 80);
-            fallback[3] = qRgb(240, 240, 240);
-        } else {
-            std::mt19937 rng(42);
-            std::uniform_int_distribution<int> dist(60, 255);
-            for (int i = 1; i < colors; ++i)
-                fallback[i] = qRgb(dist(rng), dist(rng), dist(rng));
-        }
-
-        for (int i = normalized.size(); i < colors; ++i)
-            normalized.append(fallback[i]);
-    }
-
+    const QVector<QRgb> normalized = normalizePaletteForCodec(pal, selectedCodec());
+    m_palPreview->setVisibleColorCount(normalized.size());
     m_palPreview->setPalette(normalized);
+    syncPaletteSectionSelection(normalized);
 }
 
 QVector<QRgb> GraphicsDockWidget::paletteColors() const
 {
     return m_palPreview->colors();
+}
+
+void GraphicsDockWidget::setPaletteSections(const QVector<PaletteSectionPreview> &paletteSections)
+{
+    if (!m_paletteSectionCombo)
+        return;
+
+    const QSignalBlocker blocker(m_paletteSectionCombo);
+    m_paletteSectionCombo->clear();
+
+    for (const PaletteSectionPreview &section : paletteSections) {
+        m_paletteSectionCombo->addItem(section.name);
+        const int itemIndex = m_paletteSectionCombo->count() - 1;
+        m_paletteSectionCombo->setItemData(itemIndex, section.startOffset, kPaletteSectionStartRole);
+        m_paletteSectionCombo->setItemData(itemIndex, paletteVariantList(section.colors), kPaletteSectionColorsRole);
+        m_paletteSectionCombo->setItemData(itemIndex,
+                                           QStringLiteral("%1 [0x%2]")
+                                               .arg(section.name)
+                                               .arg(section.startOffset, 0, 16),
+                                           Qt::ToolTipRole);
+    }
+
+    const bool hasPaletteSections = m_paletteSectionCombo->count() > 0;
+    m_paletteSectionCombo->setEnabled(hasPaletteSections);
+    m_paletteSectionCombo->setPlaceholderText(hasPaletteSections
+        ? tr("Custom palette")
+        : tr("No palette sections"));
+
+    if (hasPaletteSections)
+        syncPaletteSectionSelection(m_palPreview->colors());
+    else
+        clearPaletteSectionSelection();
 }
 
 int GraphicsDockWidget::selectedLeftPalIndex() const
@@ -435,18 +600,22 @@ int GraphicsDockWidget::selectedRightPalIndex() const
 
 void GraphicsDockWidget::updatePalettePreview()
 {
-    const TileCodec codec = selectedCodec();
+    const QVector<QRgb> pal = defaultPaletteForCodec(selectedCodec());
+    m_palPreview->setVisibleColorCount(pal.size());
+    m_palPreview->setPalette(pal);
+    clearPaletteSectionSelection();
+}
+
+QVector<QRgb> GraphicsDockWidget::defaultPaletteForCodec(TileCodec codec) const
+{
     const int bpp = tileCodecBpp(codec);
     const int colors = 1 << bpp;
-    m_palPreview->setVisibleColorCount(colors);
     QVector<QRgb> pal(colors);
 
-    // Replicate the palette generation from HexEditor::initGraphicsPalette
     pal[0] = qRgb(0, 0, 0);
     if (bpp == 1) {
         pal[1] = qRgb(255, 255, 255);
     } else if (bpp == 2) {
-        pal[0] = qRgb(0, 0, 0);
         pal[1] = qRgb(96, 96, 210);
         pal[2] = qRgb(180, 80, 80);
         pal[3] = qRgb(240, 240, 240);
@@ -457,7 +626,53 @@ void GraphicsDockWidget::updatePalettePreview()
             pal[i] = qRgb(dist(rng), dist(rng), dist(rng));
     }
 
-    m_palPreview->setPalette(pal);
+    return pal;
+}
+
+QVector<QRgb> GraphicsDockWidget::normalizePaletteForCodec(const QVector<QRgb> &pal, TileCodec codec) const
+{
+    const int colors = 1 << tileCodecBpp(codec);
+    QVector<QRgb> normalized = pal;
+    if (normalized.size() > colors)
+        normalized.resize(colors);
+
+    const QVector<QRgb> fallback = defaultPaletteForCodec(codec);
+    for (int i = normalized.size(); i < colors && i < fallback.size(); ++i)
+        normalized.append(fallback[i]);
+
+    return normalized;
+}
+
+void GraphicsDockWidget::syncPaletteSectionSelection(const QVector<QRgb> &colors)
+{
+    if (!m_paletteSectionCombo || m_paletteSectionCombo->count() <= 0)
+        return;
+
+    const QVector<QRgb> normalizedColors = normalizePaletteForCodec(colors, selectedCodec());
+    int matchedIndex = -1;
+    for (int i = 0; i < m_paletteSectionCombo->count(); ++i) {
+        const QVector<QRgb> itemColors = normalizePaletteForCodec(
+            paletteFromVariant(m_paletteSectionCombo->itemData(i, kPaletteSectionColorsRole)),
+            selectedCodec());
+        if (itemColors == normalizedColors) {
+            matchedIndex = i;
+            break;
+        }
+    }
+
+    const QSignalBlocker blocker(m_paletteSectionCombo);
+    m_paletteSectionCombo->setCurrentIndex(matchedIndex);
+    m_paletteSectionCombo->update();
+}
+
+void GraphicsDockWidget::clearPaletteSectionSelection()
+{
+    if (!m_paletteSectionCombo)
+        return;
+
+    const QSignalBlocker blocker(m_paletteSectionCombo);
+    m_paletteSectionCombo->setCurrentIndex(-1);
+    m_paletteSectionCombo->update();
 }
 
 void GraphicsDockWidget::populateCodecs(RomType romType)
@@ -500,6 +715,12 @@ void GraphicsDockWidget::retranslateUi()
     setWindowTitle(tr("Graphics"));
     m_codecLabel->setText(tr("Codec") + QStringLiteral(":"));
     m_colsLabel->setText(tr("Tile columns") + QStringLiteral(":"));
+    m_paletteSectionLabel->setText(tr("Palette section") + QStringLiteral(":"));
+    if (m_paletteSectionCombo) {
+        m_paletteSectionCombo->setPlaceholderText(m_paletteSectionCombo->count() > 0
+            ? tr("Custom palette")
+            : tr("No palette sections"));
+    }
     m_palLabel->setText(tr("Palette (click to edit)") + QStringLiteral(":"));
 }
 

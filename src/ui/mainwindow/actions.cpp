@@ -21,8 +21,117 @@ using namespace MainWindowInternal;
 #include <QDockWidget>
 #include <QApplication>
 #include "appsettings.h"
+#include "audio/audiodetector.h"
 #include "DockTitleBar.h"
 #include "SectionListModel.h"
+#include "disassembler.h"
+#include "palettedetector.h"
+
+namespace {
+
+QVector<AudioSampleFormat> allAudioFormats()
+{
+    return {
+        AudioSampleFormat::Unknown,
+        AudioSampleFormat::SNES_BRR,
+        AudioSampleFormat::NES_DPCM,
+        AudioSampleFormat::MD_DAC_PCM,
+        AudioSampleFormat::MD_PCM8_Signed,
+        AudioSampleFormat::MD_ULAW,
+        AudioSampleFormat::MD_DPCM4_6500,
+        AudioSampleFormat::MD_ADPCM_OKI,
+        AudioSampleFormat::GBA_PCM8,
+        AudioSampleFormat::GB_Wave4bit,
+        AudioSampleFormat::Raw_PCM8_Unsigned,
+        AudioSampleFormat::Raw_PCM8_Signed,
+    };
+}
+
+QVector<AudioSampleFormat> preferredAudioFormatsForRom(RomType rom)
+{
+    switch (rom) {
+    case RomType::SNES:
+    case RomType::SNES_SMC:
+    case RomType::SNES_HIROM:
+    case RomType::SNES_HIROM_SMC:
+        return {AudioSampleFormat::SNES_BRR};
+    case RomType::NES:
+        return {AudioSampleFormat::NES_DPCM};
+    case RomType::MD:
+    case RomType::X32:
+        return {
+            AudioSampleFormat::MD_DAC_PCM,
+            AudioSampleFormat::MD_PCM8_Signed,
+            AudioSampleFormat::MD_ULAW,
+            AudioSampleFormat::MD_DPCM4_6500,
+            AudioSampleFormat::MD_ADPCM_OKI,
+        };
+    case RomType::GBA:
+        return {AudioSampleFormat::GBA_PCM8};
+    case RomType::GB:
+    case RomType::GBC:
+        return {AudioSampleFormat::GB_Wave4bit};
+    default:
+        return {};
+    }
+}
+
+QString audioFormatLabel(AudioSampleFormat fmt)
+{
+    switch (fmt) {
+    case AudioSampleFormat::Unknown:           return QObject::tr("Auto");
+    case AudioSampleFormat::SNES_BRR:          return QStringLiteral("SNES BRR");
+    case AudioSampleFormat::NES_DPCM:          return QStringLiteral("NES DPCM");
+    case AudioSampleFormat::MD_DAC_PCM:        return QStringLiteral("MD DAC PCM (unsigned 8-bit)");
+    case AudioSampleFormat::MD_PCM8_Signed:    return QStringLiteral("MD Signed 8-bit PCM");
+    case AudioSampleFormat::MD_ULAW:           return QStringLiteral("MD µ-law");
+    case AudioSampleFormat::MD_DPCM4_6500:     return QStringLiteral("MD IMA ADPCM 4-bit (~6500 Hz)");
+    case AudioSampleFormat::MD_ADPCM_OKI:      return QStringLiteral("OKI/Dialogic ADPCM 4-bit");
+    case AudioSampleFormat::GBA_PCM8:          return QStringLiteral("GBA PCM8");
+    case AudioSampleFormat::GB_Wave4bit:       return QStringLiteral("GB Wave 4-bit");
+    case AudioSampleFormat::Raw_PCM8_Unsigned: return QStringLiteral("Raw PCM8 Unsigned");
+    case AudioSampleFormat::Raw_PCM8_Signed:   return QStringLiteral("Raw PCM8 Signed");
+    }
+    return QObject::tr("Auto");
+}
+
+QVector<TileCodec> allTileCodecs()
+{
+    QVector<TileCodec> codecs;
+    for (int codec = 0; codec <= static_cast<int>(TileCodec::Linear8bpp); ++codec)
+        codecs.append(static_cast<TileCodec>(codec));
+    return codecs;
+}
+
+QVector<TileCodec> preferredTileCodecsForRom(RomType rom)
+{
+    switch (rom) {
+    case RomType::NES:
+        return {TileCodec::Linear2bpp};
+    case RomType::GB:
+    case RomType::GBC:
+        return {TileCodec::Interleaved2bpp};
+    case RomType::SNES:
+    case RomType::SNES_SMC:
+    case RomType::SNES_HIROM:
+    case RomType::SNES_HIROM_SMC:
+        return {TileCodec::Interleaved4bpp, TileCodec::Planar3bpp, TileCodec::Interleaved2bpp};
+    case RomType::GBA:
+        return {TileCodec::Linear4bpp, TileCodec::Linear8bpp};
+    case RomType::MD:
+    case RomType::X32:
+        return {TileCodec::SegaMD4bpp};
+    case RomType::SMS:
+    case RomType::GG:
+    case RomType::SG1000:
+    case RomType::ColecoVision:
+        return {TileCodec::SegaSMS4bpp};
+    default:
+        return {};
+    }
+}
+
+} // namespace
 
 void MainWindow::retranslateUi()
 {
@@ -194,14 +303,22 @@ void MainWindow::retranslateUi()
     showAddressAreaAct->setText(tr("Address area"));
     if (asciiAreaMenu)
         asciiAreaMenu->setTitle(tr("ASCII area"));
+    if (showAsciiAreaAct)
+        showAsciiAreaAct->setText(tr("Show"));
+    if (defaultViewMenu)
+        defaultViewMenu->setTitle(tr("Default view"));
+    if (panelModeTextMenu)
+        panelModeTextMenu->setTitle(tr("Text"));
     if (panelModeTextAct)
-        panelModeTextAct->setText(tr("Text"));
-    if (panelModeGraphicsAct)
-        panelModeGraphicsAct->setText(tr("Graphics"));
-    if (panelModeSoundAct)
-        panelModeSoundAct->setText(tr("Audio"));
-    if (panelModeDisasmAct)
-        panelModeDisasmAct->setText(tr("Disassembly"));
+        panelModeTextAct->setText(tr("Raw"));
+    if (panelModeGraphicsMenu)
+        panelModeGraphicsMenu->setTitle(tr("Graphics"));
+    if (panelModePaletteMenu)
+        panelModePaletteMenu->setTitle(tr("Palette"));
+    if (panelModeAudioMenu)
+        panelModeAudioMenu->setTitle(tr("Audio"));
+    if (panelModeDisasmMenu)
+        panelModeDisasmMenu->setTitle(tr("Disassembly"));
     showAddressGridAct->setText(tr("Show grid"));
     if (showDarkThemeAct)
         showDarkThemeAct->setText(tr("Dark theme"));
@@ -272,6 +389,326 @@ void MainWindow::retranslateUi()
     setSelection(hexEdit->getSelectionBegin(), hexEdit->getSelectionEnd());
 }
 
+void MainWindow::applyDefaultTextView(int tableIndex)
+{
+    if (!hexEdit)
+        return;
+
+    if (showAsciiAreaAct)
+        showAsciiAreaAct->setChecked(true);
+    hexEdit->setAsciiArea(true);
+    hexEdit->setShowDisasm(false);
+    hexEdit->setShowGraphicsPanel(false);
+    hexEdit->setShowPalettePanel(false);
+    hexEdit->setShowAudioPanel(false);
+
+    if (useTableAct) {
+        useTableAct->setChecked(tableIndex >= 0);
+        if (tableIndex >= 0 && m_tablesDock)
+            m_tablesDock->setCurrentIndex(tableIndex);
+        switchUseTable();
+    }
+
+    captureDefaultViewState(m_currentSession);
+    saveProjectDefaultViewState();
+    syncDisplayDocksForOffset(hexEdit->getCurrentOffset());
+    rebuildDefaultViewMenu();
+}
+
+void MainWindow::applyDefaultGraphicsView(TileCodec codec)
+{
+    if (!hexEdit)
+        return;
+
+    if (showAsciiAreaAct)
+        showAsciiAreaAct->setChecked(true);
+    hexEdit->setAsciiArea(true);
+    hexEdit->setShowAudioPanel(false);
+    hexEdit->setShowDisasm(false);
+    hexEdit->setShowPalettePanel(false);
+    hexEdit->setGlobalTileCodec(codec);
+    hexEdit->setShowGraphicsPanel(true);
+    if (m_graphicsDock) {
+        m_graphicsDock->setCodec(codec);
+        m_graphicsDock->show();
+    }
+    captureDefaultViewState(m_currentSession);
+    saveProjectDefaultViewState();
+    syncDisplayDocksForOffset(hexEdit->getCurrentOffset());
+    rebuildDefaultViewMenu();
+}
+
+void MainWindow::applyDefaultPaletteView(PaletteStorageFormat format)
+{
+    if (!hexEdit)
+        return;
+
+    if (showAsciiAreaAct)
+        showAsciiAreaAct->setChecked(true);
+    hexEdit->setAsciiArea(true);
+    hexEdit->setShowAudioPanel(false);
+    hexEdit->setShowDisasm(false);
+    hexEdit->setShowGraphicsPanel(false);
+    hexEdit->setGlobalPaletteFormat(format);
+    hexEdit->setShowPalettePanel(true);
+    captureDefaultViewState(m_currentSession);
+    saveProjectDefaultViewState();
+    syncDisplayDocksForOffset(hexEdit->getCurrentOffset());
+    rebuildDefaultViewMenu();
+}
+
+void MainWindow::applyDefaultAudioView(AudioSampleFormat format)
+{
+    if (!hexEdit)
+        return;
+
+    if (showAsciiAreaAct)
+        showAsciiAreaAct->setChecked(true);
+    hexEdit->setAsciiArea(true);
+    hexEdit->setShowDisasm(false);
+    hexEdit->setShowGraphicsPanel(false);
+    hexEdit->setShowPalettePanel(false);
+    hexEdit->setGlobalAudioFormat(format);
+    hexEdit->setShowAudioPanel(true);
+    if (m_audioDock) {
+        m_audioDock->setSelectedFormat(format);
+        m_audioDock->show();
+    }
+    captureDefaultViewState(m_currentSession);
+    saveProjectDefaultViewState();
+    syncDisplayDocksForOffset(hexEdit->getCurrentOffset());
+    rebuildDefaultViewMenu();
+}
+
+void MainWindow::applyDefaultDisasmView(RomType cpu)
+{
+    if (!hexEdit)
+        return;
+
+    if (showAsciiAreaAct)
+        showAsciiAreaAct->setChecked(true);
+    hexEdit->setAsciiArea(true);
+    hexEdit->setShowAudioPanel(false);
+    hexEdit->setShowGraphicsPanel(false);
+    hexEdit->setShowPalettePanel(false);
+    hexEdit->setDisasmRomType(cpu);
+    hexEdit->setShowDisasm(true);
+    captureDefaultViewState(m_currentSession);
+    saveProjectDefaultViewState();
+    syncDisplayDocksForOffset(hexEdit->getCurrentOffset());
+    rebuildDefaultViewMenu();
+}
+
+void MainWindow::captureDefaultViewState(EditorSession *session) const
+{
+    if (!session || !session->editor)
+        return;
+
+    HexEditor *editor = session->editor;
+    if (editor->showDisasm())
+        session->defaultViewMode = QStringLiteral("disasm");
+    else if (editor->showGraphicsPanel())
+        session->defaultViewMode = QStringLiteral("graphics");
+    else if (editor->showPalettePanel())
+        session->defaultViewMode = QStringLiteral("palette");
+    else if (editor->showAudioPanel())
+        session->defaultViewMode = QStringLiteral("sound");
+    else
+        session->defaultViewMode = QStringLiteral("text");
+
+    session->defaultViewPaletteFormat = editor->globalPaletteFormat();
+    session->defaultViewTileCodec = editor->globalTileCodec();
+    session->defaultViewAudioFormat = editor->globalAudioFormat();
+    session->defaultViewDisasmCpu = editor->disasmRomType();
+}
+
+void MainWindow::applyDefaultViewState(const EditorSession *session)
+{
+    if (!session || !hexEdit)
+        return;
+
+    hexEdit->setGlobalTileCodec(session->defaultViewTileCodec);
+    if (session->defaultViewPaletteFormat != PaletteStorageFormat::Unknown)
+        hexEdit->setGlobalPaletteFormat(session->defaultViewPaletteFormat);
+    hexEdit->setGlobalAudioFormat(session->defaultViewAudioFormat);
+    hexEdit->setDisasmRomType(session->defaultViewDisasmCpu != RomType::Unknown
+                              ? session->defaultViewDisasmCpu
+                              : m_detectedRomType);
+
+    const QString mode = session->defaultViewMode;
+    if (mode == QLatin1String("disasm")) {
+        hexEdit->setAsciiArea(true);
+        hexEdit->setShowAudioPanel(false);
+        hexEdit->setShowGraphicsPanel(false);
+        hexEdit->setShowPalettePanel(false);
+        hexEdit->setShowDisasm(true);
+    } else if (mode == QLatin1String("graphics")) {
+        hexEdit->setAsciiArea(true);
+        hexEdit->setShowDisasm(false);
+        hexEdit->setShowAudioPanel(false);
+        hexEdit->setShowGraphicsPanel(true);
+        hexEdit->setShowPalettePanel(false);
+    } else if (mode == QLatin1String("palette")) {
+        hexEdit->setAsciiArea(true);
+        hexEdit->setShowDisasm(false);
+        hexEdit->setShowAudioPanel(false);
+        hexEdit->setShowGraphicsPanel(false);
+        hexEdit->setShowPalettePanel(true);
+    } else if (mode == QLatin1String("sound")) {
+        hexEdit->setAsciiArea(true);
+        hexEdit->setShowDisasm(false);
+        hexEdit->setShowAudioPanel(true);
+        hexEdit->setShowGraphicsPanel(false);
+        hexEdit->setShowPalettePanel(false);
+    } else {
+        hexEdit->setAsciiArea(true);
+        hexEdit->setShowDisasm(false);
+        hexEdit->setShowAudioPanel(false);
+        hexEdit->setShowGraphicsPanel(false);
+        hexEdit->setShowPalettePanel(false);
+    }
+
+    if (showAsciiAreaAct)
+        showAsciiAreaAct->setChecked(hexEdit->asciiArea());
+}
+
+void MainWindow::rebuildDefaultViewMenu()
+{
+    if (!defaultViewMenu || !hexEdit)
+        return;
+
+    const bool textMode = !hexEdit->showDisasm()
+        && !hexEdit->showGraphicsPanel()
+        && !hexEdit->showPalettePanel()
+        && !hexEdit->showAudioPanel();
+
+    if (panelModeTextMenu) {
+        panelModeTextMenu->clear();
+        panelModeTextAct = panelModeTextMenu->addAction(tr("Raw"));
+        panelModeTextAct->setCheckable(true);
+        panelModeTextAct->setChecked(textMode && (!useTableAct || !useTableAct->isChecked()));
+        connect(panelModeTextAct, &QAction::triggered, this, [this]() {
+            applyDefaultTextView(-1);
+        });
+
+        if (m_tablesDock && !m_tablesDock->allTables().isEmpty()) {
+            panelModeTextMenu->addSeparator();
+            const int currentIndex = m_tablesDock->currentIndex();
+            const bool useTable = useTableAct && useTableAct->isChecked();
+            const QVector<TableTab> tables = m_tablesDock->allTables();
+            for (int index = 0; index < tables.size(); ++index) {
+                QAction *action = panelModeTextMenu->addAction(tables.at(index).name);
+                action->setCheckable(true);
+                action->setChecked(textMode && useTable && currentIndex == index);
+                connect(action, &QAction::triggered, this, [this, index]() {
+                    applyDefaultTextView(index);
+                });
+            }
+        }
+    }
+
+    if (panelModeGraphicsMenu) {
+        panelModeGraphicsMenu->clear();
+        const QVector<TileCodec> preferred = preferredTileCodecsForRom(currentRomType());
+        const QVector<TileCodec> all = allTileCodecs();
+        const TileCodec checkedCodec = hexEdit->globalTileCodec();
+        const bool graphicsMode = hexEdit->showGraphicsPanel();
+
+        auto appendCodec = [this, checkedCodec, graphicsMode](TileCodec codec) {
+            QAction *action = panelModeGraphicsMenu->addAction(QString::fromLatin1(tileCodecName(codec)));
+            action->setCheckable(true);
+            action->setChecked(graphicsMode && codec == checkedCodec);
+            connect(action, &QAction::triggered, this, [this, codec]() {
+                applyDefaultGraphicsView(codec);
+            });
+        };
+
+        for (TileCodec codec : preferred)
+            appendCodec(codec);
+        if (!preferred.isEmpty())
+            panelModeGraphicsMenu->addSeparator();
+        for (TileCodec codec : all) {
+            if (preferred.contains(codec))
+                continue;
+            appendCodec(codec);
+        }
+    }
+
+    if (panelModePaletteMenu) {
+        panelModePaletteMenu->clear();
+        const QVector<PaletteStorageFormat> formats = paletteStorageFormatsForRom(currentRomType());
+        const PaletteStorageFormat checkedFormat = hexEdit->globalPaletteFormat();
+        const bool paletteMode = hexEdit->showPalettePanel();
+        for (PaletteStorageFormat format : formats) {
+            QAction *action = panelModePaletteMenu->addAction(QString::fromLatin1(paletteStorageFormatName(format)));
+            action->setCheckable(true);
+            action->setChecked(paletteMode && format == checkedFormat);
+            connect(action, &QAction::triggered, this, [this, format]() {
+                applyDefaultPaletteView(format);
+            });
+        }
+    }
+
+    if (panelModeAudioMenu) {
+        panelModeAudioMenu->clear();
+        const QVector<AudioSampleFormat> preferred = preferredAudioFormatsForRom(currentRomType());
+        const QVector<AudioSampleFormat> all = allAudioFormats();
+        const AudioSampleFormat checkedFormat = hexEdit->globalAudioFormat();
+        const bool audioMode = hexEdit->showAudioPanel();
+
+        auto appendFormat = [this, checkedFormat, audioMode](AudioSampleFormat format) {
+            QAction *action = panelModeAudioMenu->addAction(audioFormatLabel(format));
+            action->setCheckable(true);
+            action->setChecked(audioMode && format == checkedFormat);
+            connect(action, &QAction::triggered, this, [this, format]() {
+                applyDefaultAudioView(format);
+            });
+        };
+
+        for (AudioSampleFormat format : preferred)
+            appendFormat(format);
+        if (!preferred.isEmpty())
+            panelModeAudioMenu->addSeparator();
+        for (AudioSampleFormat format : all) {
+            if (preferred.contains(format))
+                continue;
+            appendFormat(format);
+        }
+    }
+
+    if (panelModeDisasmMenu) {
+        panelModeDisasmMenu->clear();
+        const QVector<DisasmCpuEntry> all = disasmSupportedCpus();
+        const RomType platformCanon = disasmCanonicalRom(currentRomType());
+        const RomType checkedCanon = disasmCanonicalRom(hexEdit->disasmRomType());
+        const bool disasmMode = hexEdit->showDisasm();
+        const bool hasPreferred = currentRomType() != RomType::Unknown
+            && (disasmCpuName(currentRomType()) != nullptr)
+            && platformCanon != RomType::Unknown;
+
+        auto appendCpu = [this, checkedCanon, disasmMode](const DisasmCpuEntry &cpu) {
+            QAction *action = panelModeDisasmMenu->addAction(QString::fromLatin1(cpu.cpuName));
+            action->setCheckable(true);
+            action->setChecked(disasmMode && checkedCanon == disasmCanonicalRom(cpu.representativeRom));
+            connect(action, &QAction::triggered, this, [this, cpu]() {
+                applyDefaultDisasmView(cpu.representativeRom);
+            });
+        };
+
+        if (hasPreferred) {
+            for (const DisasmCpuEntry &cpu : all) {
+                if (disasmCanonicalRom(cpu.representativeRom) == platformCanon)
+                    appendCpu(cpu);
+            }
+            panelModeDisasmMenu->addSeparator();
+        }
+        for (const DisasmCpuEntry &cpu : all) {
+            if (hasPreferred && disasmCanonicalRom(cpu.representativeRom) == platformCanon)
+                continue;
+            appendCpu(cpu);
+        }
+    }
+}
 
 void MainWindow::createActions()
 {
@@ -759,31 +1196,18 @@ void MainWindow::createActions()
     showAddressAreaAct->setCheckable(true);
     showAddressAreaAct->setChecked(true);
 
-    // ASCII area panel mode submenu actions
-    asciiAreaMenu = new QMenu(tr("Data area"), this);
-    asciiAreaGroup = new QActionGroup(this);
-    asciiAreaGroup->setExclusive(true);
+    asciiAreaMenu = new QMenu(tr("ASCII area"), this);
+    showAsciiAreaAct = asciiAreaMenu->addAction(tr("Show"));
+    showAsciiAreaAct->setCheckable(true);
+    showAsciiAreaAct->setChecked(true);
 
-    panelModeTextAct = new QAction(tr("Text"), this);
-    panelModeTextAct->setCheckable(true);
-    panelModeTextAct->setChecked(true);
-    asciiAreaGroup->addAction(panelModeTextAct);
-    asciiAreaMenu->addAction(panelModeTextAct);
-
-    panelModeGraphicsAct = new QAction(tr("Graphics"), this);
-    panelModeGraphicsAct->setCheckable(true);
-    asciiAreaGroup->addAction(panelModeGraphicsAct);
-    asciiAreaMenu->addAction(panelModeGraphicsAct);
-
-    panelModeDisasmAct = new QAction(tr("Disassembly"), this);
-    panelModeDisasmAct->setCheckable(true);
-    asciiAreaGroup->addAction(panelModeDisasmAct);
-    asciiAreaMenu->addAction(panelModeDisasmAct);
-
-    panelModeSoundAct = new QAction(tr("Audio"), this);
-    panelModeSoundAct->setCheckable(true);
-    asciiAreaGroup->addAction(panelModeSoundAct);
-    asciiAreaMenu->addAction(panelModeSoundAct);
+    defaultViewMenu = new QMenu(tr("Default view"), this);
+    panelModeTextMenu = defaultViewMenu->addMenu(tr("Text"));
+    panelModeGraphicsMenu = defaultViewMenu->addMenu(tr("Graphics"));
+    panelModePaletteMenu = defaultViewMenu->addMenu(tr("Palette"));
+    panelModeAudioMenu = defaultViewMenu->addMenu(tr("Audio"));
+    panelModeDisasmMenu = defaultViewMenu->addMenu(tr("Disassembly"));
+    connect(defaultViewMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildDefaultViewMenu);
 
     showAddressGridAct = new QAction(tr("Show grid"), this);
     showAddressGridAct->setCheckable(true);
@@ -816,34 +1240,10 @@ void MainWindow::createActions()
             { updateValuePanels(); });
     connect(showAddressAreaAct, &QAction::toggled, this, [this](bool checked)
             { hexEdit->setAddressArea(checked); });
-    connect(asciiAreaGroup, &QActionGroup::triggered, this, [this](QAction *act)
+    connect(showAsciiAreaAct, &QAction::toggled, this, [this](bool checked)
             {
-                auto &s = AppSettings::instance();
-                if (act == panelModeTextAct) {
-                    hexEdit->setShowDisasm(false);
-                    hexEdit->setShowGraphicsPanel(false);
-                    hexEdit->setAsciiArea(true);
-                    s.setValue("PanelMode", QStringLiteral("text"));
-                } else if (act == panelModeGraphicsAct) {
-                    hexEdit->setShowDisasm(false);
-                    hexEdit->setShowGraphicsPanel(true);
-                    hexEdit->setAsciiArea(true);
-                    s.setValue("PanelMode", QStringLiteral("graphics"));
-                    if (m_graphicsDock)
-                        m_graphicsDock->show();
-                } else if (act == panelModeDisasmAct) {
-                    hexEdit->setShowGraphicsPanel(false);
-                    hexEdit->setAsciiArea(true);
-                    hexEdit->setShowDisasm(true);
-                    s.setValue("PanelMode", QStringLiteral("disasm"));
-                } else if (act == panelModeSoundAct) {
-                    hexEdit->setShowDisasm(false);
-                    hexEdit->setShowGraphicsPanel(false);
-                    hexEdit->setAsciiArea(true);
-                    s.setValue("PanelMode", QStringLiteral("sound"));
-                    if (m_audioDock)
-                        m_audioDock->show();
-                }
+                hexEdit->setAsciiArea(checked);
+                AppSettings::instance().setValue("AsciiArea", checked);
             });
     connect(showAddressGridAct, &QAction::toggled, this, [this](bool checked)
             { hexEdit->setShowHexGrid(checked); });
@@ -853,7 +1253,11 @@ void MainWindow::createActions()
     showMapPointersAct->setChecked(true);
     showMapPointersAct->setStatusTip(tr("Show changed byte locations on the side map"));
     connect(showMapPointersAct, &QAction::toggled, this, [this](bool checked)
-            { hexEdit->setScrollMapChangesVisible(checked); });
+            {
+            hexEdit->setScrollMapChangesVisible(checked);
+            if (shouldTrackChangedBytes())
+                updateChangedBytesHighlight();
+            });
 
     showMapTargetsAct = new QAction(tr("Pointers/Data"), this);
     showMapTargetsAct->setCheckable(true);
@@ -1057,6 +1461,9 @@ void MainWindow::createMenus()
     pointersMenu->addAction(showPointersAct);
 
     viewMenu = menuBar()->addMenu(tr("View"));
+
+    viewMenu->addMenu(defaultViewMenu);
+    viewMenu->addSeparator();
 
     panelsMenu = viewMenu->addMenu(tr("Panels"));
     panelsMenu->addAction(showAddressAreaAct);

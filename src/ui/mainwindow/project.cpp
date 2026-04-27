@@ -272,6 +272,7 @@ void MainWindow::openProjectFile(const QString &path)
     if (!doc.dockLayoutState.isEmpty())
         restoreState(doc.dockLayoutState);
     restoreProjectDockVisibilityState(path);
+    restoreProjectDefaultViewState(path, m_currentSession);
     if (!doc.tablesColumnsState.isEmpty())
         m_tablesDock->restoreColumnsState(doc.tablesColumnsState);
     updateDockAreaActions();
@@ -1067,7 +1068,7 @@ void MainWindow::loadOriginal()
     m_changesDock->show();
     enforceBottomDockEqualWidth();
     refreshChangesView();
-    if (showChangesAct->isChecked())
+    if (shouldTrackChangedBytes())
         updateChangedBytesHighlight();
 
     rememberDirectory(kLastFileDirKey, path);

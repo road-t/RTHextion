@@ -433,6 +433,24 @@ void HexEditor::adjust()
             if (gfxWidth > pxWidth)
                 pxWidth = gfxWidth;
         }
+
+        bool hasPaletteSections = false;
+        if (_sectionModel) {
+            for (const auto &section : _sectionModel->sections()) {
+                if (section.displayMode == SectionDisplay_Palette) {
+                    hasPaletteSections = true;
+                    break;
+                }
+            }
+        }
+
+        if (_showPalettePanel || hasPaletteSections) {
+            const int rowStridePx = _pxCharHeight + kHexRowExtraGapPx;
+            const int paletteWidth = _pxPosAsciiX + kAsciiAreaLeftPaddingPx
+                                   + qMax(1, _bytesPerLine) * rowStridePx;
+            if (paletteWidth > pxWidth)
+                pxWidth = paletteWidth;
+        }
     }
     else
         pxWidth = _pxPosAsciiX - _pxGapHexAscii; // no gap wasted when ASCII area is hidden

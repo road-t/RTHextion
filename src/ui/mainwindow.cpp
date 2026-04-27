@@ -60,6 +60,7 @@
 #include "SectionListModel.h"
 #include "Datas.h"
 #include "disassembler.h"
+#include "palettedetector.h"
 #include "romdetect.h"
 #include "romchecksum.h"
 #include "encodingdetect.h"
@@ -231,6 +232,39 @@ namespace
 
         runs.insert(insertPos, {offset, QByteArray(1, oldByte)});
         mergeRunsAt(runs, insertPos);
+    }
+
+    PaletteStorageFormat palettePreviewFormatForSection(const Section &section, RomType romType)
+    {
+        const PaletteStorageFormat format = paletteStorageFormatFromMnemonic(
+            parseSectionOptions(section.options).value(QStringLiteral("format")));
+        if (format != PaletteStorageFormat::Unknown)
+            return format;
+
+        const QVector<PaletteStorageFormat> preferred = paletteStorageFormatsForRom(romType);
+        return preferred.isEmpty() ? PaletteStorageFormat::Unknown : preferred.first();
+    }
+
+    QVector<QRgb> decodedPalettePreviewColors(HexEditor *editor,
+                                              SectionListModel *model,
+                                              int sectionIndex,
+                                              const Section &section,
+                                              RomType romType)
+    {
+        if (editor && model && sectionIndex >= 0) {
+            const qint64 fileSize = editor->dataSize();
+            const qint64 sectionEnd = model->endOffsetOf(sectionIndex, fileSize);
+            const qint64 sectionLength = qMax<qint64>(0, sectionEnd - section.startOffset);
+            const PaletteStorageFormat format = palettePreviewFormatForSection(section, romType);
+            if (format != PaletteStorageFormat::Unknown && sectionLength > 0) {
+                const QByteArray paletteBytes = editor->dataAt(section.startOffset, sectionLength);
+                const QVector<QRgb> decoded = decodePaletteColors(paletteBytes, format);
+                if (!decoded.isEmpty())
+                    return decoded;
+            }
+        }
+
+        return section.palette;
     }
 }
 
@@ -457,7 +491,7 @@ void MainWindow::about()
 
     // Build translated body parts separately to avoid huge translation strings
     QString versionLine = QStringLiteral("%1 v%2").arg(AppInfo::Name).arg(AppInfo::Version);
-    QString descriptionLine = tr("This is a hex editor for retro game translation/ROM hacking.\nA tribute to Translhextion editor made by Januschan in early 00's.");
+    QString descriptionLine = tr("This is a hex editor for retro game translation/ROM hacking.\nA tribute to Translhextion editor made by Brian 'Januschan' Bennewitz in early 00's.");
     QString copyrightLine = tr("Ilya 'Road Tripper' Annikov © 2021-2026. All rights reserved.");
     QString githubLine = QStringLiteral("GitHub: https://github.com/road-t/RTHextion");
 
@@ -582,12 +616,20 @@ void MainWindow::onHexDataChangedAt(qint64 offset)
         return;
 
     const qint64 newSize = hexEdit->dataSize();
+    bool refreshPaletteSectionPreviews = false;
 
     if (m_changeTrackingSnapshot.isNull()) {
         if (newSize <= 256 * 1024 * 1024)
             m_changeTrackingSnapshot = hexEdit->data();
         else
             m_changeTrackingSnapshot = QByteArray("");
+        if (m_sectionModel) {
+            const int sectionIndex = m_sectionModel->sectionIndexAtOffset(offset);
+            if (sectionIndex >= 0
+                && m_sectionModel->at(sectionIndex).displayMode == SectionDisplay_Palette) {
+                refreshPaletteSectionUiState();
+            }
+        }
         return;
     }
 
@@ -619,6 +661,17 @@ void MainWindow::onHexDataChangedAt(qint64 offset)
                     applyIncrementalOriginalByteChange(m_document->originalBytes, i, ob, nb);
                     m_changeTrackingSnapshot[static_cast<int>(i)] = nb;
                     changedOffsets.append(i);
+                }
+            }
+        }
+
+        if (!changedOffsets.isEmpty() && m_sectionModel) {
+            for (qint64 changedOffset : changedOffsets) {
+                const int sectionIndex = m_sectionModel->sectionIndexAtOffset(changedOffset);
+                if (sectionIndex >= 0
+                    && m_sectionModel->at(sectionIndex).displayMode == SectionDisplay_Palette) {
+                    refreshPaletteSectionPreviews = true;
+                    break;
                 }
             }
         }
@@ -674,7 +727,11 @@ void MainWindow::onHexDataChangedAt(qint64 offset)
             m_changeTrackingSnapshot = hexEdit->data();
         else
             m_changeTrackingSnapshot = QByteArray("");
+        refreshPaletteSectionPreviews = (delta != 0);
     }
+
+    if (refreshPaletteSectionPreviews)
+        refreshPaletteSectionUiState();
 
     if (m_changesUiUpdateTimer)
         m_changesUiUpdateTimer->start();
@@ -1763,9 +1820,23 @@ void MainWindow::init()
     connect(m_sectionsDock, &SectionsDockWidget::detectAudioRequested, this, [this]() {
         detectAudioSamples();
     });
+    connect(m_sectionsDock, &SectionsDockWidget::detectFunctionsRequested, this, [this]() {
+        detectFunctions();
+    });
+    connect(m_sectionsDock, &SectionsDockWidget::detectPalettesRequested, this, [this]() {
+        detectPalettes();
+    });
     connect(m_sectionsDock, &SectionsDockWidget::findSamplesInSectionRequested, this,
             [this](qint64 start, qint64 end) {
                 detectAudioSamplesInRange(start, end);
+            });
+    connect(m_sectionsDock, &SectionsDockWidget::findPalettesInSectionRequested, this,
+            [this](qint64 start, qint64 end) {
+                detectPalettesInRange(start, end);
+            });
+    connect(m_sectionsDock, &SectionsDockWidget::applyPaletteToGraphicsSectionRequested, this,
+            [this](qint64 paletteSectionStart) {
+                applyDetectedPaletteToGraphicsSection(paletteSectionStart);
             });
     connect(m_sectionsDock, &SectionsDockWidget::findFunctionsInSectionRequested, this,
             [this](qint64 start, qint64 end) {
@@ -1797,6 +1868,7 @@ void MainWindow::init()
         if (!restoring && m_document && m_document->sectionSnapshot != m_sectionModel->sections())
             m_document->markDirty();
         if (hexEdit) {
+            refreshPaletteSectionUiState();
             syncDisplayDocksForOffset(hexEdit->cursorPosition() / 2);
             hexEdit->viewport()->update();
         }
@@ -1841,18 +1913,29 @@ void MainWindow::init()
     addDockWidget(Qt::RightDockWidgetArea, m_audioDock);
     m_audioDock->hide();  // hidden by default, shown via View → Dock
     m_audioDock->setRomType(m_detectedRomType);
+    hexEdit->setGlobalAudioFormat(m_audioDock->selectedFormat());
     m_audioDock->setSectionActive(false);
 
     auto syncAudioOptionsToCurrentSection = [this]() {
         if (!hexEdit || !m_sectionModel || !m_audioDock)
             return;
         const int idx = m_sectionModel->sectionIndexAtOffset(hexEdit->cursorPosition() / 2);
-        if (idx < 0)
+        if (idx < 0) {
+            if (hexEdit->showAudioPanel()) {
+                hexEdit->setGlobalAudioFormat(m_audioDock->selectedFormat());
+                hexEdit->viewport()->update();
+            }
             return;
+        }
 
         Section sec = m_sectionModel->at(idx);
-        if (sec.displayMode != SectionDisplay_Audio)
+        if (sec.displayMode != SectionDisplay_Audio) {
+            if (hexEdit->showAudioPanel()) {
+                hexEdit->setGlobalAudioFormat(m_audioDock->selectedFormat());
+                hexEdit->viewport()->update();
+            }
             return;
+        }
 
         auto opts = parseSectionOptions(sec.options);
         opts.insert(QStringLiteral("type"), audioSubtypeMnemonicFromFormat(m_audioDock->selectedFormat()));
@@ -1896,6 +1979,7 @@ void MainWindow::init()
     m_graphicsDock->hide();
     m_graphicsDock->setRomType(m_detectedRomType);
     m_graphicsDock->setSectionActive(false);
+    refreshPaletteSectionUiState();
 
     // Codec changed in dock → update global + current section
     connect(m_graphicsDock, &GraphicsDockWidget::codecChanged, this, [this](TileCodec codec) {
@@ -2117,6 +2201,7 @@ EditorSession *MainWindow::createSession()
 
     // Apply current visual settings to the new editor
     updateHexEditorSettings();
+    captureDefaultViewState(session);
 
     // Guarantee signals are connected for the new editor.
     // QTabWidget::addTab may fire currentChanged BEFORE m_sessions.append() runs
@@ -2156,30 +2241,29 @@ void MainWindow::syncDisplayDocksForOffset(qint64 offset)
 
     const int idx = m_sectionModel->sectionIndexAtOffset(offset);
     const bool inGraphicsSection = idx >= 0 && m_sectionModel->at(idx).displayMode == SectionDisplay_Graphics;
+    const bool inDefaultGraphicsView = idx >= 0
+        && m_sectionModel->at(idx).displayMode == SectionDisplay_Default
+        && hexEdit->showGraphicsPanel();
     const bool inAudioSection = idx >= 0 && m_sectionModel->at(idx).displayMode == SectionDisplay_Audio;
 
     if (m_graphicsDock) {
-        m_graphicsDock->setSectionActive(inGraphicsSection || hexEdit->showGraphicsPanel());
+        m_graphicsDock->setSectionActive(inGraphicsSection || inDefaultGraphicsView);
         if (idx >= 0) {
             const Section &sec = m_sectionModel->at(idx);
             if (sec.displayMode == SectionDisplay_Graphics) {
                 m_graphicsDock->setCodec(sec.tileCodec);
                 m_graphicsDock->setTileColsDisplay(sec.tileCols);
                 m_graphicsDock->setPaletteColors(sec.palette);
-            } else if (hexEdit->showGraphicsPanel()) {
+            } else if (inDefaultGraphicsView) {
                 m_graphicsDock->setCodec(hexEdit->globalTileCodec());
                 m_graphicsDock->setTileColsDisplay(hexEdit->globalTileCols());
                 m_graphicsDock->setPaletteColors({});
             }
-        } else if (hexEdit->showGraphicsPanel()) {
-            m_graphicsDock->setCodec(hexEdit->globalTileCodec());
-            m_graphicsDock->setTileColsDisplay(hexEdit->globalTileCols());
-            m_graphicsDock->setPaletteColors({});
         }
     }
 
     if (m_audioDock) {
-        m_audioDock->setSectionActive(inAudioSection);
+        m_audioDock->setSectionActive(inAudioSection || hexEdit->showAudioPanel());
         if (idx >= 0) {
             const Section &sec = m_sectionModel->at(idx);
             if (sec.displayMode == SectionDisplay_Audio) {
@@ -2187,9 +2271,47 @@ void MainWindow::syncDisplayDocksForOffset(qint64 offset)
                 m_audioDock->setSelectedFormat(fmt);
                 m_audioDock->setSampleRateText(QString::number(sectionAudioSampleRate(sec, m_detectedRomType)));
                 m_audioDock->setPlaybackSpeed(sectionAudioSpeed(sec));
+            } else if (hexEdit->showAudioPanel()) {
+                m_audioDock->setSelectedFormat(hexEdit->globalAudioFormat());
             }
+        } else if (hexEdit->showAudioPanel()) {
+            m_audioDock->setSelectedFormat(hexEdit->globalAudioFormat());
         }
     }
+}
+
+void MainWindow::refreshPaletteSectionUiState()
+{
+    QVector<PaletteSectionPreview> paletteSections;
+    QHash<qint64, QVector<QRgb>> palettePreviewColors;
+
+    if (hexEdit && m_sectionModel) {
+        paletteSections.reserve(m_sectionModel->count());
+        for (int i = 0; i < m_sectionModel->count(); ++i) {
+            const Section &section = m_sectionModel->at(i);
+            if (section.displayMode != SectionDisplay_Palette)
+                continue;
+
+            const QVector<QRgb> colors = decodedPalettePreviewColors(
+                hexEdit,
+                m_sectionModel,
+                i,
+                section,
+                m_detectedRomType);
+            palettePreviewColors.insert(section.startOffset, colors);
+
+            PaletteSectionPreview preview;
+            preview.startOffset = section.startOffset;
+            preview.name = section.name;
+            preview.colors = colors;
+            paletteSections.append(preview);
+        }
+    }
+
+    if (m_sectionsDock)
+        m_sectionsDock->setPalettePreviewColors(palettePreviewColors);
+    if (m_graphicsDock)
+        m_graphicsDock->setPaletteSections(paletteSections);
 }
 
 void MainWindow::connectEditorSignals(HexEditor *editor)
@@ -2476,6 +2598,13 @@ QString MainWindow::strippedName(const QString &fullFileName)
     return QFileInfo(fullFileName).fileName();
 }
 
+bool MainWindow::shouldTrackChangedBytes() const
+{
+    const bool showInlineChanges = showChangesAct && showChangesAct->isChecked();
+    const bool showChangesMap = showMapPointersAct && showMapPointersAct->isChecked();
+    return showInlineChanges || showChangesMap;
+}
+
 void MainWindow::toggleShowChanges()
 {
     if (!hexEdit || !showChangesAct)
@@ -2483,10 +2612,8 @@ void MainWindow::toggleShowChanges()
 
     const bool show = showChangesAct->isChecked();
     hexEdit->setShowChanges(show);
-    if (show)
+    if (shouldTrackChangedBytes())
         updateChangedBytesHighlight();
-    else
-        hexEdit->clearChangedPositions();
 
     if (m_currentSession) {
         m_currentSession->showChanges = show;
@@ -2743,6 +2870,10 @@ void MainWindow::onRomTypeChanged(int index)
     syncRomTypeMenu(index);
 
     hexEdit->setDisasmRomType(m_detectedRomType);
+    if (m_audioDock)
+        m_audioDock->setRomType(m_detectedRomType);
+    if (m_graphicsDock)
+        m_graphicsDock->setRomType(m_detectedRomType);
 }
 
 void MainWindow::repopulateRomTypeCombo()
@@ -2777,6 +2908,10 @@ void MainWindow::onMenuRomTypeTriggered(QAction *action)
     setAddress(hexEdit->getCurrentOffset());
 
     hexEdit->setDisasmRomType(m_detectedRomType);
+    if (m_audioDock)
+        m_audioDock->setRomType(m_detectedRomType);
+    if (m_graphicsDock)
+        m_graphicsDock->setRomType(m_detectedRomType);
 }
 
 void MainWindow::setCurrentPointerOffset(qint64 offset)

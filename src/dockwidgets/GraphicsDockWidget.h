@@ -8,6 +8,13 @@
 #include <QSpinBox>
 #include <QLabel>
 
+struct PaletteSectionPreview
+{
+    qint64 startOffset = -1;
+    QString name;
+    QVector<QRgb> colors;
+};
+
 class QGridLayout;
 
 /// A small widget that draws the current palette as a grid of colored cells.
@@ -72,6 +79,7 @@ public:
     /// Set the palette shown in the preview (and used for rendering).
     void setPaletteColors(const QVector<QRgb> &pal);
     QVector<QRgb> paletteColors() const;
+    void setPaletteSections(const QVector<PaletteSectionPreview> &paletteSections);
 
     int selectedLeftPalIndex() const;
     int selectedRightPalIndex() const;
@@ -92,14 +100,20 @@ protected:
     void onPaletteChanged() override;
 
 private:
+    QVector<QRgb> defaultPaletteForCodec(TileCodec codec) const;
+    QVector<QRgb> normalizePaletteForCodec(const QVector<QRgb> &pal, TileCodec codec) const;
+    void syncPaletteSectionSelection(const QVector<QRgb> &colors);
+    void clearPaletteSectionSelection();
     void populateCodecs(RomType romType);
 
-    QComboBox      *m_codecCombo   = nullptr;
-    QSpinBox       *m_colsSpin     = nullptr;
-    PalettePreview *m_palPreview   = nullptr;
-    QLabel         *m_codecLabel   = nullptr;
-    QLabel         *m_colsLabel    = nullptr;
-    QLabel         *m_palLabel     = nullptr;
+    QComboBox      *m_codecCombo          = nullptr;
+    QComboBox      *m_paletteSectionCombo = nullptr;
+    QSpinBox       *m_colsSpin            = nullptr;
+    PalettePreview *m_palPreview          = nullptr;
+    QLabel         *m_codecLabel          = nullptr;
+    QLabel         *m_colsLabel           = nullptr;
+    QLabel         *m_paletteSectionLabel = nullptr;
+    QLabel         *m_palLabel            = nullptr;
     bool            m_hasCustomPalette = false;
     RomType         m_currentRomType = RomType::Unknown;
     bool            m_sectionActive = false;

@@ -3,6 +3,7 @@
 
 #include <QMainWindow>
 #include <QByteArray>
+#include <QHash>
 #include <QVector>
 #include <QPalette>
 
@@ -95,6 +96,9 @@ private slots:
     void parseHeaderSections();
     void detectFunctions();
     void detectFunctionsInRange(qint64 rangeStart, qint64 rangeEnd);
+    void detectPalettes();
+    void detectPalettesInRange(qint64 rangeStart, qint64 rangeEnd);
+    void applyDetectedPaletteToGraphicsSection(qint64 paletteSectionStart);
     void selectRangeInEditor(qint64 start, qint64 end, bool focus = true);
     void showPointersDialog();
     void dropPointersInRange(qint64 start, qint64 end);
@@ -165,6 +169,7 @@ public:
     void setCurrentPointerSize(int size);
 
 private:
+    void refreshPaletteSectionUiState();
     void init();
     EditorSession *createSession();
     void saveCurrentSession();
@@ -192,6 +197,8 @@ private:
     void rememberDirectory(const QString &settingsKey, const QString &filePath);
     void saveProjectDockVisibilityState() const;
     void restoreProjectDockVisibilityState(const QString &projectPath);
+    void saveProjectDefaultViewState() const;
+    void restoreProjectDefaultViewState(const QString &projectPath, EditorSession *session = nullptr);
     void updateRecentFileMenu();
     void updateRecentTableMenu();
     void updateRecentProjectMenu();
@@ -210,8 +217,10 @@ private:
     bool canRemoveSelectionFromSection() const;
     void removeSelectionFromSection(const QString &newSectionName = QString());
     void parseHeaderSectionsImpl(bool pushToUndo);
+    void detectFunctionsImpl(bool distributeByGroups, bool showEmptyMessage, const QString &undoText);
     void detectAudioSamples();
     void detectAudioSamplesInRange(qint64 rangeStart, qint64 rangeEnd);
+    void updateAudioPlaybackCursor();
     void splitSection(int sectionIndex, const QVector<qint64> &sizes);
     void playAudioAtCursor();
     void stopAudioPlayback();
@@ -221,6 +230,7 @@ private:
     void enforceBottomDockEqualWidth();
     void updateStatusBarVisibility();
     void updateValuePanels();
+    bool shouldTrackChangedBytes() const;
     void updateEndiannesLabel();
     void repopulateRomTypeCombo();
     void syncRomTypeMenu(int index);
@@ -237,6 +247,14 @@ private:
     void setDockAreaCollapsed(Qt::DockWidgetArea area, bool collapsed);
     bool isDockAreaCollapsed(Qt::DockWidgetArea area) const;
     void updateDockAreaActions();
+    void rebuildDefaultViewMenu();
+    void captureDefaultViewState(EditorSession *session) const;
+    void applyDefaultViewState(const EditorSession *session);
+    void applyDefaultTextView(int tableIndex = -1);
+    void applyDefaultGraphicsView(TileCodec codec);
+    void applyDefaultPaletteView(PaletteStorageFormat format);
+    void applyDefaultAudioView(AudioSampleFormat format);
+    void applyDefaultDisasmView(RomType cpu);
     void installSeparatorEventFilters();
     void setupDockTitleBarCallbacks();
     Qt::DockWidgetArea separatorDockArea(QWidget *separator) const;
@@ -277,6 +295,7 @@ private:
     QMenu *statusBarMenu;
     QMenu *panelsMenu;
     QMenu *mapsMenu;
+    QMenu *defaultViewMenu = nullptr;
     QMenu *dockMenu = nullptr;
     QMenu *recentFileMenu;
     QMenu *recentTableMenu;
@@ -386,12 +405,15 @@ private:
     QAction *showStatusEncodingAct = nullptr;
     QAction *showSignedValuesAct;
     QAction *showAddressAreaAct;
+    QAction *showAsciiAreaAct = nullptr;
     QMenu   *asciiAreaMenu = nullptr;
     QActionGroup *asciiAreaGroup = nullptr;
+    QMenu   *panelModeTextMenu = nullptr;
     QAction *panelModeTextAct = nullptr;
-    QAction *panelModeGraphicsAct = nullptr;
-    QAction *panelModeSoundAct = nullptr;
-    QAction *panelModeDisasmAct = nullptr;
+    QMenu   *panelModeGraphicsMenu = nullptr;
+    QMenu   *panelModePaletteMenu = nullptr;
+    QMenu   *panelModeAudioMenu = nullptr;
+    QMenu   *panelModeDisasmMenu = nullptr;
     QAction *showAddressGridAct;
     QAction *showDarkThemeAct = nullptr;
     QAction *showMapPointersAct;
@@ -448,6 +470,9 @@ private:
     QString m_readyText;
     UpdateChecker *m_updateChecker = nullptr;
     AudioPlayer *m_audioPlayer = nullptr;
+    QTimer *m_audioPlaybackCursorTimer = nullptr;
+    qint64 m_audioPlaybackStartOffset = -1;
+    qint64 m_audioPlaybackLength = 0;
     QVector<qint64> navigationHistory;
     int navigationHistoryIndex = -1;
     bool navigationJumpInProgress = false;

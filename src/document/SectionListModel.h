@@ -18,7 +18,8 @@ enum {
     SectionDisplay_Raw      = -2,  ///< raw file encoding, ignore tables
     SectionDisplay_Disasm   = -1,  ///< disassembly view
     SectionDisplay_Audio    = -3,  ///< audio waveform / histogram view
-    SectionDisplay_Graphics = -4   ///< tile graphics view
+    SectionDisplay_Graphics = -4,  ///< tile graphics view
+    SectionDisplay_Palette  = -5   ///< palette swatch view
 };
 
 /// Tile codec — how bytes in ROM map to 8×8 pixel tiles.
@@ -67,7 +68,7 @@ struct Section
     QColor  color;
 
     // New schema fields for persisted display settings.
-    // Main display mnemonic: auto, raw, txt, gfx, snd, asm.
+    // Main display mnemonic: auto, raw, txt, gfx, pal, snd, asm.
     QString display = QStringLiteral("auto");
     // Options payload for sub-type and per-mode settings (key=value;... format).
     QString options;

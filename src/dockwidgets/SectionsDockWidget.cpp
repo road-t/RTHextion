@@ -3,6 +3,7 @@
 #include "DockTitleBar.h"
 #include "disassembler.h"
 #include "audiodetector.h"
+#include "palettedetector.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -153,6 +154,32 @@ static QVector<TileCodec> preferredTileCodecsForRom(RomType rom)
     }
 }
 
+static bool paletteDetectionSupportedForRom(RomType rom)
+{
+    switch (rom) {
+    case RomType::NES:
+    case RomType::SNES:
+    case RomType::SNES_SMC:
+    case RomType::SNES_HIROM:
+    case RomType::SNES_HIROM_SMC:
+    case RomType::GBC:
+    case RomType::GBA:
+    case RomType::MD:
+    case RomType::X32:
+    case RomType::SMS:
+    case RomType::GG:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool sectionSupportsContentDetection(const Section &section)
+{
+    return section.displayMode == SectionDisplay_Default
+        || section.displayMode == SectionDisplay_Raw;
+}
+
 static QString displayMnemonicForMode(int mode)
 {
     if (mode == SectionDisplay_Default)
@@ -161,6 +188,8 @@ static QString displayMnemonicForMode(int mode)
         return QStringLiteral("raw");
     if (mode == SectionDisplay_Graphics)
         return QStringLiteral("gfx");
+    if (mode == SectionDisplay_Palette)
+        return QStringLiteral("pal");
     if (mode == SectionDisplay_Audio)
         return QStringLiteral("snd");
     if (mode == SectionDisplay_Disasm)
@@ -267,6 +296,28 @@ static QString optionsWithAudioType(const QString &existingOptions, const QStrin
     return serializeSectionOptions(opts);
 }
 
+static PaletteStorageFormat currentPaletteFormatForSection(const Section &s, RomType rom)
+{
+    const PaletteStorageFormat format = paletteStorageFormatFromMnemonic(
+        parseSectionOptions(s.options).value(QStringLiteral("format")));
+    if (format != PaletteStorageFormat::Unknown)
+        return format;
+
+    const QVector<PaletteStorageFormat> preferred = paletteStorageFormatsForRom(rom);
+    return preferred.isEmpty() ? PaletteStorageFormat::Unknown : preferred.first();
+}
+
+static QString optionsWithPaletteFormat(const QString &existingOptions,
+                                       PaletteStorageFormat format)
+{
+    QMap<QString, QString> opts = parseSectionOptions(existingOptions);
+    if (format == PaletteStorageFormat::Unknown)
+        opts.remove(QStringLiteral("format"));
+    else
+        opts.insert(QStringLiteral("format"), QString::fromLatin1(paletteStorageFormatMnemonic(format)));
+    return serializeSectionOptions(opts);
+}
+
 SectionsDockWidget::~SectionsDockWidget() = default;
 
 SectionsDockWidget::SectionsDockWidget(QWidget *parent)
@@ -360,6 +411,13 @@ void SectionsDockWidget::setRomTypeName(const QString &name)
 
 void SectionsDockWidget::setCurrentRomType(RomType type) { m_currentRomType = type; }
 void SectionsDockWidget::setTableNames(const QStringList &names) { m_tableNames = names; }
+void SectionsDockWidget::setPalettePreviewColors(const QHash<qint64, QVector<QRgb>> &palettePreviewColors)
+{
+    if (m_palettePreviewColors == palettePreviewColors)
+        return;
+    m_palettePreviewColors = palettePreviewColors;
+    rebuildTree();
+}
 void SectionsDockWidget::refresh() { rebuildTree(); }
 
 void SectionsDockWidget::setShowSectionsChecked(bool checked)
@@ -497,6 +555,21 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
         }
     };
 
+    auto addPaletteActions = [this](QMenu *menu,
+                                    bool checkable,
+                                    bool paletteModeChecked,
+                                    PaletteStorageFormat checkedFormat,
+                                    QHash<QAction *, PaletteStorageFormat> &actionToFormat)
+    {
+        const QVector<PaletteStorageFormat> formats = paletteStorageFormatsForRom(m_currentRomType);
+        for (PaletteStorageFormat format : formats) {
+            QAction *a = menu->addAction(QString::fromLatin1(paletteStorageFormatName(format)));
+            a->setCheckable(checkable);
+            a->setChecked(checkable && paletteModeChecked && checkedFormat == format);
+            actionToFormat.insert(a, format);
+        }
+    };
+
     auto addDisasmCpuActions = [this](QMenu *menu,
                                       bool checkable,
                                       bool disasmModeChecked,
@@ -538,14 +611,22 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
     if (sectionIdx < 0 && groupId < 0) {
         QMenu menu(this);
         QAction *parseAct = menu.addAction(tr("Parse"));
+        QAction *detectFunctionsAct = menu.addAction(tr("Detect functions"));
+        detectFunctionsAct->setEnabled(m_currentRomType != RomType::Unknown);
         QAction *detectAudioAct = menu.addAction(tr("Detect audio samples"));
         detectAudioAct->setEnabled(m_currentRomType != RomType::Unknown);
+        QAction *detectPalettesAct = menu.addAction(tr("Detect palettes"));
+        detectPalettesAct->setEnabled(paletteDetectionSupportedForRom(m_currentRomType));
         menu.addSeparator();
         QAction *chosen = menu.exec(m_tree->viewport()->mapToGlobal(pos));
         if (chosen == parseAct)
             emit parseRequested();
+        else if (chosen == detectFunctionsAct)
+            emit detectFunctionsRequested();
         else if (chosen == detectAudioAct)
             emit detectAudioRequested();
+        else if (chosen == detectPalettesAct)
+            emit detectPalettesRequested();
         return;
     }
 
@@ -628,6 +709,11 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
         addGfxCodecActions(gfxMenu, false, false, TileCodec::Linear2bpp, gfxActions);
 
         displayMenu->addSeparator();
+        QMenu *paletteMenu = displayMenu->addMenu(tr("Palette"));
+        QHash<QAction *, PaletteStorageFormat> paletteActions;
+        addPaletteActions(paletteMenu, false, false, PaletteStorageFormat::Unknown, paletteActions);
+
+        displayMenu->addSeparator();
         QMenu *disasmMenu = displayMenu->addMenu(tr("Disassembly"));
         QHash<QAction *, RomType> disasmActions;
         addDisasmCpuActions(disasmMenu, false, false, RomType::Unknown, disasmActions);
@@ -659,6 +745,7 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
         } else if (chosen == moveDownAct && nextGroupId >= 0) {
             m_model->moveGroup(groupId, nextGroupId);
         } else if (audioActions.contains(chosen)
+            || paletteActions.contains(chosen)
                 || gfxActions.contains(chosen)
                 || disasmActions.contains(chosen)
                 || chosen == actDefault
@@ -687,6 +774,15 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
                         s.tileCodec = tc;
                         if (s.color.alpha() > 200)
                             s.color = QColor(0x80, 0xFF, 0x80, 0x40);
+                        changed = true;
+                    }
+                } else if (paletteActions.contains(chosen)) {
+                    const PaletteStorageFormat format = paletteActions.value(chosen);
+                    const QString newOptions = optionsWithPaletteFormat(s.options, format);
+                    if (s.displayMode != SectionDisplay_Palette || s.options != newOptions || s.display != QStringLiteral("pal")) {
+                        s.displayMode = SectionDisplay_Palette;
+                        s.display = QStringLiteral("pal");
+                        s.options = newOptions;
                         changed = true;
                     }
                 } else if (audioActions.contains(chosen)) {
@@ -765,6 +861,11 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
         addGfxCodecActions(gfxMenu, false, false, TileCodec::Linear2bpp, gfxActions);
 
         displayMenu->addSeparator();
+        QMenu *paletteMenu = displayMenu->addMenu(tr("Palette"));
+        QHash<QAction *, PaletteStorageFormat> paletteActions;
+        addPaletteActions(paletteMenu, false, false, PaletteStorageFormat::Unknown, paletteActions);
+
+        displayMenu->addSeparator();
         QMenu *disasmMenu = displayMenu->addMenu(tr("Disassembly"));
         QHash<QAction *, RomType> disasmActions;
         addDisasmCpuActions(disasmMenu, false, false, RomType::Unknown, disasmActions);
@@ -829,6 +930,15 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
                 s.color = QColor(0x80, 0xFF, 0x80, 0x40);
                 m_model->updateSection(idx, s);
             }
+        } else if (paletteActions.contains(chosen)) {
+            const PaletteStorageFormat format = paletteActions.value(chosen);
+            for (int idx : selectedIndices) {
+                Section s = m_model->at(idx);
+                s.displayMode = SectionDisplay_Palette;
+                s.display = QStringLiteral("pal");
+                s.options = optionsWithPaletteFormat(s.options, format);
+                m_model->updateSection(idx, s);
+            }
         } else if (audioActions.contains(chosen)) {
             const QString t = audioActions.value(chosen);
             for (int idx : selectedIndices) {
@@ -859,17 +969,31 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
 
     QMenu menu(this);
     QAction *renameAct  = menu.addAction(tr("Rename"));
-    QAction *recolorAct = menu.addAction(tr("Change color"));
+    QAction *recolorAct = nullptr;
+    if (section.displayMode != SectionDisplay_Palette)
+        recolorAct = menu.addAction(tr("Change color"));
 
     const qint64 secStart = section.startOffset;
     const qint64 secEnd   = m_model->endOffsetOf(sectionIdx, m_fileSize);
     QAction *vfFormatAct = menu.addAction(tr("Virtually format") + "...");
     QAction *vfRemoveAct = menu.addAction(tr("Remove virtual formatting"));
-    menu.addSeparator();
-    QAction *findSamplesAct = menu.addAction(tr("Find samples in section"));
-    findSamplesAct->setEnabled(m_currentRomType != RomType::Unknown);
-    QAction *findFunctionsAct = menu.addAction(tr("Find functions in section"));
-    findFunctionsAct->setEnabled(m_currentRomType != RomType::Unknown);
+    const bool allowDetectionActions = sectionSupportsContentDetection(section);
+    QAction *findSamplesAct = nullptr;
+    QAction *findPalettesAct = nullptr;
+    QAction *applyPaletteAct = nullptr;
+    QAction *findFunctionsAct = nullptr;
+    if (allowDetectionActions || section.displayMode == SectionDisplay_Palette)
+        menu.addSeparator();
+    if (allowDetectionActions) {
+        findSamplesAct = menu.addAction(tr("Find samples in section"));
+        findSamplesAct->setEnabled(m_currentRomType != RomType::Unknown);
+        findPalettesAct = menu.addAction(tr("Find palettes in section"));
+        findPalettesAct->setEnabled(paletteDetectionSupportedForRom(m_currentRomType));
+        findFunctionsAct = menu.addAction(tr("Find functions in section"));
+        findFunctionsAct->setEnabled(m_currentRomType != RomType::Unknown);
+    }
+    if (section.displayMode == SectionDisplay_Palette)
+        applyPaletteAct = menu.addAction(tr("Use pallete for section..."));
     menu.addSeparator();
     QAction *findPtrsAct = menu.addAction(tr("Find pointers"));
     QAction *dropPtrsAct = menu.addAction(tr("Drop pointers"));
@@ -921,6 +1045,15 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
                        section.tileCodec,
                        gfxActions);
 
+    displayMenu->addSeparator();
+    QMenu *paletteMenu = displayMenu->addMenu(tr("Palette"));
+    QHash<QAction *, PaletteStorageFormat> paletteActions;
+    addPaletteActions(paletteMenu,
+                      true,
+                      curMode == SectionDisplay_Palette,
+                      currentPaletteFormatForSection(section, m_currentRomType),
+                      paletteActions);
+
     QHash<QAction *, int> colsActions;
     // Tile columns setting (only visible when in graphics mode)
     if (curMode == SectionDisplay_Graphics) {
@@ -970,6 +1103,10 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
         emit removeVirtualFormattingRequested(secStart, secEnd);
     } else if (chosen == findSamplesAct) {
         emit findSamplesInSectionRequested(secStart, secEnd);
+    } else if (chosen == findPalettesAct) {
+        emit findPalettesInSectionRequested(secStart, secEnd);
+    } else if (chosen == applyPaletteAct) {
+        emit applyPaletteToGraphicsSectionRequested(secStart);
     } else if (chosen == findFunctionsAct) {
         emit findFunctionsInSectionRequested(secStart, secEnd);
     } else if (chosen == findPtrsAct) {
@@ -1064,6 +1201,16 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
             s.tileCodec = tc;
             if (s.color.alpha() > 200)
                 s.color = QColor(0x80, 0xFF, 0x80, 0x40);
+            m_model->updateSection(sectionIdx, s);
+        }
+    } else if (paletteActions.contains(chosen)) {
+        const PaletteStorageFormat format = paletteActions.value(chosen);
+        Section s = m_model->at(sectionIdx);
+        const QString newOptions = optionsWithPaletteFormat(s.options, format);
+        if (s.displayMode != SectionDisplay_Palette || s.options != newOptions || s.display != QStringLiteral("pal")) {
+            s.displayMode = SectionDisplay_Palette;
+            s.display = QStringLiteral("pal");
+            s.options = newOptions;
             m_model->updateSection(sectionIdx, s);
         }
     } else if (colsActions.contains(chosen)) {
@@ -1170,6 +1317,12 @@ void SectionsDockWidget::rebuildTree()
         QString displayName = s.name;
         if (s.displayMode == SectionDisplay_Graphics)
             displayName += QStringLiteral(" [%1]").arg(QString::fromLatin1(tileCodecName(s.tileCodec)));
+        else if (s.displayMode == SectionDisplay_Palette) {
+            const PaletteStorageFormat format = currentPaletteFormatForSection(s, m_currentRomType);
+            displayName += (format != PaletteStorageFormat::Unknown)
+                ? QStringLiteral(" [%1: %2]").arg(tr("Palette"), QString::fromLatin1(paletteStorageFormatName(format)))
+                : QStringLiteral(" [%1]").arg(tr("Palette"));
+        }
         else if (s.displayMode == SectionDisplay_Audio) {
             const AudioSampleFormat fmt = audioFormatFromMnemonic(currentAudioTypeForSection(s));
             displayName += QStringLiteral(" [Audio: %1]").arg(audioFormatLabel(fmt));
@@ -1193,7 +1346,7 @@ void SectionsDockWidget::rebuildTree()
         child->setData(0, kRoleSectionOffset, s.startOffset);
         child->setData(0, kRoleSectionIndex,  i);
         child->setData(0, kRoleGroupId,       -1);
-        child->setIcon(0, colorSwatchIcon(s.color));
+        child->setIcon(0, colorSwatchIcon(s));
         child->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable
                         | Qt::ItemIsEditable | Qt::ItemIsDragEnabled);
     };
@@ -1252,15 +1405,26 @@ void SectionsDockWidget::rebuildTree()
         highlightOffset(m_lastHighlightedOffset);
 }
 
-QIcon SectionsDockWidget::colorSwatchIcon(const QColor &color) const
+QIcon SectionsDockWidget::colorSwatchIcon(const Section &section) const
 {
     QPixmap pix(16, 16);
     pix.fill(Qt::transparent);
     QPainter p(&pix);
-    p.setRenderHint(QPainter::Antialiasing);
-    p.setPen(Qt::NoPen);
-    p.setBrush(color);
-    p.drawRoundedRect(2, 2, 12, 12, 2, 2);
+    const QRect innerRect(2, 2, 12, 12);
+    const QVector<QRgb> paletteColors = m_palettePreviewColors.value(section.startOffset, section.palette);
+
+    if (section.displayMode == SectionDisplay_Palette && !paletteColors.isEmpty()) {
+        for (int x = 0; x < innerRect.width(); ++x) {
+            const int colorIndex = (x * paletteColors.size()) / innerRect.width();
+            const QRgb rgb = paletteColors[qBound(0, colorIndex, paletteColors.size() - 1)];
+            p.fillRect(innerRect.left() + x, innerRect.top(), 1, innerRect.height(), QColor::fromRgb(rgb));
+        }
+    } else {
+        p.fillRect(innerRect, section.color);
+    }
+
+    p.setPen(QColor(0, 0, 0, 96));
+    p.drawRect(innerRect.adjusted(0, 0, -1, -1));
     return QIcon(pix);
 }
 

@@ -151,24 +151,31 @@ QStringList AppSettings::childKeys() const
 
 void AppSettings::beginGroup(const QString &prefix)
 {
+    QMutexLocker lock(&m_mutex);
     m_groupStack.append(prefix);
 }
 
 void AppSettings::endGroup()
 {
+    QMutexLocker lock(&m_mutex);
     if (!m_groupStack.isEmpty())
         m_groupStack.removeLast();
 }
 
 QString AppSettings::group() const
 {
+    QMutexLocker lock(&m_mutex);
     return m_groupStack.join(QLatin1Char('/'));
 }
 
 void AppSettings::sync()
 {
-    QMutexLocker lock(&m_mutex);
-    if (m_dirty)
+    bool shouldSave = false;
+    {
+        QMutexLocker lock(&m_mutex);
+        shouldSave = m_dirty;
+    }
+    if (shouldSave)
         save();
 }
 
@@ -197,17 +204,31 @@ void AppSettings::load()
 
 void AppSettings::save() const
 {
-    const QVariantMap tree = buildTree(m_data);
+    QMap<QString, QVariant> snapshot;
+    QString filePathSnapshot;
+    {
+        QMutexLocker lock(&m_mutex);
+        snapshot = m_data;
+        filePathSnapshot = m_filePath;
+    }
+
+    const QVariantMap tree = buildTree(snapshot);
     const QString yaml = QStringLiteral("# RTHextion settings — auto-generated, "
                                         "safe to edit by hand\n\n")
                          + emitYaml(tree);
 
-    QSaveFile file(m_filePath);
+    QSaveFile file(filePathSnapshot);
+    bool saved = false;
     if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         file.write(yaml.toUtf8());
-        file.commit();
+        saved = file.commit();
     }
-    m_dirty = false;
+
+    if (saved) {
+        QMutexLocker lock(&m_mutex);
+        if (m_data == snapshot)
+            m_dirty = false;
+    }
 }
 
 void AppSettings::migrateFromQSettings()

@@ -23,6 +23,7 @@ using namespace MainWindowInternal;
 #endif
 #include "theme.h"
 #include "SectionListModel.h"
+#include "palettedetector.h"
 
 void MainWindow::readSettings()
 {
@@ -76,14 +77,35 @@ void MainWindow::readSettings()
         const QString pm = settings.value("PanelMode").toString();
         if (pm == QLatin1String("disasm")) {
             hexEdit->setAsciiArea(true);
+            hexEdit->setShowAudioPanel(false);
+            hexEdit->setShowGraphicsPanel(false);
+            hexEdit->setShowPalettePanel(false);
             hexEdit->setShowDisasm(true);
-        } else if (pm == QLatin1String("graphics") || pm == QLatin1String("sound")) {
+        } else if (pm == QLatin1String("graphics")) {
             hexEdit->setAsciiArea(true);
             hexEdit->setShowDisasm(false);
+            hexEdit->setShowAudioPanel(false);
+            hexEdit->setShowGraphicsPanel(true);
+            hexEdit->setShowPalettePanel(false);
+        } else if (pm == QLatin1String("palette")) {
+            hexEdit->setAsciiArea(true);
+            hexEdit->setShowDisasm(false);
+            hexEdit->setShowAudioPanel(false);
+            hexEdit->setShowGraphicsPanel(false);
+            hexEdit->setShowPalettePanel(true);
+        } else if (pm == QLatin1String("sound")) {
+            hexEdit->setAsciiArea(true);
+            hexEdit->setShowDisasm(false);
+            hexEdit->setShowAudioPanel(true);
+            hexEdit->setShowGraphicsPanel(false);
+            hexEdit->setShowPalettePanel(false);
         } else {
             // "text" or legacy bool
             hexEdit->setAsciiArea(settings.value("AsciiArea", true).toBool());
             hexEdit->setShowDisasm(false);
+            hexEdit->setShowAudioPanel(false);
+            hexEdit->setShowGraphicsPanel(false);
+            hexEdit->setShowPalettePanel(false);
         }
     }
     hexEdit->setHighlighting(true);
@@ -133,23 +155,9 @@ void MainWindow::readSettings()
 
     if (showAddressAreaAct)
         showAddressAreaAct->setChecked(hexEdit->addressArea());
-    // Sync panel mode radio buttons
-    if (panelModeTextAct) {
-        const QString pm = settings.value("PanelMode").toString();
-        if (pm == QLatin1String("disasm"))
-            panelModeDisasmAct->setChecked(true);
-        else if (pm == QLatin1String("graphics")) {
-            panelModeGraphicsAct->setChecked(true);
-            hexEdit->setShowGraphicsPanel(true);
-        }
-        else if (pm == QLatin1String("sound") && panelModeSoundAct) {
-            panelModeSoundAct->setChecked(true);
-            if (m_audioDock)
-                m_audioDock->show();
-        }
-        else
-            panelModeTextAct->setChecked(true);
-    }
+    if (showAsciiAreaAct)
+        showAsciiAreaAct->setChecked(hexEdit->asciiArea());
+    rebuildDefaultViewMenu();
     if (showAddressGridAct)
         showAddressGridAct->setChecked(hexEdit->showHexGrid());
 
@@ -196,6 +204,11 @@ void MainWindow::readSettings()
                 bool    showChanges        = false;
                 bool    changesHexMode     = false;
                 int     tablesActiveIndex  = -1;
+                QString defaultViewMode    = QStringLiteral("text");
+                PaletteStorageFormat defaultViewPaletteFormat = PaletteStorageFormat::Unknown;
+                int     defaultViewTileCodec = static_cast<int>(TileCodec::Linear1bpp);
+                int     defaultViewAudioFormat = static_cast<int>(AudioSampleFormat::Unknown);
+                int     defaultViewDisasmCpu = static_cast<int>(RomType::Unknown);
                 bool    dockTablesVisible       = true;
                 bool    dockPointersVisible     = true;
                 bool    dockChangesVisible      = true;
@@ -234,6 +247,15 @@ void MainWindow::readSettings()
                 t.showChanges        = settings.value(pfx + QStringLiteral("/showChanges"),    false).toBool();
                 t.changesHexMode     = settings.value(pfx + QStringLiteral("/changesHexMode"), false).toBool();
                 t.tablesActiveIndex  = settings.value(pfx + QStringLiteral("/tablesActiveIndex"), -1).toInt();
+                t.defaultViewMode    = settings.value(pfx + QStringLiteral("/defaultViewMode"), QStringLiteral("text")).toString();
+                t.defaultViewPaletteFormat = paletteStorageFormatFromMnemonic(
+                    settings.value(pfx + QStringLiteral("/defaultViewPaletteFormat")).toString());
+                t.defaultViewTileCodec = settings.value(pfx + QStringLiteral("/defaultViewTileCodec"),
+                                                        static_cast<int>(TileCodec::Linear1bpp)).toInt();
+                t.defaultViewAudioFormat = settings.value(pfx + QStringLiteral("/defaultViewAudioFormat"),
+                                                          static_cast<int>(AudioSampleFormat::Unknown)).toInt();
+                t.defaultViewDisasmCpu = settings.value(pfx + QStringLiteral("/defaultViewDisasmCpu"),
+                                                        static_cast<int>(RomType::Unknown)).toInt();
                 const int savedRomType = settings.value(pfx + QStringLiteral("/romType"), static_cast<int>(RomType::Unknown)).toInt();
                 t.romType            = (savedRomType >= 0 && savedRomType < kRomTypeCount) ? static_cast<RomType>(savedRomType) : RomType::Unknown;
                 t.dockTablesVisible    = settings.value(pfx + QStringLiteral("/dockTablesVisible"),    true).toBool();
@@ -302,6 +324,11 @@ void MainWindow::readSettings()
                 s->showPointers = t.showPointers;
                 s->showChanges = t.showChanges;
                 s->changesHexMode = t.changesHexMode;
+                s->defaultViewMode = t.defaultViewMode;
+                s->defaultViewPaletteFormat = t.defaultViewPaletteFormat;
+                s->defaultViewTileCodec = static_cast<TileCodec>(t.defaultViewTileCodec);
+                s->defaultViewAudioFormat = static_cast<AudioSampleFormat>(t.defaultViewAudioFormat);
+                s->defaultViewDisasmCpu = static_cast<RomType>(t.defaultViewDisasmCpu);
 
                 // Active table index
                 if (t.tablesActiveIndex >= 0)
@@ -388,6 +415,8 @@ void MainWindow::readSettings()
                 }
                 if (hexEdit)
                     hexEdit->setShowChanges(m_currentSession->showChanges);
+
+                applyDefaultViewState(m_currentSession);
             }
 
             // Switch to previously active tab and apply its dock state.
@@ -635,19 +664,6 @@ void MainWindow::updateHexEditorSettings()
         auto &settings = AppSettings::instance();
 
         editor->setAddressArea(settings.value("AddressArea", true).toBool());
-        {
-            const QString pm = settings.value("PanelMode").toString();
-            if (pm == QLatin1String("disasm")) {
-                editor->setAsciiArea(true);
-                editor->setShowDisasm(true);
-            } else if (pm == QLatin1String("graphics") || pm == QLatin1String("sound")) {
-                editor->setAsciiArea(true);
-                editor->setShowDisasm(false);
-            } else {
-                editor->setAsciiArea(settings.value("AsciiArea", true).toBool());
-                editor->setShowDisasm(false);
-            }
-        }
         editor->setHighlighting(true);
         editor->setHighlightingColor(settings.value("HighlightingColor").value<QColor>());
         editor->setPointedColor(settings.value("PointedColor").value<QColor>());
@@ -697,18 +713,9 @@ void MainWindow::updateHexEditorSettings()
 
     if (showAddressAreaAct && hexEdit)
         showAddressAreaAct->setChecked(hexEdit->addressArea());
-    if (panelModeTextAct && hexEdit) {
-        auto &s = AppSettings::instance();
-        const QString pm = s.value("PanelMode").toString();
-        if (pm == QLatin1String("disasm"))
-            panelModeDisasmAct->setChecked(true);
-        else if (pm == QLatin1String("graphics")) {
-            panelModeGraphicsAct->setChecked(true);
-            hexEdit->setShowGraphicsPanel(true);
-        }
-        else
-            panelModeTextAct->setChecked(true);
-    }
+    if (showAsciiAreaAct && hexEdit)
+        showAsciiAreaAct->setChecked(hexEdit->asciiArea());
+    rebuildDefaultViewMenu();
     if (showAddressGridAct && hexEdit)
         showAddressGridAct->setChecked(hexEdit->showHexGrid());
 }
@@ -770,6 +777,12 @@ void MainWindow::writeSettings()
         settings.setValue(pfx + QStringLiteral("/showChanges"),    s->showChanges);
         settings.setValue(pfx + QStringLiteral("/changesHexMode"), s->changesHexMode);
         settings.setValue(pfx + QStringLiteral("/tablesActiveIndex"), s->tableActiveIndex);
+        settings.setValue(pfx + QStringLiteral("/defaultViewMode"), s->defaultViewMode);
+        settings.setValue(pfx + QStringLiteral("/defaultViewPaletteFormat"),
+                  QString::fromLatin1(paletteStorageFormatMnemonic(s->defaultViewPaletteFormat)));
+        settings.setValue(pfx + QStringLiteral("/defaultViewTileCodec"), static_cast<int>(s->defaultViewTileCodec));
+        settings.setValue(pfx + QStringLiteral("/defaultViewAudioFormat"), static_cast<int>(s->defaultViewAudioFormat));
+        settings.setValue(pfx + QStringLiteral("/defaultViewDisasmCpu"), static_cast<int>(s->defaultViewDisasmCpu));
         settings.setValue(pfx + QStringLiteral("/romType"), static_cast<int>(s->detectedRomType));
 
         settings.setValue(pfx + QStringLiteral("/dockTablesVisible"),   s->dockTablesVisible);
@@ -789,6 +802,12 @@ void MainWindow::writeSettings()
             settings.setValue(projectPfx + QStringLiteral("/dockChangesVisible"), s->dockChangesVisible);
             settings.setValue(projectPfx + QStringLiteral("/dockSectionsVisible"), s->dockSectionsVisible);
             settings.setValue(projectPfx + QStringLiteral("/dockAudioVisible"), s->dockAudioVisible);
+            settings.setValue(projectPfx + QStringLiteral("/defaultViewMode"), s->defaultViewMode);
+            settings.setValue(projectPfx + QStringLiteral("/defaultViewPaletteFormat"),
+                              QString::fromLatin1(paletteStorageFormatMnemonic(s->defaultViewPaletteFormat)));
+            settings.setValue(projectPfx + QStringLiteral("/defaultViewTileCodec"), static_cast<int>(s->defaultViewTileCodec));
+            settings.setValue(projectPfx + QStringLiteral("/defaultViewAudioFormat"), static_cast<int>(s->defaultViewAudioFormat));
+            settings.setValue(projectPfx + QStringLiteral("/defaultViewDisasmCpu"), static_cast<int>(s->defaultViewDisasmCpu));
         }
         settings.setValue(pfx + QStringLiteral("/dockTablesExpandedWidth"),   s->dockTablesExpandedWidth);
         settings.setValue(pfx + QStringLiteral("/dockTablesExpandedHeight"),  s->dockTablesExpandedHeight);
@@ -857,6 +876,21 @@ void MainWindow::saveProjectDockVisibilityState() const
     settings.setValue(pfx + QStringLiteral("/dockAudioVisible"), m_audioDock ? m_audioDock->isVisible() : false);
 }
 
+void MainWindow::saveProjectDefaultViewState() const
+{
+    if (!m_document || m_document->projectFilePath.isEmpty() || !m_currentSession)
+        return;
+
+    auto &settings = AppSettings::instance();
+    const QString pfx = projectUiSettingsPrefix(m_document->projectFilePath);
+    settings.setValue(pfx + QStringLiteral("/defaultViewMode"), m_currentSession->defaultViewMode);
+    settings.setValue(pfx + QStringLiteral("/defaultViewPaletteFormat"),
+                      QString::fromLatin1(paletteStorageFormatMnemonic(m_currentSession->defaultViewPaletteFormat)));
+    settings.setValue(pfx + QStringLiteral("/defaultViewTileCodec"), static_cast<int>(m_currentSession->defaultViewTileCodec));
+    settings.setValue(pfx + QStringLiteral("/defaultViewAudioFormat"), static_cast<int>(m_currentSession->defaultViewAudioFormat));
+    settings.setValue(pfx + QStringLiteral("/defaultViewDisasmCpu"), static_cast<int>(m_currentSession->defaultViewDisasmCpu));
+}
+
 void MainWindow::restoreProjectDockVisibilityState(const QString &projectPath)
 {
     if (projectPath.isEmpty())
@@ -889,6 +923,33 @@ void MainWindow::restoreProjectDockVisibilityState(const QString &projectPath)
         m_currentSession->dockAudioVisible = audioVisible;
         m_currentSession->dockVisibilityInitialized = true;
     }
+}
+
+void MainWindow::restoreProjectDefaultViewState(const QString &projectPath, EditorSession *session)
+{
+    EditorSession *targetSession = session ? session : m_currentSession;
+    if (projectPath.isEmpty() || !targetSession)
+        return;
+
+    auto &settings = AppSettings::instance();
+    const QString pfx = projectUiSettingsPrefix(projectPath);
+    targetSession->defaultViewMode = settings.value(pfx + QStringLiteral("/defaultViewMode"),
+                                                    targetSession->defaultViewMode).toString();
+    targetSession->defaultViewPaletteFormat = paletteStorageFormatFromMnemonic(
+        settings.value(pfx + QStringLiteral("/defaultViewPaletteFormat"),
+                       QString::fromLatin1(paletteStorageFormatMnemonic(targetSession->defaultViewPaletteFormat))).toString());
+    targetSession->defaultViewTileCodec = static_cast<TileCodec>(
+        settings.value(pfx + QStringLiteral("/defaultViewTileCodec"),
+                       static_cast<int>(targetSession->defaultViewTileCodec)).toInt());
+    targetSession->defaultViewAudioFormat = static_cast<AudioSampleFormat>(
+        settings.value(pfx + QStringLiteral("/defaultViewAudioFormat"),
+                       static_cast<int>(targetSession->defaultViewAudioFormat)).toInt());
+    targetSession->defaultViewDisasmCpu = static_cast<RomType>(
+        settings.value(pfx + QStringLiteral("/defaultViewDisasmCpu"),
+                       static_cast<int>(targetSession->defaultViewDisasmCpu)).toInt());
+
+    if (targetSession == m_currentSession)
+        applyDefaultViewState(targetSession);
 }
 
 

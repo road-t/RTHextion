@@ -123,7 +123,7 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
         }
         m_document->originalBytes = nextOriginalBytes;
 
-        if (showChangesAct && showChangesAct->isChecked())
+        if (shouldTrackChangedBytes())
             updateChangedBytesHighlight();
         updateActionStates();
         return true;
@@ -632,7 +632,7 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
                     break;
                 }
             }
-            if (showChangesAct->isChecked())
+            if (shouldTrackChangedBytes())
                 updateChangedBytesHighlight();
             updateActionStates();
         }
@@ -1104,7 +1104,7 @@ void MainWindow::hexEditContextMenu(const QPoint &globalPos, qint64 bytePos)
                 break;
             }
         }
-        if (showChangesAct->isChecked())
+        if (shouldTrackChangedBytes())
             updateChangedBytesHighlight();
         updateActionStates();
     }

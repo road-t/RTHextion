@@ -1,6 +1,8 @@
 #include "internal.h"
 #include "encoding.h"
 #include "audiodetector.h"
+#include "palettedetector.h"
+#include <QColorDialog>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMap>
@@ -241,6 +243,213 @@ static DisasmOperandRender disasmRenderOperandsWithNames(
     out.text = rendered;
     return out;
 }
+}
+
+bool HexEditor::paletteColorAtPoint(const QPoint &point,
+                                    qint64 *colorStartOffset,
+                                    int *bytesPerColorOut,
+                                    PaletteStorageFormat *formatOut,
+                                    QRgb *colorOut) const
+{
+    if (!colorStartOffset || !_asciiArea || !_chunks)
+        return false;
+
+    const int posX = point.x() + horizontalScrollBar()->value();
+    if (posX < _pxPosAsciiX)
+        return false;
+
+    const int posY = point.y() - 3;
+    const int rowStridePx = _pxCharHeight + kHexRowExtraGapPx;
+    const int row = posY / rowStridePx;
+    if (row < 0 || row >= _visualRowStartBytes.size())
+        return false;
+
+    const qint64 rowFileOffset = _visualRowStartBytes[row];
+    const int bytesThisRow = (row + 1 < _visualRowStartBytes.size())
+        ? static_cast<int>(_visualRowStartBytes[row + 1] - rowFileOffset)
+        : static_cast<int>(qMax(qint64(0), qMin((qint64)_bytesPerLine, _chunks->size() - rowFileOffset)));
+    if (bytesThisRow <= 0)
+        return false;
+
+    const int secMode = _sectionModel
+        ? _sectionModel->displayModeAtOffset(rowFileOffset)
+        : SectionDisplay_Default;
+    const bool effectivePalette = (secMode == SectionDisplay_Palette)
+        || (secMode == SectionDisplay_Default && _showPalettePanel);
+    if (!effectivePalette)
+        return false;
+
+    const int secIdxAtRow = _sectionModel
+        ? _sectionModel->sectionIndexAtOffset(rowFileOffset)
+        : -1;
+    const Section *paletteSection = (secIdxAtRow >= 0 && _sectionModel)
+        ? &_sectionModel->at(secIdxAtRow)
+        : nullptr;
+
+    PaletteStorageFormat paletteFormat = PaletteStorageFormat::Unknown;
+    qint64 paletteBaseOffset = 0;
+    qint64 paletteEndOffset = _chunks->size();
+    if (secMode == SectionDisplay_Palette && paletteSection) {
+        paletteFormat = paletteStorageFormatFromMnemonic(
+            parseSectionOptions(paletteSection->options).value(QStringLiteral("format")));
+        paletteBaseOffset = paletteSection->startOffset;
+        paletteEndOffset = _sectionModel->endOffsetOf(secIdxAtRow, _chunks->size());
+    } else {
+        paletteFormat = _globalPaletteFormat;
+    }
+    if (paletteFormat == PaletteStorageFormat::Unknown) {
+        const QVector<PaletteStorageFormat> fallbackFormats = paletteStorageFormatsForRom(_disasmRomType);
+        if (!fallbackFormats.isEmpty())
+            paletteFormat = fallbackFormats.first();
+    }
+
+    const int bytesPerColor = paletteStorageFormatBytesPerColor(paletteFormat);
+    if (bytesPerColor <= 0)
+        return false;
+
+    const qint64 relativeToBase = qMax<qint64>(0, rowFileOffset - paletteBaseOffset);
+    const qint64 alignedStart = qMax<qint64>(paletteBaseOffset,
+                                             rowFileOffset - (relativeToBase % bytesPerColor));
+    const qint64 readEnd = qMin<qint64>(paletteEndOffset,
+                                        rowFileOffset + bytesThisRow + bytesPerColor - 1);
+    if (readEnd <= alignedStart)
+        return false;
+
+    QByteArray paletteBytes;
+    const qint64 localStart = alignedStart - _bPosFirst;
+    const int readLength = static_cast<int>(readEnd - alignedStart);
+    if (localStart >= 0 && localStart + readLength <= _dataShown.size())
+        paletteBytes = _dataShown.mid(static_cast<int>(localStart), readLength);
+    else
+        paletteBytes = _chunks->data(alignedStart, readLength);
+
+    QVector<QRgb> colors = decodePaletteColors(paletteBytes, paletteFormat);
+    const int prefixBytes = static_cast<int>(qMax<qint64>(0, rowFileOffset - alignedStart));
+    const int skipColors = (prefixBytes + bytesPerColor - 1) / bytesPerColor;
+    if (skipColors > 0 && skipColors < colors.size())
+        colors = colors.mid(skipColors);
+    else if (skipColors >= colors.size())
+        colors.clear();
+    if (colors.isEmpty())
+        return false;
+
+    const int squareSize = _pxCharHeight + kHexRowExtraGapPx;
+    const int paletteStartX = _pxPosAsciiX + kAsciiAreaLeftPaddingPx - 1;
+    if (posX < paletteStartX)
+        return false;
+
+    const int colorIndex = (posX - paletteStartX) / squareSize;
+    if (colorIndex < 0 || colorIndex >= colors.size())
+        return false;
+
+    const qint64 firstColorStart = qMax<qint64>(alignedStart,
+                                                rowFileOffset + (skipColors * bytesPerColor));
+    const qint64 colorStart = firstColorStart + static_cast<qint64>(colorIndex) * bytesPerColor;
+    if (colorStart < rowFileOffset || colorStart + bytesPerColor > paletteEndOffset)
+        return false;
+
+    *colorStartOffset = colorStart;
+    if (bytesPerColorOut)
+        *bytesPerColorOut = bytesPerColor;
+    if (formatOut)
+        *formatOut = paletteFormat;
+    if (colorOut)
+        *colorOut = colors[colorIndex];
+    return true;
+}
+
+bool HexEditor::sectionBoundaryAtPoint(const QPoint &point,
+                                       int *sectionIndex,
+                                       qint64 *sectionStartOffset) const
+{
+    if (!_sectionModel || !_showSections)
+        return false;
+
+    const int rowStridePx = _pxCharHeight + kHexRowExtraGapPx;
+    const int posY = static_cast<int>(point.y()) - 3;
+    if (rowStridePx <= 0 || posY < 0)
+        return false;
+
+    const int row = posY / rowStridePx;
+    if (row < 0 || row >= _visualRowStartBytes.size())
+        return false;
+
+    const int localY = posY % rowStridePx;
+    const int tolerancePx = 4;
+
+    auto bytesForRow = [this](int visualRow) -> int {
+        if (visualRow < 0 || visualRow >= _visualRowStartBytes.size())
+            return -1;
+        if (visualRow + 1 < _visualRowStartBytes.size())
+            return static_cast<int>(_visualRowStartBytes[visualRow + 1] - _visualRowStartBytes[visualRow]);
+        return _bytesPerLine;
+    };
+
+    auto boundaryForRows = [this, &sectionIndex, &sectionStartOffset, &bytesForRow](int headerRow, int dataRow) {
+        if (headerRow < 0 || dataRow < 0
+            || headerRow >= _visualRowStartBytes.size()
+            || dataRow >= _visualRowStartBytes.size()) {
+            return false;
+        }
+
+        const int headerBytes = bytesForRow(headerRow);
+        const int dataBytes = bytesForRow(dataRow);
+        if (headerBytes > 0 || dataBytes <= 0)
+            return false;
+
+        const qint64 dataStartOffset = _visualRowStartBytes[dataRow];
+        if (_visualRowStartBytes[headerRow] != dataStartOffset)
+            return false;
+
+        const int secIdx = _sectionModel->sectionIndexAtStartOffset(dataStartOffset);
+        if (secIdx < 0)
+            return false;
+
+        if (sectionIndex)
+            *sectionIndex = secIdx;
+        if (sectionStartOffset)
+            *sectionStartOffset = dataStartOffset;
+        return true;
+    };
+
+    if (localY <= tolerancePx && boundaryForRows(row - 1, row))
+        return true;
+
+    if (localY >= rowStridePx - tolerancePx && boundaryForRows(row, row + 1))
+        return true;
+
+    return false;
+}
+
+qint64 HexEditor::sectionBoundaryDragOffsetForPoint(const QPoint &point, int sectionIndex) const
+{
+    if (!_sectionModel || !_chunks || sectionIndex < 0 || sectionIndex >= _sectionModel->count())
+        return -1;
+
+    const int rowStridePx = _pxCharHeight + kHexRowExtraGapPx;
+    const int posY = static_cast<int>(point.y()) - 3;
+    if (rowStridePx <= 0 || posY < 0)
+        return -1;
+
+    const int row = posY / rowStridePx;
+    if (row < 0 || row >= _visualRowStartBytes.size())
+        return -1;
+
+    const qint64 rowStartOffset = _visualRowStartBytes[row];
+    const int bytesThisRow = (row + 1 < _visualRowStartBytes.size())
+        ? static_cast<int>(_visualRowStartBytes[row + 1] - rowStartOffset)
+        : _bytesPerLine;
+    if (bytesThisRow <= 0)
+        return -1;
+
+    const QVector<Section> &sections = _sectionModel->sections();
+    const qint64 fileSize = _chunks->size();
+    const qint64 previousStart = (sectionIndex > 0) ? sections[sectionIndex - 1].startOffset : -1;
+    const qint64 currentEnd = _sectionModel->endOffsetOf(sectionIndex, fileSize);
+    if (rowStartOffset <= previousStart || rowStartOffset >= currentEnd)
+        return -1;
+
+    return rowStartOffset;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -861,6 +1070,23 @@ void HexEditor::mouseMoveEvent(QMouseEvent *event)
     _blink = false;
     viewport()->update();
 
+    if (_sectionBoundaryDragging && _sectionModel) {
+        const qint64 newStartOffset = sectionBoundaryDragOffsetForPoint(
+            event->position().toPoint(),
+            _sectionBoundaryDragSectionIndex);
+        if (newStartOffset >= 0) {
+            QVector<Section> sections = _sectionModel->sections();
+            if (_sectionBoundaryDragSectionIndex >= 0
+                && _sectionBoundaryDragSectionIndex < sections.size()
+                && sections[_sectionBoundaryDragSectionIndex].startOffset != newStartOffset) {
+                sections[_sectionBoundaryDragSectionIndex].startOffset = newStartOffset;
+                _sectionModel->applySections(sections, tr("Edit section offset"));
+            }
+        }
+        viewport()->setCursor(Qt::SizeVerCursor);
+        return;
+    }
+
     // Handle address area boundary drag (resize by 1 byte per step)
     if (_addrDragging && _addressArea)
     {
@@ -927,8 +1153,14 @@ void HexEditor::mouseMoveEvent(QMouseEvent *event)
         const int pxOfsX_mv = horizontalScrollBar()->value();
         bool cursorSet = false;
 
+        int boundarySectionIndex = -1;
+        if (sectionBoundaryAtPoint(event->position().toPoint(), &boundarySectionIndex, nullptr)) {
+            viewport()->setCursor(Qt::SizeVerCursor);
+            cursorSet = true;
+        }
+
         // Address/hex boundary: click collapses/expands address area
-        if (_addressArea)
+        if (!cursorSet && _addressArea)
         {
             const int addrSepX = _pxPosHexX - _pxGapAdrHex - pxOfsX_mv;
             if (std::abs(event->x() - addrSepX) < 8)
@@ -1055,6 +1287,16 @@ void HexEditor::mousePressEvent(QMouseEvent *event)
     _blink = false;
     viewport()->update();
 
+    if (event->button() == Qt::LeftButton) {
+        int boundarySectionIndex = -1;
+        if (sectionBoundaryAtPoint(event->position().toPoint(), &boundarySectionIndex, nullptr)) {
+            _sectionBoundaryDragging = true;
+            _sectionBoundaryDragSectionIndex = boundarySectionIndex;
+            viewport()->setCursor(Qt::SizeVerCursor);
+            return;
+        }
+    }
+
     // Address/hex boundary: start drag to resize address area by 1 byte per step
     if (_addressArea && event->button() == Qt::LeftButton)
     {
@@ -1162,6 +1404,15 @@ void HexEditor::mousePressEvent(QMouseEvent *event)
 
 void HexEditor::mouseReleaseEvent(QMouseEvent *event)
 {
+    if (_sectionBoundaryDragging)
+    {
+        _sectionBoundaryDragging = false;
+        _sectionBoundaryDragSectionIndex = -1;
+        viewport()->setCursor(Qt::ArrowCursor);
+        event->accept();
+        return;
+    }
+
     // End address area drag
     if (_addrDragging)
     {
@@ -1230,6 +1481,38 @@ void HexEditor::mouseDoubleClickEvent(QMouseEvent *event)
                     }
                 }
             }
+        }
+    }
+
+    {
+        qint64 paletteColorOffset = -1;
+        int bytesPerColor = 0;
+        PaletteStorageFormat paletteFormat = PaletteStorageFormat::Unknown;
+        QRgb currentColor = 0;
+        if (paletteColorAtPoint(event->pos(),
+                                &paletteColorOffset,
+                                &bytesPerColor,
+                                &paletteFormat,
+                                &currentColor)) {
+            setCursorPosition(paletteColorOffset * 2);
+            resetSelection(paletteColorOffset * 2);
+
+            const bool editablePaletteSection = _sectionModel
+                && _sectionModel->displayModeAtOffset(paletteColorOffset) == SectionDisplay_Palette;
+            if (!editablePaletteSection || _readOnly)
+                return;
+
+            const QColor chosenColor = QColorDialog::getColor(
+                QColor::fromRgb(currentColor),
+                this,
+                tr("Edit palette color"));
+            if (!chosenColor.isValid())
+                return;
+
+            const QByteArray encodedColor = encodePaletteColor(chosenColor.rgb(), paletteFormat);
+            if (encodedColor.size() == bytesPerColor)
+                replace(paletteColorOffset, bytesPerColor, encodedColor);
+            return;
         }
     }
 
@@ -1571,6 +1854,7 @@ void HexEditor::paintEvent(QPaintEvent *event)
 
                             painter.drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter,
                                              secName + QStringLiteral(":"));
+
                             painter.setFont(prevFont);
                             painter.setPen(prevPen);
                         }
@@ -1969,8 +2253,14 @@ void HexEditor::paintEvent(QPaintEvent *event)
                         || (secMode == SectionDisplay_Default && _showDisasm);
                     const bool effectiveGraphics = (secMode == SectionDisplay_Graphics)
                         || (secMode == SectionDisplay_Default && _showGraphicsPanel);
+                    const bool effectiveAudio = (secMode == SectionDisplay_Audio)
+                        || (secMode == SectionDisplay_Default && _showAudioPanel);
+                    const bool effectivePalette = (secMode == SectionDisplay_Palette)
+                        || (secMode == SectionDisplay_Default && _showPalettePanel);
                     const bool suppressAsciiSelection = isSelectedByte
-                        && (secMode == SectionDisplay_Audio || secMode == SectionDisplay_Graphics);
+                        && (effectiveAudio
+                            || secMode == SectionDisplay_Graphics
+                            || effectivePalette);
                     const bool asciiSelectedByte = isSelectedByte && !suppressAsciiSelection;
                     QColor asciiBgColor = c;
                     if (suppressAsciiSelection) {
@@ -1985,6 +2275,94 @@ void HexEditor::paintEvent(QPaintEvent *event)
                     TranslationTable *secTable = nullptr;
                     if (secMode > 0 && secMode <= _allTables.size())
                         secTable = _allTables[secMode - 1];
+
+                    if (effectivePalette)
+                    {
+                        if (colIdx != 0)
+                            continue;
+
+                        const qint64 rowFileOffset = _bPosFirst + bPosLine;
+                        const int secIdxAtRow = _sectionModel
+                            ? _sectionModel->sectionIndexAtOffset(rowFileOffset)
+                            : -1;
+                        const Section *paletteSection = (secIdxAtRow >= 0 && _sectionModel)
+                            ? &_sectionModel->at(secIdxAtRow)
+                            : nullptr;
+
+                        PaletteStorageFormat paletteFormat = PaletteStorageFormat::Unknown;
+                        qint64 paletteBaseOffset = 0;
+                        qint64 paletteEndOffset = _chunks ? _chunks->size() : rowFileOffset + bytesThisRow;
+                        if (secMode == SectionDisplay_Palette && paletteSection) {
+                            paletteFormat = paletteStorageFormatFromMnemonic(
+                                parseSectionOptions(paletteSection->options).value(QStringLiteral("format")));
+                            paletteBaseOffset = paletteSection->startOffset;
+                            paletteEndOffset = _sectionModel->endOffsetOf(secIdxAtRow, _chunks->size());
+                        } else {
+                            paletteFormat = _globalPaletteFormat;
+                        }
+                        if (paletteFormat == PaletteStorageFormat::Unknown) {
+                            const QVector<PaletteStorageFormat> fallbackFormats = paletteStorageFormatsForRom(_disasmRomType);
+                            if (!fallbackFormats.isEmpty())
+                                paletteFormat = fallbackFormats.first();
+                        }
+
+                        const int bytesPerColor = paletteStorageFormatBytesPerColor(paletteFormat);
+                        const int squareSize = _pxCharHeight + kHexRowExtraGapPx;
+                        const int rowTop = pxPosY - _pxCharHeight + _pxSelectionSub;
+                        const QRect bgRect(pxPosAsciiX2 - 1,
+                                           rowTop,
+                                           qMax(1, viewport()->width() - (pxPosAsciiX2 - 1)),
+                                           squareSize);
+                        painter.fillRect(bgRect, asciiBgColor);
+
+                        if (bytesPerColor > 0 && _chunks) {
+                            const qint64 relativeToBase = qMax<qint64>(0, rowFileOffset - paletteBaseOffset);
+                            const qint64 alignedStart = qMax<qint64>(paletteBaseOffset,
+                                                                     rowFileOffset - (relativeToBase % bytesPerColor));
+                            const qint64 readEnd = qMin<qint64>(paletteEndOffset,
+                                                                rowFileOffset + bytesThisRow + bytesPerColor - 1);
+                            if (readEnd > alignedStart) {
+                                QByteArray paletteBytes;
+                                const qint64 localStart = alignedStart - _bPosFirst;
+                                const int readLength = static_cast<int>(readEnd - alignedStart);
+                                if (localStart >= 0 && localStart + readLength <= _dataShown.size())
+                                    paletteBytes = _dataShown.mid(static_cast<int>(localStart), readLength);
+                                else
+                                    paletteBytes = _chunks->data(alignedStart, readLength);
+
+                                QVector<QRgb> colors = decodePaletteColors(paletteBytes, paletteFormat);
+                                const int prefixBytes = static_cast<int>(qMax<qint64>(0, rowFileOffset - alignedStart));
+                                const int skipColors = (prefixBytes + bytesPerColor - 1) / bytesPerColor;
+                                if (skipColors > 0 && skipColors < colors.size())
+                                    colors = colors.mid(skipColors);
+                                else if (skipColors >= colors.size())
+                                    colors.clear();
+
+                                const qint64 firstColorStart = qMax<qint64>(alignedStart,
+                                                                            rowFileOffset + (skipColors * bytesPerColor));
+                                const bool cursorInRow = _bPosCurrent >= rowFileOffset
+                                    && _bPosCurrent < rowFileOffset + bytesThisRow;
+                                const int cursorColorIndex = (cursorInRow && _bPosCurrent >= firstColorStart)
+                                    ? static_cast<int>((_bPosCurrent - firstColorStart) / bytesPerColor)
+                                    : -1;
+
+                                const QPen savedPen = painter.pen();
+                                for (int colorIndex = 0; colorIndex < colors.size(); ++colorIndex) {
+                                    QRect colorRect(pxPosAsciiX2 - 1 + colorIndex * squareSize,
+                                                    rowTop,
+                                                    squareSize - 1,
+                                                    squareSize - 1);
+                                    painter.fillRect(colorRect, QColor::fromRgb(colors[colorIndex]));
+                                    painter.setPen(QColor(0, 0, 0, 96));
+                                    painter.drawRect(colorRect);
+                                    if (colorIndex == cursorColorIndex)
+                                        _asciiCursorRect = colorRect.adjusted(-1, -1, 1, 1);
+                                }
+                                painter.setPen(savedPen);
+                            }
+                        }
+                        continue;
+                    }
 
                     if (effectiveDisasm)
                     {
@@ -2137,7 +2515,7 @@ void HexEditor::paintEvent(QPaintEvent *event)
 
                         pxPosAsciiX2 += symWidthPx;
                     }
-                    else if (secMode == SectionDisplay_Audio)
+                    else if (effectiveAudio)
                     {
                     // ── Audio waveform: monolithic full-width vertical display ──
                     // The entire ASCII area is one waveform strip.  Time flows
@@ -2145,9 +2523,9 @@ void HexEditor::paintEvent(QPaintEvent *event)
                     // left→right across the full ASCII-area width.
                     const uint8_t byteVal = static_cast<uint8_t>(rawByte);
                     const qint64 fileOffset = _bPosFirst + bPosLine + colIdx;
-                    qint64 sectionStart = fileOffset;
-                    AudioSampleFormat secAudioFormat = AudioSampleFormat::Unknown;
-                    if (_sectionModel) {
+                    qint64 sectionStart = 0;
+                    AudioSampleFormat secAudioFormat = _globalAudioFormat;
+                    if (_sectionModel && secMode == SectionDisplay_Audio) {
                         const int secIdxAtByte = _sectionModel->sectionIndexAtOffset(fileOffset);
                         if (secIdxAtByte >= 0) {
                             const Section &audioSec = _sectionModel->at(secIdxAtByte);

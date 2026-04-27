@@ -194,6 +194,7 @@ HEADERS = \
     utils/encodingdetect.h \
     utils/updatechecker.h \
     utils/appsettings.h \
+    utils/palettedetector.h \
     utils/romdetect.h \
     # audio
     audio/audiodetector.h \
@@ -249,6 +250,7 @@ SOURCES = \
     # utils
     utils/byteglue.cpp \
     utils/disassembler.cpp \
+    utils/palettedetector.cpp \
     utils/updatechecker.cpp \
     utils/appsettings.cpp \
     # audio
