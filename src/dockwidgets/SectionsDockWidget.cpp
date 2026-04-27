@@ -41,7 +41,7 @@ static QString audioFormatLabel(AudioSampleFormat fmt)
     case AudioSampleFormat::MD_DAC_PCM:       return QStringLiteral("MD DAC PCM (unsigned 8-bit)");
     case AudioSampleFormat::MD_PCM8_Signed:   return QStringLiteral("MD Signed 8-bit PCM");
     case AudioSampleFormat::MD_ULAW:          return QStringLiteral("MD µ-law");
-    case AudioSampleFormat::MD_DPCM4_6500:    return QStringLiteral("IMA ADPCM 4-bit (UMK3)");
+    case AudioSampleFormat::MD_DPCM4_6500:    return QStringLiteral("MD IMA ADPCM 4-bit (~6500 Hz)");
     case AudioSampleFormat::MD_ADPCM_OKI:     return QStringLiteral("OKI/Dialogic ADPCM 4-bit");
     case AudioSampleFormat::GBA_PCM8:         return QStringLiteral("GBA PCM8");
     case AudioSampleFormat::GB_Wave4bit:      return QStringLiteral("GB Wave 4-bit");
@@ -677,7 +677,7 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
         moveDownAct->setEnabled(nextGroupId >= 0);
 
         menu.addSeparator();
-        QMenu *displayMenu = menu.addMenu(tr("Display mode"));
+        QMenu *displayMenu = menu.addMenu(tr("Type"));
         displayMenu->setEnabled(!groupSectionIndices.isEmpty());
 
         QAction *actDefault = displayMenu->addAction(tr("Default"));
@@ -808,7 +808,7 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
             }
 
             if (changed)
-                m_model->applySections(secs, tr("Set display mode for group"));
+                m_model->applySections(secs, tr("Set type for group"));
         } else if (chosen == deleteAct) {
             m_model->removeGroup(groupId);
         }
@@ -831,7 +831,7 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
         QAction *mergeAct = menu.addAction(tr("Merge %1 sections").arg(selectedIndices.size()));
 
         // Batch display mode
-        QMenu *displayMenu = menu.addMenu(tr("Set display mode (%1 sections)").arg(selectedIndices.size()));
+        QMenu *displayMenu = menu.addMenu(tr("Set type (%1 sections)").arg(selectedIndices.size()));
         QAction *actDefault = displayMenu->addAction(tr("Default"));
         actDefault->setData(SectionDisplay_Default);
 
@@ -1000,7 +1000,7 @@ void SectionsDockWidget::onTreeContextMenu(const QPoint &pos)
     menu.addSeparator();
 
     // Display mode submenu
-    QMenu *displayMenu = menu.addMenu(tr("Display mode"));
+    QMenu *displayMenu = menu.addMenu(tr("Type"));
     const int curMode = section.displayMode;
 
     QAction *actDefault = displayMenu->addAction(tr("Default"));

@@ -62,7 +62,7 @@ QString audioFormatLabel(AudioSampleFormat fmt)
     case AudioSampleFormat::MD_DAC_PCM:        return QStringLiteral("MD DAC PCM (unsigned 8-bit)");
     case AudioSampleFormat::MD_PCM8_Signed:    return QStringLiteral("MD Signed 8-bit PCM");
     case AudioSampleFormat::MD_ULAW:           return QStringLiteral("MD µ-law");
-    case AudioSampleFormat::MD_DPCM4_6500:     return QStringLiteral("IMA ADPCM 4-bit (UMK3)");
+    case AudioSampleFormat::MD_DPCM4_6500:     return QStringLiteral("MD IMA ADPCM 4-bit (~6500 Hz)");
     case AudioSampleFormat::MD_ADPCM_OKI:      return QStringLiteral("OKI/Dialogic ADPCM 4-bit");
     case AudioSampleFormat::GBA_PCM8:          return QStringLiteral("GBA PCM8");
     case AudioSampleFormat::GB_Wave4bit:       return QStringLiteral("GB Wave 4-bit");

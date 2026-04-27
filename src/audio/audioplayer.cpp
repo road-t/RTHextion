@@ -8,8 +8,23 @@
 
 #include <QFile>
 #include <QDataStream>
+#include <QtCore/QCoreApplication>
 #include <QtEndian>
 #include <cstring>
+
+void AudioSinkDeleter::operator()(QAudioSink *sink) const
+{
+#ifdef HAVE_QT_MULTIMEDIA
+    if (!sink)
+        return;
+    if (QCoreApplication::instance())
+        sink->deleteLater();
+    else
+        delete sink;
+#else
+    Q_UNUSED(sink);
+#endif
+}
 
 AudioPlayer::AudioPlayer(QObject *parent)
     : QObject(parent)
@@ -27,6 +42,7 @@ void AudioPlayer::loadSample(const QVector<int16_t> &pcm16, int sampleRate)
 {
     stop();
     m_sampleRate = sampleRate;
+    m_playbackSampleRate = sampleRate;
     m_sampleCount = pcm16.size();
     buildWavData(pcm16, sampleRate);
 }
@@ -65,12 +81,14 @@ void AudioPlayer::play(int sampleRateOverride, double speedMultiplier)
     return;
 #else
     stop();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
 
     if (m_pcmPayload.isEmpty() || m_sampleRate <= 0)
         return;
 
     const int baseRate = (sampleRateOverride > 0) ? sampleRateOverride : m_sampleRate;
     const int effectiveRate = qBound(1000, static_cast<int>(baseRate * speedMultiplier), 192000);
+    m_playbackSampleRate = effectiveRate;
 
     QAudioFormat fmt;
     fmt.setSampleRate(effectiveRate);
@@ -81,8 +99,11 @@ void AudioPlayer::play(int sampleRateOverride, double speedMultiplier)
     if (!defaultDev.isFormatSupported(fmt))
         return;
 
-    m_audioSink = new QAudioSink(defaultDev, fmt, this);
-    connect(m_audioSink, &QAudioSink::stateChanged, this, [this](QAudio::State state) {
+    m_audioSink.reset(new QAudioSink(defaultDev, fmt, this));
+    QAudioSink *sink = m_audioSink.get();
+    connect(sink, &QAudioSink::stateChanged, this, [this, sink](QAudio::State state) {
+        if (sink != m_audioSink.get())
+            return;
         if (state == QAudio::IdleState || state == QAudio::StoppedState) {
             emit playbackStopped();
         }
@@ -90,7 +111,7 @@ void AudioPlayer::play(int sampleRateOverride, double speedMultiplier)
 
     m_audioBuffer.setBuffer(&m_pcmPayload);
     m_audioBuffer.open(QIODevice::ReadOnly);
-    m_audioSink->start(&m_audioBuffer);
+    sink->start(&m_audioBuffer);
     emit playbackStarted();
 #endif
 }
@@ -99,10 +120,9 @@ void AudioPlayer::stop()
 {
 #ifdef HAVE_QT_MULTIMEDIA
     if (m_audioSink) {
-        disconnect(m_audioSink, nullptr, this, nullptr);
+        disconnect(m_audioSink.get(), nullptr, this, nullptr);
         m_audioSink->stop();
-        delete m_audioSink;
-        m_audioSink = nullptr;
+        m_audioSink.reset();
     }
     if (m_audioBuffer.isOpen())
         m_audioBuffer.close();
@@ -123,6 +143,24 @@ int AudioPlayer::durationMs() const
     if (m_sampleRate <= 0 || m_sampleCount <= 0)
         return 0;
     return static_cast<int>((static_cast<qint64>(m_sampleCount) * 1000) / m_sampleRate);
+}
+
+int AudioPlayer::playbackDurationMs() const
+{
+    if (m_playbackSampleRate <= 0 || m_sampleCount <= 0)
+        return 0;
+    return static_cast<int>((static_cast<qint64>(m_sampleCount) * 1000) / m_playbackSampleRate);
+}
+
+int AudioPlayer::playbackPositionMs() const
+{
+#ifdef HAVE_QT_MULTIMEDIA
+    if (!m_audioSink)
+        return 0;
+    return static_cast<int>(m_audioSink->processedUSecs() / 1000);
+#else
+    return 0;
+#endif
 }
 
 // ─── WAV Export ────────────────────────────────────────────────────

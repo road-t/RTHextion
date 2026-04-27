@@ -4,6 +4,36 @@
 // HexEditor disassembly mode, section layout
 // ═══════════════════════════════════════════════════════════════════════════
 
+namespace {
+void addEmbeddedPointersToModel(PointerListModel *model,
+                                const QVector<CallPointer> &embeddedPointers)
+{
+    if (!model || embeddedPointers.isEmpty())
+        return;
+
+    QVector<QPair<qint64, qint64>> pointerBatch;
+    pointerBatch.reserve(embeddedPointers.size());
+    for (const CallPointer &pointer : embeddedPointers) {
+        if (pointer.ptrFileOffset < 0 || pointer.targetOffset < 0 || pointer.ptrSize <= 0)
+            continue;
+
+        const bool alreadyMatches = model->isPointer(pointer.ptrFileOffset)
+            && model->getOffset(pointer.ptrFileOffset) == pointer.targetOffset
+            && model->getPointerSize(pointer.ptrFileOffset) == pointer.ptrSize;
+        if (alreadyMatches)
+            continue;
+
+        pointerBatch.append({
+            pointer.ptrFileOffset,
+            PointerListModel::encodePtrValue(pointer.targetOffset, pointer.ptrSize)
+        });
+    }
+
+    if (!pointerBatch.isEmpty())
+        model->addPointersBatch(pointerBatch);
+}
+}
+
 bool HexEditor::showDisasm() const
 {
     return _showDisasm;
@@ -89,6 +119,8 @@ void HexEditor::rebuildDisasmLayout()
 
     // Lightweight boundary scan — only collects (offset, size), no strings
     _disasmBoundaries = _disasm->scanBoundaries(fileData, 0, fileData.size());
+    addEmbeddedPointersToModel(&_pointers,
+                               _disasm->scanEmbeddedPointers(fileData, 0, fileData.size()));
 
     // Build line breaks: each instruction ends at (fileOffset + size - 1)
     QVector<qint64> breaks;
@@ -175,6 +207,8 @@ bool HexEditor::isDisasmAt(qint64 offset) const
 
 bool HexEditor::isAudioAt(qint64 offset) const
 {
+    if (_showAudioPanel)
+        return true;
     return _sectionModel
         && _sectionModel->displayModeAtOffset(offset) == SectionDisplay_Audio;
 }
@@ -215,6 +249,49 @@ void HexEditor::setGlobalTileCols(int cols)
 
 TileCodec HexEditor::globalTileCodec() const { return _globalTileCodec; }
 int       HexEditor::globalTileCols()  const { return _globalTileCols; }
+
+bool HexEditor::showAudioPanel() const { return _showAudioPanel; }
+
+void HexEditor::setShowAudioPanel(bool mode)
+{
+    if (_showAudioPanel == mode)
+        return;
+    _showAudioPanel = mode;
+    viewport()->update();
+}
+
+void HexEditor::setGlobalAudioFormat(AudioSampleFormat format)
+{
+    if (_globalAudioFormat == format)
+        return;
+    _globalAudioFormat = format;
+    if (_showAudioPanel)
+        viewport()->update();
+}
+
+AudioSampleFormat HexEditor::globalAudioFormat() const { return _globalAudioFormat; }
+
+bool HexEditor::showPalettePanel() const { return _showPalettePanel; }
+
+void HexEditor::setShowPalettePanel(bool mode)
+{
+    if (_showPalettePanel == mode)
+        return;
+    _showPalettePanel = mode;
+    adjust();
+    viewport()->update();
+}
+
+void HexEditor::setGlobalPaletteFormat(PaletteStorageFormat format)
+{
+    if (_globalPaletteFormat == format)
+        return;
+    _globalPaletteFormat = format;
+    if (_showPalettePanel)
+        viewport()->update();
+}
+
+PaletteStorageFormat HexEditor::globalPaletteFormat() const { return _globalPaletteFormat; }
 
 
 quint64 HexEditor::computeLayoutFingerprint() const
@@ -387,6 +464,7 @@ void HexEditor::rebuildSectionAwareLayout()
     _disasmCacheRomType = RomType::Unknown;
     if (_disasm) {
         const QByteArray fileData = data();
+        QVector<CallPointer> embeddedPointers;
         if (!fileData.isEmpty()) {
             for (const auto &range : disasmRanges) {
                 RomType cpu = _disasmRomType;
@@ -409,7 +487,15 @@ void HexEditor::rebuildSectionAwareLayout()
                     fileData, range.first,
                     static_cast<int>(range.second - range.first));
                 _disasmBoundaries.append(bndrs);
+
+                const auto rangePointers = secDisasm.scanEmbeddedPointers(
+                    fileData,
+                    range.first,
+                    static_cast<int>(range.second - range.first));
+                embeddedPointers += rangePointers;
             }
+
+            addEmbeddedPointersToModel(&_pointers, embeddedPointers);
         }
     }
 

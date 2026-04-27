@@ -1294,6 +1294,96 @@ static qint64 extractBranchTarget(const cs_insn *insn, cs_arch arch)
 
     return -1;
 }
+
+struct EmbeddedReference
+{
+    qint64 targetCpu = -1;
+    int ptrOfs = -1;
+    int ptrSize = -1;
+    bool targetMustBeFunction = true;
+};
+
+static bool extractEmbeddedReference(const cs_insn *insn, cs_arch arch, EmbeddedReference *out)
+{
+    if (!insn || !out)
+        return false;
+
+#if CS_API_MAJOR >= 4
+    switch (arch) {
+    case CS_ARCH_M68K: {
+        const QString mn = QString::fromLatin1(insn->mnemonic).toLower();
+        const bool isJumpCall = mn.startsWith(QLatin1String("jsr"))
+            || mn.startsWith(QLatin1String("jmp"));
+        const bool isPea = mn.startsWith(QLatin1String("pea"));
+        if (insn->detail) {
+            const cs_m68k *m68k = &insn->detail->m68k;
+            for (uint8_t i = 0; i < m68k->op_count; ++i) {
+                const cs_m68k_op &op = m68k->operands[i];
+                if (isJumpCall
+                    && op.address_mode == M68K_AM_ABSOLUTE_DATA_LONG) {
+                    out->targetCpu = extractBranchTarget(insn, arch);
+                    out->ptrOfs = 2;
+                    out->ptrSize = 4;
+                    out->targetMustBeFunction = true;
+                    return out->targetCpu >= 0;
+                }
+                if (isJumpCall
+                    && op.address_mode == M68K_AM_ABSOLUTE_DATA_SHORT) {
+                    out->targetCpu = extractBranchTarget(insn, arch);
+                    out->ptrOfs = 2;
+                    out->ptrSize = 2;
+                    out->targetMustBeFunction = true;
+                    return out->targetCpu >= 0;
+                }
+                if (isPea && op.address_mode == M68K_AM_PCI_DISP) {
+                    out->targetCpu = static_cast<qint64>(insn->address) + 2 + op.mem.disp;
+                    out->ptrOfs = 2;
+                    out->ptrSize = 2;
+                    out->targetMustBeFunction = false;
+                    return true;
+                }
+            }
+        }
+
+        // Capstone's M68K operand detail is inconsistent for some PC-relative PEA
+        // forms, but the opcode word 0x487A unambiguously encodes PEA (d16, PC).
+        if (isPea && insn->size >= 4
+            && insn->bytes[0] == 0x48 && insn->bytes[1] == 0x7A) {
+            const qint16 disp = static_cast<qint16>((static_cast<quint16>(insn->bytes[2]) << 8)
+                                                    | static_cast<quint16>(insn->bytes[3]));
+            out->targetCpu = static_cast<qint64>(insn->address) + 2 + disp;
+            out->ptrOfs = 2;
+            out->ptrSize = 2;
+            out->targetMustBeFunction = false;
+            return true;
+        }
+
+        break;
+    }
+#if defined(HAVE_CAPSTONE_MOS65XX)
+    case CS_ARCH_MOS65XX: {
+        const QString mn = QString::fromLatin1(insn->mnemonic).toLower();
+        if (mn == QLatin1String("jsr") && insn->size == 3) {
+            out->targetCpu = extractBranchTarget(insn, arch);
+            out->ptrOfs = 1;
+            out->ptrSize = 2;
+            out->targetMustBeFunction = true;
+            return out->targetCpu >= 0;
+        }
+        break;
+    }
+#endif
+    default:
+        break;
+    }
+#else
+    Q_UNUSED(insn);
+    Q_UNUSED(arch);
+    Q_UNUSED(out);
+#endif
+
+    return false;
+}
 #endif
 
 QVector<DisasmInstruction> Disassembler::disassemble(const QByteArray &data, qint64 offset,
@@ -1542,6 +1632,86 @@ QVector<InsnBoundary> Disassembler::scanBoundaries(
 #endif
 }
 
+QVector<CallPointer> Disassembler::scanEmbeddedPointers(
+    const QByteArray &data, qint64 offset, int maxBytes)
+{
+    QVector<CallPointer> pointers;
+    if (!m_open || offset < 0 || offset >= data.size())
+        return pointers;
+
+    if (isZ80RomType(m_romType)) {
+        const int available = qMin(maxBytes, static_cast<int>(data.size() - offset));
+        if (available <= 0)
+            return pointers;
+
+        qint64 pos = offset;
+        const qint64 end = offset + available;
+        while (pos < end) {
+            const int rem = static_cast<int>(end - pos);
+            Z80Decoded z = decodeZ80Instruction(
+                reinterpret_cast<const uint8_t *>(data.constData() + pos),
+                static_cast<size_t>(rem),
+                static_cast<quint64>(pos + m_baseAddress));
+            const int size = qMax(1, qMin(z.size, rem));
+
+            if (!z.mnemonic.isEmpty() && z.isCall && z.cpuTarget >= 0 && size >= 3) {
+                const qint64 targetFile = resolveTarget(static_cast<quint64>(z.cpuTarget));
+                if (targetFile >= 0 && targetFile < data.size())
+                    pointers.append({pos + size - 2, targetFile, 2, true});
+            }
+
+            pos += size;
+        }
+
+        return pointers;
+    }
+
+#ifndef HAVE_CAPSTONE
+    Q_UNUSED(maxBytes);
+    return pointers;
+#else
+    const int available = qMin(maxBytes, static_cast<int>(data.size() - offset));
+    if (available <= 0)
+        return pointers;
+
+    const uint8_t *code = reinterpret_cast<const uint8_t *>(data.constData() + offset);
+    size_t codeSize = static_cast<size_t>(available);
+    uint64_t addr = static_cast<uint64_t>(offset + m_baseAddress);
+
+    csh h = static_cast<csh>(m_handle);
+    cs_insn *insn = cs_malloc(h);
+    if (!insn)
+        return pointers;
+
+    while (codeSize > 0) {
+        if (!cs_disasm_iter(h, &code, &codeSize, &addr, insn))
+            break;
+
+        const cs_arch arch = static_cast<cs_arch>(m_arch);
+        EmbeddedReference embeddedRef;
+        if (!extractEmbeddedReference(insn, arch, &embeddedRef)
+            || embeddedRef.targetCpu < 0
+            || embeddedRef.ptrOfs < 0
+            || embeddedRef.ptrSize <= 0) {
+            continue;
+        }
+
+        const qint64 targetFileOfs = resolveTarget(static_cast<quint64>(embeddedRef.targetCpu));
+        if (targetFileOfs < 0 || targetFileOfs >= data.size())
+            continue;
+
+        const qint64 instrFileOfs = static_cast<qint64>(insn->address) - m_baseAddress;
+        pointers.append({instrFileOfs + embeddedRef.ptrOfs,
+                         targetFileOfs,
+                         embeddedRef.ptrSize,
+                         embeddedRef.targetMustBeFunction});
+    }
+
+    cs_free(insn, 1);
+    return pointers;
+#endif
+}
+
 QVector<DetectedFunction> Disassembler::scanFunctions(
     const QByteArray &data, qint64 offset, int maxBytes,
     std::function<void(int)> progressCb,
@@ -1677,66 +1847,36 @@ QVector<DetectedFunction> Disassembler::scanFunctions(
             nextProgress = bytesProcessed + progressStep;
         }
 
+        const cs_arch arch = static_cast<cs_arch>(m_arch);
+        EmbeddedReference embeddedRef;
+        const bool hasEmbeddedRef = extractEmbeddedReference(insn, arch, &embeddedRef);
+
         if (isCallInstruction(h, insn)) {
-            qint64 cpuTarget = extractBranchTarget(insn, static_cast<cs_arch>(m_arch));
+            qint64 cpuTarget = extractBranchTarget(insn, arch);
             if (cpuTarget >= 0) {
                 qint64 targetFileOfs = resolveTarget(static_cast<quint64>(cpuTarget));
                 if (targetFileOfs >= fileStart && targetFileOfs < fileEnd) {
-                    // Collect pointer info for calls with embedded absolute
-                    // addresses. For M68K, only these are treated as function
-                    // entry evidence (filters local BSR label noise).
-                    const qint64 instrFileOfs = static_cast<qint64>(insn->address) - m_baseAddress;
-                    int ptrOfs = -1, ptrSize = -1;
-                    bool hasEmbeddedPtr = false;
-#if CS_API_MAJOR >= 4
-                    switch (static_cast<cs_arch>(m_arch)) {
-                    case CS_ARCH_M68K: {
-                        const QString mn = QString::fromLatin1(insn->mnemonic).toLower();
-                        if (mn == "jsr" || mn == "jmp") {
-                            const cs_m68k *m68k = &insn->detail->m68k;
-                            for (uint8_t j = 0; j < m68k->op_count; ++j) {
-                                if (m68k->operands[j].address_mode == M68K_AM_ABSOLUTE_DATA_LONG) {
-                                    ptrOfs = 2;
-                                    ptrSize = 4;
-                                    hasEmbeddedPtr = true;
-                                    break;
-                                } else if (m68k->operands[j].address_mode == M68K_AM_ABSOLUTE_DATA_SHORT) {
-                                    ptrOfs = 2;
-                                    ptrSize = 2;
-                                    hasEmbeddedPtr = true;
-                                    break;
-                                }
-                            }
-                        }
-                        break;
-                    }
-#if defined(HAVE_CAPSTONE_MOS65XX)
-                    case CS_ARCH_MOS65XX: {
-                        const QString mn = QString::fromLatin1(insn->mnemonic).toLower();
-                        if (mn == "jsr" && insn->size == 3) {
-                            ptrOfs = 1;
-                            ptrSize = 2;
-                            hasEmbeddedPtr = true;
-                        }
-                        break;
-                    }
-#endif
-                    default:
-                        break;
-                    }
-#endif
-
-                    const cs_arch arch = static_cast<cs_arch>(m_arch);
+                    // For M68K, only calls with embedded absolute addresses are
+                    // treated as function entry evidence; local BSR labels are ignored.
                     const bool acceptAsFunctionEntry = (arch == CS_ARCH_M68K)
-                        ? hasEmbeddedPtr
+                        ? hasEmbeddedRef
                         : true;
 
                     if (acceptAsFunctionEntry)
                         callTargets.insert(targetFileOfs);
-
-                    if (outCallPointers && hasEmbeddedPtr && ptrOfs >= 0 && ptrSize > 0)
-                        outCallPointers->append({instrFileOfs + ptrOfs, targetFileOfs, ptrSize});
                 }
+            }
+        }
+
+        if (outCallPointers && hasEmbeddedRef && embeddedRef.targetCpu >= 0
+            && embeddedRef.ptrOfs >= 0 && embeddedRef.ptrSize > 0) {
+            const qint64 targetFileOfs = resolveTarget(static_cast<quint64>(embeddedRef.targetCpu));
+            if (targetFileOfs >= 0 && targetFileOfs < data.size()) {
+                const qint64 instrFileOfs = static_cast<qint64>(insn->address) - m_baseAddress;
+                outCallPointers->append({instrFileOfs + embeddedRef.ptrOfs,
+                                         targetFileOfs,
+                                         embeddedRef.ptrSize,
+                                         embeddedRef.targetMustBeFunction});
             }
         }
 

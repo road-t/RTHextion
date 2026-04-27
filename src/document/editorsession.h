@@ -6,7 +6,9 @@
 #include <QVector>
 #include <QString>
 #include "romdetect.h"
+#include "audiodetector.h"
 #include "TablesDockWidget.h"
+#include "palettedetector.h"
 
 class HexEditor;
 class HexDocument;
@@ -51,6 +53,11 @@ public:
     bool showPointers = true;
     bool showChanges = false;
     bool changesHexMode = false;
+    QString defaultViewMode = QStringLiteral("text");
+    PaletteStorageFormat defaultViewPaletteFormat = PaletteStorageFormat::Unknown;
+    TileCodec defaultViewTileCodec = TileCodec::Linear1bpp;
+    AudioSampleFormat defaultViewAudioFormat = AudioSampleFormat::Unknown;
+    RomType defaultViewDisasmCpu = RomType::Unknown;
 
     QVector<qint64> navigationHistory;
     int navigationHistoryIndex = -1;

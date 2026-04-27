@@ -10,6 +10,11 @@
 
 class QAudioSink;
 
+struct AudioSinkDeleter
+{
+    void operator()(QAudioSink *sink) const;
+};
+
 /// Simple audio player for decoded PCM samples.
 /// Wraps Qt Multimedia QAudioSink and provides play/stop/state.
 class AudioPlayer : public QObject
@@ -33,6 +38,8 @@ public:
 
     /// Duration in milliseconds.
     int durationMs() const;
+    int playbackDurationMs() const;
+    int playbackPositionMs() const;
 
     /// Export the currently loaded sample as a WAV file.
     bool exportWav(const QString &filePath) const;
@@ -65,12 +72,13 @@ signals:
 private:
     void buildWavData(const QVector<int16_t> &pcm16, int sampleRate);
 
-    QAudioSink *m_audioSink = nullptr;
+    std::unique_ptr<QAudioSink, AudioSinkDeleter> m_audioSink;
     QBuffer m_audioBuffer;
     QByteArray m_wavData;     // raw WAV file bytes (for export and playback)
     QByteArray m_pcmPayload;  // raw PCM bytes (for QAudioSink)
     int m_sampleRate = 0;
     int m_sampleCount = 0;
+    int m_playbackSampleRate = 0;
 };
 
 #endif // AUDIOPLAYER_H

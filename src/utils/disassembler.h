@@ -124,6 +124,7 @@ struct CallPointer {
     qint64 ptrFileOffset; ///< File offset of the embedded address bytes
     qint64 targetOffset;  ///< File offset of the call target
     int    ptrSize;       ///< Byte size of the embedded address (2 or 4)
+    bool   targetMustBeFunction = true; ///< false for data references like PEA (d16,PC)
 };
 
 /// Disassembler wrapper around Capstone.
@@ -149,6 +150,11 @@ public:
     /// @return Vector of disassembled instructions
     QVector<DisasmInstruction> disassemble(const QByteArray &data, qint64 offset,
                                            int maxBytes, int maxInstr = 0);
+
+    /// Scan a range for instructions with embedded address operands and
+    /// return pointer records for the encoded operand bytes.
+    QVector<CallPointer> scanEmbeddedPointers(const QByteArray &data, qint64 offset,
+                                              int maxBytes);
 
     /// Lightweight scan: returns only (fileOffset, size) pairs for instruction
     /// boundaries without expensive QString formatting.

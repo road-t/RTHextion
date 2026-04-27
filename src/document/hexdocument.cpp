@@ -3,6 +3,7 @@
 #include "SectionListModel.h"
 #include "translationtable.h"
 #include "romdetect.h"
+#include "palettedetector.h"
 
 #include <QFile>
 #include <QFileInfo>
@@ -303,6 +304,8 @@ static QString sectionDisplayFromLegacy(const Section &s)
         return QStringLiteral("raw");
     if (s.displayMode == SectionDisplay_Graphics)
         return QStringLiteral("gfx");
+    if (s.displayMode == SectionDisplay_Palette)
+        return QStringLiteral("pal");
     if (s.displayMode == SectionDisplay_Audio)
         return QStringLiteral("snd");
     if (s.displayMode == SectionDisplay_Disasm)
@@ -469,6 +472,16 @@ static QString sectionOptionsFromLegacy(const Section &s,
         opts.insert(QStringLiteral("codec"), tileCodecMnemonic(s.tileCodec));
         opts.insert(QStringLiteral("shift"), QStringLiteral("0"));
         opts.insert(QStringLiteral("tile_cols"), QString::number(s.tileCols));
+    } else if (s.displayMode == SectionDisplay_Palette) {
+        const QMap<QString, QString> existing = parseSectionOptions(s.options);
+        const QString format = existing.value(QStringLiteral("format")).trimmed().toLower();
+        if (!format.isEmpty())
+            opts.insert(QStringLiteral("format"), format);
+        else {
+            const QVector<PaletteStorageFormat> formats = paletteStorageFormatsForRom(docRomType);
+            if (!formats.isEmpty())
+                opts.insert(QStringLiteral("format"), QString::fromLatin1(paletteStorageFormatMnemonic(formats.first())));
+        }
     } else if (s.displayMode == SectionDisplay_Audio) {
         opts.insert(QStringLiteral("type"), audioSubtypeMnemonic(s, docRomType));
         opts.insert(QStringLiteral("sample_rate"), QStringLiteral("0"));
@@ -499,6 +512,10 @@ static void applyDisplaySchemaToLegacy(Section &s,
     }
     if (display == QLatin1String("raw")) {
         s.displayMode = SectionDisplay_Raw;
+        return;
+    }
+    if (display == QLatin1String("pal")) {
+        s.displayMode = SectionDisplay_Palette;
         return;
     }
     if (display == QLatin1String("txt")) {
@@ -771,6 +788,15 @@ bool HexDocument::saveProject(const QString &path,
                         colors.append(QString::number(c & 0x00FFFFFFu, 16).toUpper().rightJustified(6, QLatin1Char('0')));
                     out << "    gfx_palette: " << colors.join(QLatin1Char(' ')) << "\n";
                 }
+            } else if (display == QLatin1String("pal")) {
+                QString format = opts.value(QStringLiteral("format")).trimmed().toLower();
+                if (format.isEmpty()) {
+                    const QVector<PaletteStorageFormat> formats = paletteStorageFormatsForRom(m_romType);
+                    if (!formats.isEmpty())
+                        format = QString::fromLatin1(paletteStorageFormatMnemonic(formats.first()));
+                }
+                if (!format.isEmpty())
+                    out << "    palette_format: " << format << "\n";
             } else if (display == QLatin1String("snd")) {
                 QString type = opts.value(QStringLiteral("type")).trimmed().toLower();
                 if (type.isEmpty())
@@ -1338,6 +1364,12 @@ bool HexDocument::loadProject(const QString &path)
                             cur.palette.append(qRgb((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF));
                     }
                     upsertSectionOption(cur.options, QStringLiteral("palette"), payload);
+                    continue;
+                }
+                if (stripped.startsWith(QLatin1String("palette_format:")))
+                {
+                    const QString format = yamlUnescape(stripped.mid(15).trimmed()).toLower();
+                    upsertSectionOption(cur.options, QStringLiteral("format"), format);
                     continue;
                 }
                 if (stripped.startsWith(QLatin1String("disasm_cpu:")))
