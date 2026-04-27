@@ -1,7 +1,7 @@
 # RTHextion v3.0-alpha - Retrogames Translation Hex Editor
 
 A powerful hex-editor for retrogames translation and ROMHacking. 
-
+Inspired by the original Translhextion editor created by [Brian 'Januschan' Bennewitz]( https://github.com/JanusMael) in early 2000's, RTHextion is a modern, cross-platform tool with a wide range of features for efficient and safe ROM editing and translation projects.
 
 ## Features
 - Translation projects support:
