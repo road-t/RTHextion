@@ -45,7 +45,7 @@ namespace hexeditor_detail {
     inline constexpr int kAsciiColumnGapSinglePx = 2;
     inline constexpr int kAsciiColumnGapWidePx   = 3;
     inline constexpr int kPointerByteSize        = 4;
-    inline constexpr int kScrollMapWidth         = 12;
+    inline constexpr int kDefaultScrollMapWidth  = 12;
     inline constexpr int kLineBreakCmdId         = 5678;
 }
 using namespace hexeditor_detail;

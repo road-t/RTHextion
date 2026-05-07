@@ -54,6 +54,7 @@ struct EditorTheme
     // Maps
     QColor scrollMapPtrBgColor;
     QColor scrollMapTargetBgColor;
+    int scrollMapWidth = 12;
 
     // Serialization
     QJsonObject toJson() const;

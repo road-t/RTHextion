@@ -492,12 +492,12 @@ void HexEditor::adjust()
             int x = vp.right() + 1;
             if (_scrollMapChanges && _scrollMapChanges->isVisible())
             {
-                _scrollMapChanges->setGeometry(x, vp.top(), kScrollMapWidth, vp.height());
-                x += kScrollMapWidth;
+                _scrollMapChanges->setGeometry(x, vp.top(), _scrollMapWidth, vp.height());
+                x += _scrollMapWidth;
             }
             if (_scrollMapTarget && _scrollMapTarget->isVisible())
             {
-                _scrollMapTarget->setGeometry(x, vp.top(), kScrollMapWidth, vp.height());
+                _scrollMapTarget->setGeometry(x, vp.top(), _scrollMapWidth, vp.height());
             }
         }
     }

@@ -13,6 +13,7 @@ class QListWidget;
 class QPushButton;
 class QCheckBox;
 class QComboBox;
+class QSpinBox;
 
 namespace Ui {
     class OptionsDialog;
@@ -108,6 +109,7 @@ private:
     QListWidget *m_themeList = nullptr;
     QCheckBox   *m_cbDarkMode = nullptr;
     QComboBox   *m_cbBytesPerLine = nullptr;
+    QSpinBox    *m_sbScrollMapWidth = nullptr;
     QPushButton *m_btnDelete = nullptr;
     QPushButton *m_btnExport = nullptr;
     QPushButton *m_pbSectionHeaderFont = nullptr;
@@ -154,6 +156,7 @@ private:
         QColor changesColor;
         QColor scrollMapPtrBgColor;
         QColor scrollMapTargetBgColor;
+        int scrollMapWidth = 12;
         QColor sectionHeaderFontColor;
         QColor sectionHeaderBgColor;
         QFont widgetFont;

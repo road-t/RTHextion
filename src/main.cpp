@@ -89,6 +89,8 @@ namespace
             settings.setValue("AddressAreaWidth", 8);
         if (!settings.contains("BytesPerLine"))
             settings.setValue("BytesPerLine", 32);
+        if (!settings.contains("ScrollMapWidth"))
+            settings.setValue("ScrollMapWidth", 12);
 
         // Initialize character settings
         if (!settings.contains("NonPrintableNoTableChar"))
@@ -178,6 +180,9 @@ int main(int argc, char *argv[])
     app.setApplicationDisplayName(QStringLiteral("RTHextion"));
     app.setApplicationVersion(AppInfo::Version);
     app.setOrganizationName(AppInfo::Name);
+#ifdef Q_OS_LINUX
+    QGuiApplication::setDesktopFileName(QStringLiteral("RTHextion"));
+#endif
     
     app.setWindowIcon(QIcon(":/images/tj.png"));
 

@@ -44,6 +44,17 @@ void HexEditor::setScrollMapTargetBgColor(const QColor &c)
 }
 
 
+void HexEditor::setScrollMapWidth(int width)
+{
+    const int clampedWidth = qMax(4, width);
+    if (_scrollMapWidth == clampedWidth)
+        return;
+
+    _scrollMapWidth = clampedWidth;
+    updateScrollMapMargins();
+}
+
+
 void HexEditor::updateScrollMapMargins()
 {
     // Immediate (non-debounced) re-evaluation of visibility + margins.
@@ -81,7 +92,7 @@ void HexEditor::scheduleScrollMapCompute()
     if (wantTarget)  _scrollMapTarget->raise();
 
     // Update viewport right margin only when it actually changes (avoids recursive relayout)
-    const int newMargin = (wantChanges ? kScrollMapWidth : 0) + (wantTarget ? kScrollMapWidth : 0);
+    const int newMargin = (wantChanges ? _scrollMapWidth : 0) + (wantTarget ? _scrollMapWidth : 0);
     if (newMargin != _scrollMapCurrentMargin)
     {
         _scrollMapCurrentMargin = newMargin;
@@ -126,7 +137,7 @@ void HexEditor::scheduleScrollMapCompute()
     // Use strip dimensions as the rect so subControlRect returns groove/thumb in strip coords.
     QStyleOptionSlider vbarOpt;
     vbarOpt.initFrom(vbar);                         // sets palette, state from the widget
-    vbarOpt.rect          = QRect(0, 0, kScrollMapWidth, mapH);  // ← strip size, not vbar size
+    vbarOpt.rect          = QRect(0, 0, _scrollMapWidth, mapH);  // ← strip size, not vbar size
     vbarOpt.minimum       = sbMin;
     vbarOpt.maximum       = sbMax;
     vbarOpt.pageStep      = sbPage;

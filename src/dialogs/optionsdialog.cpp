@@ -18,6 +18,7 @@
 #include <QInputDialog>
 #include <QMessageBox>
 #include <QJsonDocument>
+#include <QSpinBox>
 
 #include "theme.h"
 
@@ -241,6 +242,7 @@ void OptionsDialog::saveCurrentSettings()
     m_originalSettings.changesColor = ui->lbChangesColor->palette().color(ui->lbChangesColor->backgroundRole());
     m_originalSettings.scrollMapPtrBgColor = ui->lbScrollMapPtrBgColor->palette().color(ui->lbScrollMapPtrBgColor->backgroundRole());
     m_originalSettings.scrollMapTargetBgColor = ui->lbScrollMapTargetBgColor->palette().color(ui->lbScrollMapTargetBgColor->backgroundRole());
+    m_originalSettings.scrollMapWidth = m_sbScrollMapWidth ? m_sbScrollMapWidth->value() : 12;
     m_originalSettings.sectionHeaderFontColor = m_lbSectionHeaderFontColor ? currentSwatchColor(m_lbSectionHeaderFontColor) : QColor(Qt::black);
     m_originalSettings.sectionHeaderBgColor = m_lbSectionHeaderBgColor ? currentSwatchColor(m_lbSectionHeaderBgColor) : QColor(0xD8, 0xD8, 0xD8, 0x90);
     m_originalSettings.widgetFont = ui->pbWidgetFont->font();
@@ -304,6 +306,8 @@ void OptionsDialog::restoreSettings()
     setColor(ui->lbChangesColor, m_originalSettings.changesColor);
     setColor(ui->lbScrollMapPtrBgColor, m_originalSettings.scrollMapPtrBgColor);
     setColor(ui->lbScrollMapTargetBgColor, m_originalSettings.scrollMapTargetBgColor);
+    if (m_sbScrollMapWidth)
+        m_sbScrollMapWidth->setValue(m_originalSettings.scrollMapWidth);
     if (m_lbSectionHeaderFontColor)
         setColor(m_lbSectionHeaderFontColor, m_originalSettings.sectionHeaderFontColor);
     if (m_lbSectionHeaderBgColor)
@@ -415,6 +419,8 @@ void OptionsDialog::readSettings()
     setColor(ui->lbChangesColor, settings.value("ChangesColor", QColor(0x99, 0xff, 0x99, 0xff)).value<QColor>());
     setColor(ui->lbScrollMapPtrBgColor, settings.value("ScrollMapPtrBgColor", QColor(0xd0, 0xd0, 0xd0)).value<QColor>());
     setColor(ui->lbScrollMapTargetBgColor, settings.value("ScrollMapTargetBgColor", QColor(0xd0, 0xd0, 0xd0)).value<QColor>());
+    if (m_sbScrollMapWidth)
+        m_sbScrollMapWidth->setValue(settings.value("ScrollMapWidth", 12).toInt());
     if (m_lbSectionHeaderFontColor)
         setColor(m_lbSectionHeaderFontColor, settings.value("SectionHeaderFontColor", palette().color(QPalette::WindowText)).value<QColor>());
     if (m_lbSectionHeaderBgColor)
@@ -494,6 +500,7 @@ void OptionsDialog::writeSettings()
     settings.setValue("ChangesColor", ui->lbChangesColor->palette().color(ui->lbChangesColor->backgroundRole()));
     settings.setValue("ScrollMapPtrBgColor", ui->lbScrollMapPtrBgColor->palette().color(ui->lbScrollMapPtrBgColor->backgroundRole()));
     settings.setValue("ScrollMapTargetBgColor", ui->lbScrollMapTargetBgColor->palette().color(ui->lbScrollMapTargetBgColor->backgroundRole()));
+    settings.setValue("ScrollMapWidth", m_sbScrollMapWidth ? m_sbScrollMapWidth->value() : 12);
     if (m_lbSectionHeaderFontColor)
         settings.setValue("SectionHeaderFontColor", currentSwatchColor(m_lbSectionHeaderFontColor));
     if (m_lbSectionHeaderBgColor)
@@ -877,6 +884,8 @@ void OptionsDialog::resetToDefaults()
     setColor(ui->lbChangesColor, QColor(0x99, 0xff, 0x99, 0xff));
     setColor(ui->lbScrollMapPtrBgColor, QColor(0xd0, 0xd0, 0xd0));
     setColor(ui->lbScrollMapTargetBgColor, QColor(0xd0, 0xd0, 0xd0));
+    if (m_sbScrollMapWidth)
+        m_sbScrollMapWidth->setValue(12);
     if (m_lbSectionHeaderFontColor)
         setColor(m_lbSectionHeaderFontColor, this->palette().color(QPalette::WindowText));
     if (m_lbSectionHeaderBgColor)
@@ -1178,6 +1187,19 @@ void OptionsDialog::initThemesTab()
         m_cbDarkMode->setChecked(s.value(QStringLiteral("DarkTheme"), false).toBool());
     }
     rightVL->addWidget(m_cbDarkMode);
+
+    if (auto *mapsGrid = qobject_cast<QGridLayout *>(ui->gbMaps->layout())) {
+        const int row = mapsGrid->rowCount();
+        auto *widthLabel = new QLabel(tr("Width"), ui->gbMaps);
+        m_sbScrollMapWidth = new QSpinBox(ui->gbMaps);
+        m_sbScrollMapWidth->setRange(4, 48);
+        m_sbScrollMapWidth->setSingleStep(1);
+        m_sbScrollMapWidth->setSuffix(tr(" px"));
+        mapsGrid->addWidget(widthLabel, row, 0);
+        mapsGrid->addWidget(m_sbScrollMapWidth, row, 1);
+        connect(m_sbScrollMapWidth, QOverload<int>::of(&QSpinBox::valueChanged),
+                this, &OptionsDialog::on_spinBoxValueChanged);
+    }
 
     // Font group
     auto *fontGroup = new QGroupBox(tr("Font"));
@@ -1484,6 +1506,8 @@ void OptionsDialog::applyThemeToUi(const EditorTheme &theme)
     setColor(ui->lbPointerFrameBgColor, theme.pointerFrameBgColor);
     setColor(ui->lbScrollMapPtrBgColor, theme.scrollMapPtrBgColor);
     setColor(ui->lbScrollMapTargetBgColor, theme.scrollMapTargetBgColor);
+    if (m_sbScrollMapWidth)
+        m_sbScrollMapWidth->setValue(theme.scrollMapWidth);
     if (m_lbSectionHeaderFontColor)
         setColor(m_lbSectionHeaderFontColor, theme.sectionHeaderFontColor);
     if (m_lbSectionHeaderBgColor)
@@ -1530,6 +1554,7 @@ EditorTheme OptionsDialog::captureThemeFromUi() const
     t.pointerFrameBgColor = currentSwatchColor(ui->lbPointerFrameBgColor);
     t.scrollMapPtrBgColor = currentSwatchColor(ui->lbScrollMapPtrBgColor);
     t.scrollMapTargetBgColor = currentSwatchColor(ui->lbScrollMapTargetBgColor);
+    t.scrollMapWidth = m_sbScrollMapWidth ? m_sbScrollMapWidth->value() : 12;
     t.sectionHeaderFontColor = m_lbSectionHeaderFontColor ? currentSwatchColor(m_lbSectionHeaderFontColor) : QColor(Qt::black);
     t.sectionHeaderBgColor = m_lbSectionHeaderBgColor ? currentSwatchColor(m_lbSectionHeaderBgColor) : QColor(0xD8, 0xD8, 0xD8, 0x90);
     t.sectionHeaderFont = m_pbSectionHeaderFont ? m_pbSectionHeaderFont->font() : t.hexFont;

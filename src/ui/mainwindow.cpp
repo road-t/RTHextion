@@ -803,6 +803,7 @@ void MainWindow::newFile()
     // New files start in INSERT mode with UTF-8 encoding
     if (hexEdit) {
         hexEdit->setOverwriteMode(false);
+        setOverwriteMode(false);
         m_currentEncoding = QStringLiteral("UTF-8");
         hexEdit->setCurrentEncoding(m_currentEncoding);
         if (lbEncoding)
@@ -1145,7 +1146,8 @@ void MainWindow::setSelection(qint64 start, qint64 end)
 
 void MainWindow::setOverwriteMode(bool mode)
 {
-    lbOverwriteMode->setText(mode ? tr("REPLACE") : tr("INSERT"));
+    if (lbOverwriteMode)
+        lbOverwriteMode->setText(mode ? tr("REPLACE") : tr("INSERT"));
 }
 
 void MainWindow::setSize(qint64 size)

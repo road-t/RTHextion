@@ -645,6 +645,8 @@ public:
     /** Set background color of each scroll map strip. */
     void setScrollMapChangesBgColor(const QColor &c);
     void setScrollMapTargetBgColor(const QColor &c);
+    int scrollMapWidth() const { return _scrollMapWidth; }
+    void setScrollMapWidth(int width);
 
     QColor pointerFrameBackgroundColor();
     void setPointerFrameBackgroundColor(const QColor &color);
@@ -853,6 +855,7 @@ private:
     HexScrollMap *_scrollMapTarget  = nullptr;   // pointers strip: storage=orange, targets=sky-blue
     bool          _scrollMapChangesEnabled = true;  // user preference: show changes strip
     bool          _scrollMapTargetEnabled  = true;  // user preference: show target strip
+    int           _scrollMapWidth = 12;
     int           _scrollMapCurrentMargin = 0;     // currently applied right viewport margin
     QTimer       *_scrollMapTimer   = nullptr;  // debounce before launching computation
     QFutureWatcher<ScrollMapMarkers> *_scrollMapWatcher = nullptr;  // background computation

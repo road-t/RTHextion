@@ -89,6 +89,7 @@ EditorTheme EditorTheme::defaultLight()
     t.sectionHeaderFont.setBold(true);
     t.scrollMapPtrBgColor = QColor(0xd0, 0xd0, 0xd0);
     t.scrollMapTargetBgColor = QColor(0xd0, 0xd0, 0xd0);
+    t.scrollMapWidth = 12;
     return t;
 }
 
@@ -127,6 +128,7 @@ EditorTheme EditorTheme::defaultDark()
     t.sectionHeaderFont.setBold(true);
     t.scrollMapPtrBgColor = QColor(0x40, 0x40, 0x40);
     t.scrollMapTargetBgColor = QColor(0x40, 0x40, 0x40);
+    t.scrollMapWidth = 12;
     return t;
 }
 
@@ -143,6 +145,7 @@ QJsonObject EditorTheme::toJson() const
     o[QStringLiteral("highlighting")] = highlighting;
     o[QStringLiteral("showHexGrid")] = showHexGrid;
     o[QStringLiteral("showMultibyteFrame")] = showMultibyteFrame;
+    o[QStringLiteral("scrollMapWidth")] = scrollMapWidth;
 
     QJsonObject c;
     c[QStringLiteral("highlightingColor")] = colorToJson(highlightingColor);
@@ -184,6 +187,7 @@ EditorTheme EditorTheme::fromJson(const QJsonObject &o)
     t.highlighting = o.value(QStringLiteral("highlighting")).toBool(true);
     t.showHexGrid = o.value(QStringLiteral("showHexGrid")).toBool(true);
     t.showMultibyteFrame = o.value(QStringLiteral("showMultibyteFrame")).toBool(true);
+    t.scrollMapWidth = o.value(QStringLiteral("scrollMapWidth")).toInt(def.scrollMapWidth);
 
     QJsonObject c = o.value(QStringLiteral("colors")).toObject();
     t.highlightingColor = colorFromJson(c.value(QStringLiteral("highlightingColor")), def.highlightingColor);
@@ -252,6 +256,7 @@ void EditorTheme::applyToSettings() const
     s.setValue(QStringLiteral("SectionHeaderFont"), sectionHeaderFont);
     s.setValue(QStringLiteral("ScrollMapPtrBgColor"), scrollMapPtrBgColor);
     s.setValue(QStringLiteral("ScrollMapTargetBgColor"), scrollMapTargetBgColor);
+    s.setValue(QStringLiteral("ScrollMapWidth"), scrollMapWidth);
 }
 
 EditorTheme EditorTheme::fromCurrentSettings()
@@ -288,6 +293,7 @@ EditorTheme EditorTheme::fromCurrentSettings()
     t.pointerFrameBgColor = s.value(QStringLiteral("PointerFrameBgColor"), def.pointerFrameBgColor).value<QColor>();
     t.sectionHeaderFontColor = s.value(QStringLiteral("SectionHeaderFontColor"), def.sectionHeaderFontColor).value<QColor>();
     t.sectionHeaderBgColor = s.value(QStringLiteral("SectionHeaderBgColor"), def.sectionHeaderBgColor).value<QColor>();
+    t.scrollMapWidth = s.value(QStringLiteral("ScrollMapWidth"), def.scrollMapWidth).toInt();
     t.sectionHeaderFont = s.value(QStringLiteral("SectionHeaderFont"), def.sectionHeaderFont).value<QFont>();
     t.scrollMapPtrBgColor = s.value(QStringLiteral("ScrollMapPtrBgColor"), def.scrollMapPtrBgColor).value<QColor>();
     t.scrollMapTargetBgColor = s.value(QStringLiteral("ScrollMapTargetBgColor"), def.scrollMapTargetBgColor).value<QColor>();

@@ -703,6 +703,7 @@ void MainWindow::updateHexEditorSettings()
         }
         editor->setScrollMapChangesBgColor(settings.value("ScrollMapPtrBgColor", QColor(0xd0, 0xd0, 0xd0)).value<QColor>());
         editor->setScrollMapTargetBgColor(settings.value("ScrollMapTargetBgColor", QColor(0xd0, 0xd0, 0xd0)).value<QColor>());
+        editor->setScrollMapWidth(settings.value("ScrollMapWidth", 12).toInt());
 
         const int newBytesPerLine = qMax(1, editor->bytesPerLine());
         editor->verticalScrollBar()->setValue(static_cast<int>(savedTopByte / newBytesPerLine));
@@ -748,6 +749,7 @@ void MainWindow::writeSettings()
         settings.setValue("HexCaps", hexEdit->hexCaps());
         settings.setValue("AddressAreaWidth", hexEdit->addressWidth());
         settings.setValue("BytesPerLine", hexEdit->bytesPerLine());
+        settings.setValue("ScrollMapWidth", hexEdit->scrollMapWidth());
     }
 
     // Save all open tabs as a per-tab state array.
