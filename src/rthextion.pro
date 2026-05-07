@@ -138,6 +138,10 @@ macx {
     HEADERS += utils/macostheme.h
 }
 
+win32 {
+    RC_ICONS = images/tj.ico
+}
+
 # Windows: iconv path is passed via CI qmake arguments (INCLUDEPATH/LIBS)
 # Linux:   iconv is part of glibc — no link flag needed
 
