@@ -7,6 +7,7 @@
 
 class QLineEdit;
 class QPushButton;
+class QLabel;
 class HexEditor;
 
 class SemiAutoTableDialog : public QDialog
@@ -23,10 +24,12 @@ signals:
 
 private slots:
     void onFind();
+    void updateFindButtonState();
 
 private:
     void changeEvent(QEvent *event) override;
     void retranslateUi();
+    bool hasEnoughUniqueCharacters(const QString &text) const;
 
     HexEditor *_hexEdit;
     TranslationTable _generatedTable;
@@ -34,6 +37,7 @@ private:
     QLineEdit *_leSearch;
     QPushButton *_pbFind;
     QPushButton *_pbCancel;
+    QLabel *_lbHint;
 };
 
 #endif // SEMIAUTOTABLEDIALOG_H

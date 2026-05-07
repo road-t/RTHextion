@@ -9,6 +9,7 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QEvent>
+#include <QSet>
 
 SemiAutoTableDialog::SemiAutoTableDialog(HexEditor *hexEdit, QWidget *parent)
     : QDialog(parent), _hexEdit(hexEdit)
@@ -23,16 +24,22 @@ SemiAutoTableDialog::SemiAutoTableDialog(HexEditor *hexEdit, QWidget *parent)
 
     _leSearch = new QLineEdit;
     _leSearch->setMaxLength(20);
+    _leSearch->setPlaceholderText(tr("At least 5 different characters"));
     // Width for ~20 characters
     QFontMetrics fm(_leSearch->font());
     _leSearch->setFixedWidth(fm.averageCharWidth() * 24 + 16);
     mainLayout->addWidget(_leSearch);
+
+    _lbHint = new QLabel(tr("Enter at least 5 different characters to enable Find."));
+    _lbHint->setWordWrap(true);
+    mainLayout->addWidget(_lbHint);
 
     auto *buttonLayout = new QHBoxLayout;
     buttonLayout->addStretch();
 
     _pbFind = new QPushButton(tr("Find"));
     _pbFind->setDefault(true);
+    _pbFind->setEnabled(false);
     buttonLayout->addWidget(_pbFind);
 
     _pbCancel = new QPushButton(tr("Cancel"));
@@ -45,13 +52,16 @@ SemiAutoTableDialog::SemiAutoTableDialog(HexEditor *hexEdit, QWidget *parent)
 
     connect(_pbFind, &QPushButton::clicked, this, &SemiAutoTableDialog::onFind);
     connect(_pbCancel, &QPushButton::clicked, this, &QDialog::reject);
+    connect(_leSearch, &QLineEdit::textChanged, this, &SemiAutoTableDialog::updateFindButtonState);
+
+    updateFindButtonState();
 }
 
 void SemiAutoTableDialog::onFind()
 {
     auto text = _leSearch->text();
 
-    if (text.isEmpty())
+    if (!hasEnoughUniqueCharacters(text))
         return;
 
     // Convert the input text to a byte array (Latin1)
@@ -96,6 +106,19 @@ void SemiAutoTableDialog::onFind()
     accept();
 }
 
+void SemiAutoTableDialog::updateFindButtonState()
+{
+    _pbFind->setEnabled(hasEnoughUniqueCharacters(_leSearch->text()));
+}
+
+bool SemiAutoTableDialog::hasEnoughUniqueCharacters(const QString &text) const
+{
+    QSet<QChar> uniqueChars;
+    for (const QChar ch : text)
+        uniqueChars.insert(ch);
+    return uniqueChars.size() >= 5;
+}
+
 void SemiAutoTableDialog::changeEvent(QEvent *event)
 {
     if (event->type() == QEvent::LanguageChange)
@@ -106,6 +129,8 @@ void SemiAutoTableDialog::changeEvent(QEvent *event)
 void SemiAutoTableDialog::retranslateUi()
 {
     setWindowTitle(tr("Semi-auto table generation"));
+    _leSearch->setPlaceholderText(tr("At least 5 different characters"));
+    _lbHint->setText(tr("Enter at least 5 different characters to enable Find."));
     _pbFind->setText(tr("Find"));
     _pbCancel->setText(tr("Cancel"));
 }
