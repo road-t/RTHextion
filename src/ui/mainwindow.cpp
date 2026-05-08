@@ -329,6 +329,32 @@ void MainWindow::showEvent(QShowEvent *event)
 {
     QMainWindow::showEvent(event);
 
+#ifdef Q_OS_MAC
+    if (m_pendingInitialMacDockVisibilitySync) {
+        m_pendingInitialMacDockVisibilitySync = false;
+        QTimer::singleShot(50, this, [this]() {
+            if (!m_audioDock || !m_graphicsDock)
+                return;
+
+            bool audioVisible = false;
+            bool graphicsVisible = false;
+
+            if (m_currentSession && m_currentSession->dockVisibilityInitialized) {
+                audioVisible = m_currentSession->dockAudioVisible;
+                graphicsVisible = m_currentSession->dockGraphicsVisible;
+            } else if (m_document && !m_document->projectFilePath.isEmpty()) {
+                auto &settings = AppSettings::instance();
+                const QString pfx = projectUiSettingsPrefix(m_document->projectFilePath);
+                audioVisible = settings.value(pfx + QStringLiteral("/dockAudioVisible"), false).toBool();
+                graphicsVisible = settings.value(pfx + QStringLiteral("/dockGraphicsVisible"), false).toBool();
+            }
+
+            m_audioDock->setVisible(audioVisible);
+            m_graphicsDock->setVisible(graphicsVisible);
+        });
+    }
+#endif
+
     // Apply any cursor scrolls that were deferred because the window wasn't
     // visible (and viewport heights were 0) during readSettings().
     // Use a short delay so the event loop has time to fully process the
@@ -1913,7 +1939,11 @@ void MainWindow::init()
     // ── Audio dock ──
     m_audioDock = new AudioDockWidget(this);
     addDockWidget(Qt::RightDockWidgetArea, m_audioDock);
+#ifdef Q_OS_MAC
+    m_pendingInitialMacDockVisibilitySync = true;
+#else
     m_audioDock->hide();  // hidden by default, shown via View → Dock
+#endif
     m_audioDock->setRomType(m_detectedRomType);
     hexEdit->setGlobalAudioFormat(m_audioDock->selectedFormat());
     m_audioDock->setSectionActive(false);
@@ -1978,7 +2008,9 @@ void MainWindow::init()
     // ── Graphics dock ──
     m_graphicsDock = new GraphicsDockWidget(this);
     addDockWidget(Qt::RightDockWidgetArea, m_graphicsDock);
+#ifndef Q_OS_MAC
     m_graphicsDock->hide();
+#endif
     m_graphicsDock->setRomType(m_detectedRomType);
     m_graphicsDock->setSectionActive(false);
     refreshPaletteSectionUiState();

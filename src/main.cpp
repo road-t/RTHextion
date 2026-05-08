@@ -10,6 +10,7 @@
 #include <QByteArray>
 #include <QPalette>
 #include <QFileOpenEvent>
+#include <QStyleFactory>
 
 #include "appinfo.h"
 #include "langtranslator.h"
@@ -188,6 +189,11 @@ int main(int argc, char *argv[])
     app.setApplicationDisplayName(QStringLiteral("RTHextion"));
     app.setApplicationVersion(AppInfo::Version);
     app.setOrganizationName(AppInfo::Name);
+#ifdef Q_OS_MAC
+    // QMacStyle has been crashing in packaged ARM64 builds during the initial
+    // dock/layout hide pass. Use Fusion to keep widget layout on Qt's code path.
+    QApplication::setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
+#endif
 #ifdef Q_OS_LINUX
     QGuiApplication::setDesktopFileName(QStringLiteral("RTHextion"));
 #endif

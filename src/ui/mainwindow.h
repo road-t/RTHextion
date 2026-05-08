@@ -280,6 +280,7 @@ private:
     bool m_restoringSession = false;
     bool m_restoringTableDockState = false;
     bool m_restoringProjectUi = false;
+    bool m_pendingInitialMacDockVisibilitySync = false;
     QWidget *m_tabPickerOverlay = nullptr;
     QByteArray m_changeTrackingSnapshot;
     QTimer *m_changesUiUpdateTimer = nullptr;
