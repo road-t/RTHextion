@@ -277,7 +277,7 @@ jobs:
             exit /b 1
           )
 
-          findstr /i /c:"QtMultimedia" Makefile >nul
+          findstr /i /c:"QtMultimedia" /c:"Qt6Multimedia" /c:"QT_MULTIMEDIA_LIB" Makefile >nul
           if errorlevel 1 (
             echo ERROR: Generated Makefile does not contain Qt Multimedia linkage
             exit /b 1
