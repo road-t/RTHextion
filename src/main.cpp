@@ -143,6 +143,12 @@ namespace
             settings.setValue("HexFontColor", QApplication::palette().color(QPalette::WindowText));
         if (!settings.contains("SectionHeaderFontColor"))
             settings.setValue("SectionHeaderFontColor", QApplication::palette().color(QPalette::WindowText));
+        if (!settings.contains("ShowColumnNumbers"))
+            settings.setValue("ShowColumnNumbers", true);
+        if (!settings.contains("ColumnNumbersFontColor"))
+            settings.setValue("ColumnNumbersFontColor", QApplication::palette().color(QPalette::WindowText));
+        if (!settings.contains("ColumnNumbersBackgroundColor"))
+            settings.setValue("ColumnNumbersBackgroundColor", QApplication::palette().alternateBase().color());
 
         // Font setting
         if (!settings.contains("WidgetFont"))
@@ -160,6 +166,8 @@ namespace
             sectionHeaderFont.setBold(true);
             settings.setValue("SectionHeaderFont", sectionHeaderFont);
         }
+        if (!settings.contains("ColumnNumbersFont"))
+            settings.setValue("ColumnNumbersFont", settings.value("WidgetFont").value<QFont>());
 
         // Persist all settings to disk
         settings.sync();

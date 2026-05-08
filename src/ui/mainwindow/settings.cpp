@@ -122,11 +122,15 @@ void MainWindow::readSettings()
     hexEdit->setAddressAreaColor(settings.value("AddressAreaColor", palette().alternateBase().color()).value<QColor>());
     hexEdit->setSelectionColor(settings.value("SelectionColor", palette().highlight().color()).value<QColor>());
     hexEdit->setFont(settings.value("WidgetFont", QFont("Courier New", 14)).value<QFont>());
+    hexEdit->setShowColumnNumbers(settings.value("ShowColumnNumbers", true).toBool());
+    hexEdit->setColumnNumbersFont(settings.value("ColumnNumbersFont", hexEdit->font()).value<QFont>());
     hexEdit->setAddressFontColor(settings.value("AddressFontColor", palette().color(QPalette::WindowText)).value<QColor>());
     hexEdit->setAddressZeroByteFontColor(settings.value("AddressZeroByteFontColor", QColor(0xCC, 0xCC, 0xCC)).value<QColor>());
     hexEdit->setAsciiAreaColor(settings.value("AsciiAreaColor", palette().alternateBase().color()).value<QColor>());
     hexEdit->setAsciiFontColor(settings.value("AsciiFontColor", palette().color(QPalette::WindowText)).value<QColor>());
     hexEdit->setHexFontColor(settings.value("HexFontColor", palette().color(QPalette::WindowText)).value<QColor>());
+    hexEdit->setColumnNumbersFontColor(settings.value("ColumnNumbersFontColor", palette().color(QPalette::WindowText)).value<QColor>());
+    hexEdit->setColumnNumbersBackgroundColor(settings.value("ColumnNumbersBackgroundColor", palette().alternateBase().color()).value<QColor>());
     hexEdit->setNonPrintableNoTableChar(readSingleCharSetting(settings, "NonPrintableNoTableChar", QChar(0x25AA)));
     hexEdit->setNotInTableChar(readSingleCharSetting(settings, "NotInTableChar", QChar(0x25A1)));
 
@@ -674,11 +678,15 @@ void MainWindow::updateHexEditorSettings()
         editor->setAddressAreaColor(settings.value("AddressAreaColor").value<QColor>());
         editor->setSelectionColor(settings.value("SelectionColor").value<QColor>());
         editor->setFont(settings.value("WidgetFont").value<QFont>());
+        editor->setShowColumnNumbers(settings.value("ShowColumnNumbers", true).toBool());
+        editor->setColumnNumbersFont(settings.value("ColumnNumbersFont", editor->font()).value<QFont>());
         editor->setAddressFontColor(settings.value("AddressFontColor").value<QColor>());
         editor->setAddressZeroByteFontColor(settings.value("AddressZeroByteFontColor", settings.value("AddressFontColor").value<QColor>()).value<QColor>());
         editor->setAsciiAreaColor(settings.value("AsciiAreaColor").value<QColor>());
         editor->setAsciiFontColor(settings.value("AsciiFontColor").value<QColor>());
         editor->setHexFontColor(settings.value("HexFontColor").value<QColor>());
+        editor->setColumnNumbersFontColor(settings.value("ColumnNumbersFontColor", qApp->palette().color(QPalette::WindowText)).value<QColor>());
+        editor->setColumnNumbersBackgroundColor(settings.value("ColumnNumbersBackgroundColor", qApp->palette().alternateBase().color()).value<QColor>());
         editor->setNonPrintableNoTableChar(readSingleCharSetting(settings, "NonPrintableNoTableChar", QChar(0x25AA)));
         editor->setNotInTableChar(readSingleCharSetting(settings, "NotInTableChar", QChar(0x25A1)));
         editor->setAddressWidth(settings.value("AddressAreaWidth").toInt());
@@ -750,6 +758,10 @@ void MainWindow::writeSettings()
         settings.setValue("AddressAreaWidth", hexEdit->addressWidth());
         settings.setValue("BytesPerLine", hexEdit->bytesPerLine());
         settings.setValue("ScrollMapWidth", hexEdit->scrollMapWidth());
+        settings.setValue("ShowColumnNumbers", hexEdit->showColumnNumbers());
+        settings.setValue("ColumnNumbersFont", hexEdit->columnNumbersFont());
+        settings.setValue("ColumnNumbersFontColor", hexEdit->columnNumbersFontColor());
+        settings.setValue("ColumnNumbersBackgroundColor", hexEdit->columnNumbersBackgroundColor());
     }
 
     // Save all open tabs as a per-tab state array.

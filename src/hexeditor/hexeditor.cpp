@@ -26,6 +26,10 @@ HexEditor::HexEditor(QWidget *parent) : QAbstractScrollArea(parent), _addressAre
     setAsciiFontColor(QPalette::WindowText);
     setHexAreaBackgroundColor(Qt::white);
     setHexAreaGridColor(QColor(0x99, 0x99, 0x99));
+    setShowColumnNumbers(true);
+    setColumnNumbersFont(this->font());
+    setColumnNumbersFontColor(this->palette().color(QPalette::WindowText));
+    setColumnNumbersBackgroundColor(this->palette().alternateBase().color());
     setSectionHeaderFontColor(this->palette().color(QPalette::WindowText));
     setSectionHeaderBackgroundColor(QColor(0xD8, 0xD8, 0xD8, 0x90));
     {
@@ -405,7 +409,7 @@ void HexEditor::setCursorPosition(qint64 position)
     int visRow = static_cast<int>(absVisRow - topRow);
     auto line = visRow + 1;
     const int rowStridePx = _pxCharHeight + kHexRowExtraGapPx;
-    _pxCursorY = line * rowStridePx;
+    _pxCursorY = _pxColumnNumbersHeight + line * rowStridePx;
     auto x = byteInLine * 2 + static_cast<int>(position % 2);
 
     _cursorPosition = position;
@@ -605,7 +609,7 @@ qint64 HexEditor::cursorPosition(QPoint pos)
 
     auto posX = pos.x() + horizontalScrollBar()->value();
     const int rawPosY = pos.y();
-    auto posY = rawPosY - 3;
+    auto posY = rawPosY - _pxColumnNumbersHeight - 3;
     const int rowStridePx = _pxCharHeight + kHexRowExtraGapPx;
 
     const auto rowBytesThisRow = [this](int r) -> int {
@@ -1205,6 +1209,62 @@ QColor HexEditor::multibyteFrameColor()
 QColor HexEditor::sectionHeaderFontColor() const
 {
     return _sectionHeaderFontColor;
+}
+
+
+bool HexEditor::showColumnNumbers() const
+{
+    return _showColumnNumbers;
+}
+
+
+void HexEditor::setShowColumnNumbers(bool show)
+{
+    _showColumnNumbers = show;
+    updateColumnNumbersMetrics();
+    adjust();
+    viewport()->update();
+}
+
+
+QFont HexEditor::columnNumbersFont() const
+{
+    return _columnNumbersFont;
+}
+
+
+void HexEditor::setColumnNumbersFont(const QFont &font)
+{
+    _columnNumbersFont = font;
+    updateColumnNumbersMetrics();
+    adjust();
+    viewport()->update();
+}
+
+
+QColor HexEditor::columnNumbersFontColor() const
+{
+    return _columnNumbersFontColor;
+}
+
+
+void HexEditor::setColumnNumbersFontColor(const QColor &color)
+{
+    _columnNumbersFontColor = color;
+    viewport()->update();
+}
+
+
+QColor HexEditor::columnNumbersBackgroundColor() const
+{
+    return _columnNumbersBackgroundColor;
+}
+
+
+void HexEditor::setColumnNumbersBackgroundColor(const QColor &color)
+{
+    _columnNumbersBackgroundColor = color;
+    viewport()->update();
 }
 
 

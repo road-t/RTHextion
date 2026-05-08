@@ -47,9 +47,17 @@ void HexEditor::setFont(const QFont &font)
     _pxGapHexAscii = 2 * _pxCharWidth;
     _pxCursorWidth = _pxCharHeight / 7;
     _pxSelectionSub = _pxCharHeight / 5;
+    updateColumnNumbersMetrics();
     invalidateAsciiAreaWidthCache();
     updateAsciiAreaMaxWidth();
     viewport()->update();
+}
+
+
+void HexEditor::updateColumnNumbersMetrics()
+{
+    const QFontMetrics metrics(_columnNumbersFont);
+    _pxColumnNumbersHeight = _showColumnNumbers ? (metrics.height() + kHexRowExtraGapPx) : 0;
 }
 
 
@@ -460,7 +468,7 @@ void HexEditor::adjust()
 
     // set verticalScrollbar()
     const int rowStridePx = _pxCharHeight + kHexRowExtraGapPx;
-    _rowsShown = ((viewport()->height() - 4) / rowStridePx);
+    _rowsShown = qMax(0, (viewport()->height() - _pxColumnNumbersHeight - 4) / rowStridePx);
 
     const qint64 lineCount = totalVisualRows();
 

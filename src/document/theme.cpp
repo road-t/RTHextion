@@ -72,6 +72,10 @@ EditorTheme EditorTheme::defaultLight()
     t.hexAreaBgColor = QColor(Qt::white);
     t.hexFontColor = QColor(Qt::black);
     t.zeroByteFontColor = QColor(0xCC, 0xCC, 0xCC);
+    t.showColumnNumbers = true;
+    t.columnNumbersFont = t.hexFont;
+    t.columnNumbersFontColor = QColor(Qt::black);
+    t.columnNumbersBackgroundColor = QColor(240, 240, 240);
     t.showHexGrid = true;
     t.hexAreaGridColor = QColor(0x99, 0x99, 0x99);
     t.showMultibyteFrame = true;
@@ -111,6 +115,10 @@ EditorTheme EditorTheme::defaultDark()
     t.hexAreaBgColor = QColor(35, 35, 35);
     t.hexFontColor = QColor(0xDD, 0xDD, 0xDD);
     t.zeroByteFontColor = QColor(0x55, 0x55, 0x55);
+    t.showColumnNumbers = true;
+    t.columnNumbersFont = t.hexFont;
+    t.columnNumbersFontColor = QColor(0xCC, 0xCC, 0xCC);
+    t.columnNumbersBackgroundColor = QColor(45, 45, 45);
     t.showHexGrid = true;
     t.hexAreaGridColor = QColor(0x55, 0x55, 0x55);
     t.showMultibyteFrame = true;
@@ -143,9 +151,11 @@ QJsonObject EditorTheme::toJson() const
     o[QStringLiteral("darkMode")] = darkMode;
     o[QStringLiteral("hexFont")] = fontToJson(hexFont);
     o[QStringLiteral("highlighting")] = highlighting;
+    o[QStringLiteral("showColumnNumbers")] = showColumnNumbers;
     o[QStringLiteral("showHexGrid")] = showHexGrid;
     o[QStringLiteral("showMultibyteFrame")] = showMultibyteFrame;
     o[QStringLiteral("scrollMapWidth")] = scrollMapWidth;
+    o[QStringLiteral("columnNumbersFont")] = fontToJson(columnNumbersFont);
 
     QJsonObject c;
     c[QStringLiteral("highlightingColor")] = colorToJson(highlightingColor);
@@ -159,6 +169,8 @@ QJsonObject EditorTheme::toJson() const
     c[QStringLiteral("hexAreaBgColor")] = colorToJson(hexAreaBgColor);
     c[QStringLiteral("hexFontColor")] = colorToJson(hexFontColor);
     c[QStringLiteral("zeroByteFontColor")] = colorToJson(zeroByteFontColor);
+    c[QStringLiteral("columnNumbersFontColor")] = colorToJson(columnNumbersFontColor);
+    c[QStringLiteral("columnNumbersBackgroundColor")] = colorToJson(columnNumbersBackgroundColor);
     c[QStringLiteral("hexAreaGridColor")] = colorToJson(hexAreaGridColor);
     c[QStringLiteral("multibyteFrameColor")] = colorToJson(multibyteFrameColor);
     c[QStringLiteral("asciiAreaColor")] = colorToJson(asciiAreaColor);
@@ -185,9 +197,11 @@ EditorTheme EditorTheme::fromJson(const QJsonObject &o)
     t.darkMode = o.value(QStringLiteral("darkMode")).toBool(false);
     t.hexFont = fontFromJson(o.value(QStringLiteral("hexFont")), def.hexFont);
     t.highlighting = o.value(QStringLiteral("highlighting")).toBool(true);
+    t.showColumnNumbers = o.value(QStringLiteral("showColumnNumbers")).toBool(def.showColumnNumbers);
     t.showHexGrid = o.value(QStringLiteral("showHexGrid")).toBool(true);
     t.showMultibyteFrame = o.value(QStringLiteral("showMultibyteFrame")).toBool(true);
     t.scrollMapWidth = o.value(QStringLiteral("scrollMapWidth")).toInt(def.scrollMapWidth);
+    t.columnNumbersFont = fontFromJson(o.value(QStringLiteral("columnNumbersFont")), def.columnNumbersFont);
 
     QJsonObject c = o.value(QStringLiteral("colors")).toObject();
     t.highlightingColor = colorFromJson(c.value(QStringLiteral("highlightingColor")), def.highlightingColor);
@@ -201,6 +215,8 @@ EditorTheme EditorTheme::fromJson(const QJsonObject &o)
     t.hexAreaBgColor = colorFromJson(c.value(QStringLiteral("hexAreaBgColor")), def.hexAreaBgColor);
     t.hexFontColor = colorFromJson(c.value(QStringLiteral("hexFontColor")), def.hexFontColor);
     t.zeroByteFontColor = colorFromJson(c.value(QStringLiteral("zeroByteFontColor")), def.zeroByteFontColor);
+    t.columnNumbersFontColor = colorFromJson(c.value(QStringLiteral("columnNumbersFontColor")), def.columnNumbersFontColor);
+    t.columnNumbersBackgroundColor = colorFromJson(c.value(QStringLiteral("columnNumbersBackgroundColor")), def.columnNumbersBackgroundColor);
     t.hexAreaGridColor = colorFromJson(c.value(QStringLiteral("hexAreaGridColor")), def.hexAreaGridColor);
     t.multibyteFrameColor = colorFromJson(c.value(QStringLiteral("multibyteFrameColor")), def.multibyteFrameColor);
     t.asciiAreaColor = colorFromJson(c.value(QStringLiteral("asciiAreaColor")), def.asciiAreaColor);
@@ -228,8 +244,10 @@ void EditorTheme::applyToSettings() const
     s.setValue(QStringLiteral("DarkTheme"), darkMode);
     s.setValue(QStringLiteral("WidgetFont"), hexFont);
     s.setValue(QStringLiteral("Highlighting"), true);
+    s.setValue(QStringLiteral("ShowColumnNumbers"), showColumnNumbers);
     s.setValue(QStringLiteral("ShowHexGrid"), showHexGrid);
     s.setValue(QStringLiteral("ShowMultibyteFrame"), showMultibyteFrame);
+    s.setValue(QStringLiteral("ColumnNumbersFont"), columnNumbersFont);
 
     s.setValue(QStringLiteral("HighlightingColor"), highlightingColor);
     s.setValue(QStringLiteral("SelectionColor"), selectionColor);
@@ -242,6 +260,8 @@ void EditorTheme::applyToSettings() const
     s.setValue(QStringLiteral("HexAreaBackgroundColor"), hexAreaBgColor);
     s.setValue(QStringLiteral("HexFontColor"), hexFontColor);
     s.setValue(QStringLiteral("ZeroByteFontColor"), zeroByteFontColor);
+    s.setValue(QStringLiteral("ColumnNumbersFontColor"), columnNumbersFontColor);
+    s.setValue(QStringLiteral("ColumnNumbersBackgroundColor"), columnNumbersBackgroundColor);
     s.setValue(QStringLiteral("HexAreaGridColor"), hexAreaGridColor);
     s.setValue(QStringLiteral("MultibyteFrameColor"), multibyteFrameColor);
     s.setValue(QStringLiteral("AsciiAreaColor"), asciiAreaColor);
@@ -268,8 +288,10 @@ EditorTheme EditorTheme::fromCurrentSettings()
     t.darkMode = s.value(QStringLiteral("DarkTheme"), false).toBool();
     t.hexFont = s.value(QStringLiteral("WidgetFont"), def.hexFont).value<QFont>();
     t.highlighting = s.value(QStringLiteral("Highlighting"), true).toBool();
+    t.showColumnNumbers = s.value(QStringLiteral("ShowColumnNumbers"), def.showColumnNumbers).toBool();
     t.showHexGrid = s.value(QStringLiteral("ShowHexGrid"), true).toBool();
     t.showMultibyteFrame = s.value(QStringLiteral("ShowMultibyteFrame"), true).toBool();
+    t.columnNumbersFont = s.value(QStringLiteral("ColumnNumbersFont"), def.columnNumbersFont).value<QFont>();
 
     t.highlightingColor = s.value(QStringLiteral("HighlightingColor"), def.highlightingColor).value<QColor>();
     t.selectionColor = s.value(QStringLiteral("SelectionColor"), def.selectionColor).value<QColor>();
@@ -282,6 +304,8 @@ EditorTheme EditorTheme::fromCurrentSettings()
     t.hexAreaBgColor = s.value(QStringLiteral("HexAreaBackgroundColor"), def.hexAreaBgColor).value<QColor>();
     t.hexFontColor = s.value(QStringLiteral("HexFontColor"), def.hexFontColor).value<QColor>();
     t.zeroByteFontColor = s.value(QStringLiteral("ZeroByteFontColor"), def.zeroByteFontColor).value<QColor>();
+    t.columnNumbersFontColor = s.value(QStringLiteral("ColumnNumbersFontColor"), def.columnNumbersFontColor).value<QColor>();
+    t.columnNumbersBackgroundColor = s.value(QStringLiteral("ColumnNumbersBackgroundColor"), def.columnNumbersBackgroundColor).value<QColor>();
     t.hexAreaGridColor = s.value(QStringLiteral("HexAreaGridColor"), def.hexAreaGridColor).value<QColor>();
     t.multibyteFrameColor = s.value(QStringLiteral("MultibyteFrameColor"), def.multibyteFrameColor).value<QColor>();
     t.asciiAreaColor = s.value(QStringLiteral("AsciiAreaColor"), def.asciiAreaColor).value<QColor>();

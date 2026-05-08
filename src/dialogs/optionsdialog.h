@@ -112,6 +112,12 @@ private:
     QSpinBox    *m_sbScrollMapWidth = nullptr;
     QPushButton *m_btnDelete = nullptr;
     QPushButton *m_btnExport = nullptr;
+    QCheckBox   *m_cbShowColumnNumbers = nullptr;
+    QPushButton *m_pbColumnNumbersFont = nullptr;
+    QPushButton *m_pbColumnNumbersFontColor = nullptr;
+    QPushButton *m_pbColumnNumbersBgColor = nullptr;
+    QLabel      *m_lbColumnNumbersFontColor = nullptr;
+    QLabel      *m_lbColumnNumbersBgColor = nullptr;
     QPushButton *m_pbSectionHeaderFont = nullptr;
     QPushButton *m_pbSectionHeaderFontColor = nullptr;
     QPushButton *m_pbSectionHeaderBgColor = nullptr;
@@ -147,6 +153,10 @@ private:
         QColor selectionColor;
         QColor hexFontColor;
         QColor hexAreaBgColor;
+        bool showColumnNumbers = true;
+        QFont columnNumbersFont;
+        QColor columnNumbersFontColor;
+        QColor columnNumbersBgColor;
         QColor hexAreaGridColor;
         bool showMultibyteFrame;
         QColor multibyteFrameColor;

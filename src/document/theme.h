@@ -30,6 +30,10 @@ struct EditorTheme
     QColor hexAreaBgColor;
     QColor hexFontColor;
     QColor zeroByteFontColor;
+    bool showColumnNumbers = true;
+    QFont columnNumbersFont;
+    QColor columnNumbersFontColor;
+    QColor columnNumbersBackgroundColor;
     bool showHexGrid = true;
     QColor hexAreaGridColor;
     bool showMultibyteFrame = true;

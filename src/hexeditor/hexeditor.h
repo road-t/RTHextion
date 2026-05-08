@@ -199,6 +199,18 @@ class HEXEDITOR_API HexEditor : public QAbstractScrollArea
     */
     Q_PROPERTY(QColor hexAreaGridColor READ hexAreaGridColor WRITE setHexAreaGridColor)
 
+    /*! Fixed top strip showing byte column numbers above the hex area. */
+    Q_PROPERTY(bool showColumnNumbers READ showColumnNumbers WRITE setShowColumnNumbers)
+
+    /*! Font used to render the fixed byte column numbers strip. */
+    Q_PROPERTY(QFont columnNumbersFont READ columnNumbersFont WRITE setColumnNumbersFont)
+
+    /*! Text color used to render the fixed byte column numbers strip. */
+    Q_PROPERTY(QColor columnNumbersFontColor READ columnNumbersFontColor WRITE setColumnNumbersFontColor)
+
+    /*! Background color used for the fixed byte column numbers strip. */
+    Q_PROPERTY(QColor columnNumbersBackgroundColor READ columnNumbersBackgroundColor WRITE setColumnNumbersBackgroundColor)
+
     /*! Property showMultibyteFrame toggles drawing of multi-byte table entry frames.
      */
     Q_PROPERTY(bool showMultibyteFrame READ showMultibyteFrame WRITE setShowMultibyteFrame)
@@ -683,6 +695,18 @@ public:
     QColor hexAreaGridColor();
     void setHexAreaGridColor(const QColor &color);
 
+    bool showColumnNumbers() const;
+    void setShowColumnNumbers(bool show);
+
+    QFont columnNumbersFont() const;
+    void setColumnNumbersFont(const QFont &font);
+
+    QColor columnNumbersFontColor() const;
+    void setColumnNumbersFontColor(const QColor &color);
+
+    QColor columnNumbersBackgroundColor() const;
+    void setColumnNumbersBackgroundColor(const QColor &color);
+
     bool hasSelection();
     void resetSelection();                      // set selectionEnd to selectionStart
     qint64 getSelectionBegin() const;
@@ -722,6 +746,7 @@ private:
     void ensureAsciiAreaWidthCache();
     void ensureEncodingDisplayCache();
     void ensureTableDisplayCache();
+    void updateColumnNumbersMetrics();
     void restoreTopVisibleByte(qint64 topByte);
     bool paletteColorAtPoint(const QPoint &point,
                              qint64 *colorStartOffset,
@@ -766,6 +791,7 @@ private:
     int _pxSelectionSub;                        // offset selection rect
     int _pxCursorX;                             // current cursor pos
     int _pxCursorY;                             // current cursor pos
+    int _pxColumnNumbersHeight = 0;            // reserved height for top fixed column strip
 
     // Name convention: absolute byte positions in chunks start with _b
     qint64 _bSelectionBegin;                    // first position of Selection
@@ -785,6 +811,10 @@ private:
     QColor _hexFontColor;
     QColor _hexAreaBackgroundColor;
     QColor _hexAreaGridColor;
+    bool _showColumnNumbers = true;
+    QFont _columnNumbersFont;
+    QColor _columnNumbersFontColor;
+    QColor _columnNumbersBackgroundColor;
     QColor _cursorCharColor;
     QColor _cursorFrameColor;
     QColor _zeroByteFontColor;

@@ -233,6 +233,10 @@ void OptionsDialog::saveCurrentSettings()
     m_originalSettings.selectionColor = ui->lbSelectionColor->palette().color(ui->lbSelectionColor->backgroundRole());
     m_originalSettings.hexFontColor = ui->lbHexFontColor->palette().color(ui->lbHexFontColor->backgroundRole());
     m_originalSettings.hexAreaBgColor = ui->lbHexAreaBackground->palette().color(ui->lbHexAreaBackground->backgroundRole());
+    m_originalSettings.showColumnNumbers = m_cbShowColumnNumbers ? m_cbShowColumnNumbers->isChecked() : true;
+    m_originalSettings.columnNumbersFont = m_pbColumnNumbersFont ? m_pbColumnNumbersFont->font() : ui->pbWidgetFont->font();
+    m_originalSettings.columnNumbersFontColor = m_lbColumnNumbersFontColor ? currentSwatchColor(m_lbColumnNumbersFontColor) : palette().color(QPalette::WindowText);
+    m_originalSettings.columnNumbersBgColor = m_lbColumnNumbersBgColor ? currentSwatchColor(m_lbColumnNumbersBgColor) : palette().alternateBase().color();
     m_originalSettings.hexAreaGridColor = ui->lbHexAreaGrid->palette().color(ui->lbHexAreaGrid->backgroundRole());
     m_originalSettings.multibyteFrameColor = ui->lbMultibyteFrameColor->palette().color(ui->lbMultibyteFrameColor->backgroundRole());
     m_originalSettings.showMultibyteFrame = ui->cbShowMultibyteFrame->isChecked();
@@ -297,6 +301,17 @@ void OptionsDialog::restoreSettings()
     setColor(ui->lbSelectionColor, m_originalSettings.selectionColor);
     setColor(ui->lbHexFontColor, m_originalSettings.hexFontColor);
     setColor(ui->lbHexAreaBackground, m_originalSettings.hexAreaBgColor);
+    if (m_cbShowColumnNumbers)
+        m_cbShowColumnNumbers->setChecked(m_originalSettings.showColumnNumbers);
+    if (m_pbColumnNumbersFont) {
+        m_pbColumnNumbersFont->setFont(m_originalSettings.columnNumbersFont);
+        m_pbColumnNumbersFont->setText(
+            QStringLiteral("%1, %2pt").arg(m_originalSettings.columnNumbersFont.family()).arg(m_originalSettings.columnNumbersFont.pointSize()));
+    }
+    if (m_lbColumnNumbersFontColor)
+        setColor(m_lbColumnNumbersFontColor, m_originalSettings.columnNumbersFontColor);
+    if (m_lbColumnNumbersBgColor)
+        setColor(m_lbColumnNumbersBgColor, m_originalSettings.columnNumbersBgColor);
     setColor(ui->lbHexAreaGrid, m_originalSettings.hexAreaGridColor);
     setColor(ui->lbMultibyteFrameColor, m_originalSettings.multibyteFrameColor);
     ui->cbShowMultibyteFrame->setChecked(m_originalSettings.showMultibyteFrame);
@@ -360,7 +375,6 @@ void OptionsDialog::applySettings()
     MainWindow *mainWin = qobject_cast<MainWindow *>(parent());
     if (mainWin)
     {
-        auto &settings = AppSettings::instance();
         mainWin->updateHexEditorSettings();
     }
 }
@@ -411,6 +425,18 @@ void OptionsDialog::readSettings()
     setColor(ui->lbAsciiFontColor, settings.value("AsciiFontColor", QPalette::WindowText).value<QColor>());
     setColor(ui->lbHexFontColor, settings.value("HexFontColor", QPalette::WindowText).value<QColor>());
     setColor(ui->lbHexAreaBackground, settings.value("HexAreaBackgroundColor", QColor(Qt::white)).value<QColor>());
+    if (m_cbShowColumnNumbers)
+        m_cbShowColumnNumbers->setChecked(settings.value("ShowColumnNumbers", true).toBool());
+    if (m_pbColumnNumbersFont) {
+        const QFont columnNumbersFont = settings.value("ColumnNumbersFont", settings.value("WidgetFont", ui->pbWidgetFont->font()).value<QFont>()).value<QFont>();
+        m_pbColumnNumbersFont->setFont(columnNumbersFont);
+        m_pbColumnNumbersFont->setText(
+            QStringLiteral("%1, %2pt").arg(columnNumbersFont.family()).arg(columnNumbersFont.pointSize()));
+    }
+    if (m_lbColumnNumbersFontColor)
+        setColor(m_lbColumnNumbersFontColor, settings.value("ColumnNumbersFontColor", palette().color(QPalette::WindowText)).value<QColor>());
+    if (m_lbColumnNumbersBgColor)
+        setColor(m_lbColumnNumbersBgColor, settings.value("ColumnNumbersBackgroundColor", palette().alternateBase().color()).value<QColor>());
     setColor(ui->lbHexAreaGrid, settings.value("HexAreaGridColor", QColor(0x99, 0x99, 0x99)).value<QColor>());
     setColor(ui->lbMultibyteFrameColor, settings.value("MultibyteFrameColor", QColor(0x20, 0x20, 0x20)).value<QColor>());
     setColor(ui->lbCursorCharColor, settings.value("CursorCharColor", QColor(0x00, 0x60, 0xFF, 0x80)).value<QColor>());
@@ -492,6 +518,13 @@ void OptionsDialog::writeSettings()
     settings.setValue("AsciiFontColor", ui->lbAsciiFontColor->palette().color(ui->lbAsciiFontColor->backgroundRole()));
     settings.setValue("HexFontColor", ui->lbHexFontColor->palette().color(ui->lbHexFontColor->backgroundRole()));
     settings.setValue("HexAreaBackgroundColor", ui->lbHexAreaBackground->palette().color(ui->lbHexAreaBackground->backgroundRole()));
+    settings.setValue("ShowColumnNumbers", m_cbShowColumnNumbers ? m_cbShowColumnNumbers->isChecked() : true);
+    if (m_pbColumnNumbersFont)
+        settings.setValue("ColumnNumbersFont", m_pbColumnNumbersFont->font());
+    if (m_lbColumnNumbersFontColor)
+        settings.setValue("ColumnNumbersFontColor", currentSwatchColor(m_lbColumnNumbersFontColor));
+    if (m_lbColumnNumbersBgColor)
+        settings.setValue("ColumnNumbersBackgroundColor", currentSwatchColor(m_lbColumnNumbersBgColor));
     settings.setValue("HexAreaGridColor", ui->lbHexAreaGrid->palette().color(ui->lbHexAreaGrid->backgroundRole()));
     settings.setValue("MultibyteFrameColor", ui->lbMultibyteFrameColor->palette().color(ui->lbMultibyteFrameColor->backgroundRole()));
     settings.setValue("CursorCharColor", ui->lbCursorCharColor->palette().color(ui->lbCursorCharColor->backgroundRole()));
@@ -833,6 +866,18 @@ void OptionsDialog::updateAreaControls()
     ui->pbHexAreaGrid->setEnabled(gridEnabled);
     ui->lbHexAreaGrid->setEnabled(gridEnabled);
 
+    const bool columnNumbersEnabled = m_cbShowColumnNumbers ? m_cbShowColumnNumbers->isChecked() : true;
+    if (m_pbColumnNumbersFont)
+        m_pbColumnNumbersFont->setEnabled(columnNumbersEnabled);
+    if (m_pbColumnNumbersFontColor)
+        m_pbColumnNumbersFontColor->setEnabled(columnNumbersEnabled);
+    if (m_lbColumnNumbersFontColor)
+        m_lbColumnNumbersFontColor->setEnabled(columnNumbersEnabled);
+    if (m_pbColumnNumbersBgColor)
+        m_pbColumnNumbersBgColor->setEnabled(columnNumbersEnabled);
+    if (m_lbColumnNumbersBgColor)
+        m_lbColumnNumbersBgColor->setEnabled(columnNumbersEnabled);
+
     // Enable/disable multibyte frame color based on checkbox
     bool frameEnabled = ui->cbShowMultibyteFrame->isChecked();
     ui->pbMultibyteFrameColor->setEnabled(frameEnabled);
@@ -876,6 +921,10 @@ void OptionsDialog::resetToDefaults()
     setColor(ui->lbAsciiFontColor, this->palette().color(QPalette::WindowText));
     setColor(ui->lbHexFontColor, this->palette().color(QPalette::WindowText));
     setColor(ui->lbHexAreaBackground, QColor(Qt::white));
+    if (m_lbColumnNumbersFontColor)
+        setColor(m_lbColumnNumbersFontColor, this->palette().color(QPalette::WindowText));
+    if (m_lbColumnNumbersBgColor)
+        setColor(m_lbColumnNumbersBgColor, this->palette().alternateBase().color());
     setColor(ui->lbHexAreaGrid, QColor(0x99, 0x99, 0x99));
     setColor(ui->lbMultibyteFrameColor, QColor(0x20, 0x20, 0x20));
     setColor(ui->lbCursorCharColor, QColor(0x00, 0x60, 0xFF, 0x80));
@@ -898,6 +947,13 @@ void OptionsDialog::resetToDefaults()
 #endif
     ui->pbWidgetFont->setFont(defaultFont);
     updateFontButtonText(defaultFont);
+    if (m_cbShowColumnNumbers)
+        m_cbShowColumnNumbers->setChecked(true);
+    if (m_pbColumnNumbersFont) {
+        m_pbColumnNumbersFont->setFont(defaultFont);
+        m_pbColumnNumbersFont->setText(
+            QStringLiteral("%1, %2pt").arg(defaultFont.family()).arg(defaultFont.pointSize()));
+    }
     if (m_pbSectionHeaderFont) {
         QFont sectionHeaderFont = defaultFont;
         sectionHeaderFont.setBold(true);
@@ -926,6 +982,7 @@ void OptionsDialog::on_spinBoxValueChanged(int)
 
 void OptionsDialog::on_checkBoxToggled(bool)
 {
+    updateAreaControls();
     updateSettings();
 }
 
@@ -1199,6 +1256,65 @@ void OptionsDialog::initThemesTab()
         mapsGrid->addWidget(m_sbScrollMapWidth, row, 1);
         connect(m_sbScrollMapWidth, QOverload<int>::of(&QSpinBox::valueChanged),
                 this, &OptionsDialog::on_spinBoxValueChanged);
+    }
+
+    if (auto *hexGrid = qobject_cast<QGridLayout *>(ui->gbHexArea->layout())) {
+        int row = hexGrid->rowCount();
+
+        m_cbShowColumnNumbers = new QCheckBox(tr("Show column numbers"), ui->gbHexArea);
+        hexGrid->addWidget(m_cbShowColumnNumbers, row++, 0, 1, 2);
+
+        m_pbColumnNumbersFont = new QPushButton(tr("Column numbers font"), ui->gbHexArea);
+        m_pbColumnNumbersFontColor = new QPushButton(tr("Column numbers text color"), ui->gbHexArea);
+        m_pbColumnNumbersBgColor = new QPushButton(tr("Column numbers background"), ui->gbHexArea);
+
+        m_lbColumnNumbersFontColor = new QLabel(ui->gbHexArea);
+        m_lbColumnNumbersBgColor = new QLabel(ui->gbHexArea);
+        for (QLabel *swatch : {m_lbColumnNumbersFontColor, m_lbColumnNumbersBgColor}) {
+            swatch->setMinimumSize(20, 20);
+            swatch->setMaximumSize(20, 20);
+            swatch->setFrameShape(QFrame::Panel);
+            swatch->setFrameShadow(QFrame::Sunken);
+            swatch->setAutoFillBackground(true);
+        }
+
+        hexGrid->addWidget(m_pbColumnNumbersFont, row++, 0, 1, 2);
+        hexGrid->addWidget(m_pbColumnNumbersFontColor, row, 0);
+        hexGrid->addWidget(m_lbColumnNumbersFontColor, row++, 1);
+        hexGrid->addWidget(m_pbColumnNumbersBgColor, row, 0);
+        hexGrid->addWidget(m_lbColumnNumbersBgColor, row, 1);
+
+        connect(m_cbShowColumnNumbers, &QCheckBox::toggled, this, &OptionsDialog::on_checkBoxToggled);
+        connect(m_pbColumnNumbersFont, &QPushButton::clicked, this, [this]() {
+            bool ok = false;
+            const QFont chosen = QFontDialog::getFont(&ok,
+                m_pbColumnNumbersFont ? m_pbColumnNumbersFont->font() : ui->pbWidgetFont->font(), this);
+            if (!ok)
+                return;
+            m_pbColumnNumbersFont->setFont(chosen);
+            m_pbColumnNumbersFont->setText(
+                QStringLiteral("%1, %2pt").arg(chosen.family()).arg(chosen.pointSize()));
+            updateSettings();
+        });
+        connect(m_pbColumnNumbersFontColor, &QPushButton::clicked, this, [this]() {
+            if (!m_lbColumnNumbersFontColor)
+                return;
+            const QColor c = QColorDialog::getColor(currentSwatchColor(m_lbColumnNumbersFontColor), this);
+            if (!c.isValid())
+                return;
+            setColor(m_lbColumnNumbersFontColor, c);
+            updateSettings();
+        });
+        connect(m_pbColumnNumbersBgColor, &QPushButton::clicked, this, [this]() {
+            if (!m_lbColumnNumbersBgColor)
+                return;
+            const QColor c = QColorDialog::getColor(currentSwatchColor(m_lbColumnNumbersBgColor), this,
+                                                    QString(), QColorDialog::ShowAlphaChannel);
+            if (!c.isValid())
+                return;
+            setColor(m_lbColumnNumbersBgColor, c);
+            updateSettings();
+        });
     }
 
     // Font group
@@ -1495,6 +1611,17 @@ void OptionsDialog::applyThemeToUi(const EditorTheme &theme)
     setColor(ui->lbHexAreaBackground, theme.hexAreaBgColor);
     setColor(ui->lbHexFontColor, theme.hexFontColor);
     setColor(ui->lbZeroByteFontColor, theme.zeroByteFontColor);
+    if (m_cbShowColumnNumbers)
+        m_cbShowColumnNumbers->setChecked(theme.showColumnNumbers);
+    if (m_pbColumnNumbersFont) {
+        m_pbColumnNumbersFont->setFont(theme.columnNumbersFont);
+        m_pbColumnNumbersFont->setText(
+            QStringLiteral("%1, %2pt").arg(theme.columnNumbersFont.family()).arg(theme.columnNumbersFont.pointSize()));
+    }
+    if (m_lbColumnNumbersFontColor)
+        setColor(m_lbColumnNumbersFontColor, theme.columnNumbersFontColor);
+    if (m_lbColumnNumbersBgColor)
+        setColor(m_lbColumnNumbersBgColor, theme.columnNumbersBackgroundColor);
     setColor(ui->lbHexAreaGrid, theme.hexAreaGridColor);
     setColor(ui->lbMultibyteFrameColor, theme.multibyteFrameColor);
     setColor(ui->lbAsciiAreaColor, theme.asciiAreaColor);
@@ -1543,6 +1670,10 @@ EditorTheme OptionsDialog::captureThemeFromUi() const
     t.hexAreaBgColor = currentSwatchColor(ui->lbHexAreaBackground);
     t.hexFontColor = currentSwatchColor(ui->lbHexFontColor);
     t.zeroByteFontColor = currentSwatchColor(ui->lbZeroByteFontColor);
+    t.showColumnNumbers = m_cbShowColumnNumbers ? m_cbShowColumnNumbers->isChecked() : true;
+    t.columnNumbersFont = m_pbColumnNumbersFont ? m_pbColumnNumbersFont->font() : t.hexFont;
+    t.columnNumbersFontColor = m_lbColumnNumbersFontColor ? currentSwatchColor(m_lbColumnNumbersFontColor) : QColor(Qt::black);
+    t.columnNumbersBackgroundColor = m_lbColumnNumbersBgColor ? currentSwatchColor(m_lbColumnNumbersBgColor) : QColor(240, 240, 240);
     t.hexAreaGridColor = currentSwatchColor(ui->lbHexAreaGrid);
     t.multibyteFrameColor = currentSwatchColor(ui->lbMultibyteFrameColor);
     t.asciiAreaColor = currentSwatchColor(ui->lbAsciiAreaColor);

@@ -258,7 +258,7 @@ bool HexEditor::paletteColorAtPoint(const QPoint &point,
     if (posX < _pxPosAsciiX)
         return false;
 
-    const int posY = point.y() - 3;
+    const int posY = point.y() - _pxColumnNumbersHeight - 3;
     const int rowStridePx = _pxCharHeight + kHexRowExtraGapPx;
     const int row = posY / rowStridePx;
     if (row < 0 || row >= _visualRowStartBytes.size())
@@ -366,7 +366,7 @@ bool HexEditor::sectionBoundaryAtPoint(const QPoint &point,
         return false;
 
     const int rowStridePx = _pxCharHeight + kHexRowExtraGapPx;
-    const int posY = static_cast<int>(point.y()) - 3;
+    const int posY = static_cast<int>(point.y()) - _pxColumnNumbersHeight - 3;
     if (rowStridePx <= 0 || posY < 0)
         return false;
 
@@ -427,7 +427,7 @@ qint64 HexEditor::sectionBoundaryDragOffsetForPoint(const QPoint &point, int sec
         return -1;
 
     const int rowStridePx = _pxCharHeight + kHexRowExtraGapPx;
-    const int posY = static_cast<int>(point.y()) - 3;
+    const int posY = static_cast<int>(point.y()) - _pxColumnNumbersHeight - 3;
     if (rowStridePx <= 0 || posY < 0)
         return -1;
 
@@ -1443,7 +1443,7 @@ void HexEditor::mouseDoubleClickEvent(QMouseEvent *event)
     // ── Section header rename: detect click on empty header row ──
     if (_sectionModel) {
         const int rowStridePx = _pxCharHeight + kHexRowExtraGapPx;
-        const int posY = static_cast<int>(event->position().y()) - 3;
+        const int posY = static_cast<int>(event->position().y()) - _pxColumnNumbersHeight - 3;
         const int row = posY / rowStridePx;
         if (row >= 0 && row < _visualRowStartBytes.size()) {
             const int bytesThisRow = (row + 1 < _visualRowStartBytes.size())
@@ -1560,7 +1560,7 @@ void HexEditor::mouseDoubleClickEvent(QMouseEvent *event)
 
             if (_asciiArea && clickX >= _pxPosAsciiX && clickY >= 0) {
                 const int rowStridePx = _pxCharHeight + kHexRowExtraGapPx;
-                const int row = clickY / rowStridePx;
+                const int row = (clickY - _pxColumnNumbersHeight) / rowStridePx;
                 if (row >= 0 && row < _visualRowStartBytes.size()) {
                     const qint64 rowOffset = _visualRowStartBytes[row];
                     const DisasmInstruction *rowInstr = disasmInstructionAtOffset(rowOffset);
@@ -1626,7 +1626,7 @@ void HexEditor::contextMenuEvent(QContextMenuEvent *event)
 {
     const int posX = event->pos().x() + horizontalScrollBar()->value();
     const int rowStridePx = _pxCharHeight + kHexRowExtraGapPx;
-    const int row = static_cast<int>(event->pos().y()) / rowStridePx;
+    const int row = static_cast<int>(event->pos().y() - _pxColumnNumbersHeight) / rowStridePx;
 
     if (_asciiArea && posX >= _pxPosAsciiX && row >= 0 && row < _visualRowStartBytes.size()) {
         const auto rowBytesThisRow = [this](int r) -> int {
@@ -1671,22 +1671,54 @@ void HexEditor::paintEvent(QPaintEvent *event)
     if (event->rect() != _asciiCursorRect && event->rect() != _hexCursorRect)
     {
         const int rowStridePx = _pxCharHeight + kHexRowExtraGapPx;
-        int pxPosStartY = _pxCharHeight;
+        const int pxPosStartY = _pxColumnNumbersHeight + _pxCharHeight;
+        const int dataTopY = _pxColumnNumbersHeight;
 
         // draw some patterns if needed
         painter.fillRect(event->rect(), viewport()->palette().color(QPalette::Base));
+
+        if (_showColumnNumbers)
+        {
+            const int columnStripHeight = _pxColumnNumbersHeight;
+            const int hexStridePx = 3 * _pxCharWidth + kHexColumnExtraGapPx;
+            const int columnStripWidth = (_bytesPerLine > 0)
+                ? ((_bytesPerLine - 1) * hexStridePx + 2 * _pxCharWidth)
+                : 0;
+
+            if (_addressArea)
+                painter.fillRect(QRect(-pxOfsX, 0, _pxPosHexX - _pxGapAdrHex, columnStripHeight), _addressAreaColor);
+
+            if (columnStripWidth > 0)
+                painter.fillRect(QRect(_pxPosHexX - pxOfsX, 0, columnStripWidth, columnStripHeight), _columnNumbersBackgroundColor);
+
+            const QFont savedFont = painter.font();
+            const QPen savedPen = painter.pen();
+            painter.setFont(_columnNumbersFont);
+            painter.setPen(_columnNumbersFontColor);
+            for (int col = 0; col < _bytesPerLine; ++col)
+            {
+                const QRect textRect(_pxPosHexX + col * hexStridePx - pxOfsX,
+                                     0,
+                                     2 * _pxCharWidth,
+                                     columnStripHeight);
+                painter.drawText(textRect, Qt::AlignCenter,
+                                 QString::number(col, 16).toUpper());
+            }
+            painter.setFont(savedFont);
+            painter.setPen(savedPen);
+        }
 
         // Fill hex area with background color
         if (_asciiArea)
         {
             // Stop at the separator line (half-gap before ASCII area)
             const int hexAreaWidth = _pxPosAsciiX - _pxPosHexX - (_pxGapHexAscii / 2);
-            painter.fillRect(QRect(_pxPosHexX - pxOfsX, event->rect().top(), hexAreaWidth, height()), _hexAreaBackgroundColor);
+            painter.fillRect(QRect(_pxPosHexX - pxOfsX, dataTopY, hexAreaWidth, height()), _hexAreaBackgroundColor);
         }
         else
         {
             // No ASCII area: hex background extends to the right edge of the viewport
-            painter.fillRect(QRect(_pxPosHexX - pxOfsX, event->rect().top(), viewport()->width(), height()), _hexAreaBackgroundColor);
+            painter.fillRect(QRect(_pxPosHexX - pxOfsX, dataTopY, viewport()->width(), height()), _hexAreaBackgroundColor);
         }
 
         painter.setPen(viewport()->palette().color(QPalette::WindowText));
@@ -1694,7 +1726,7 @@ void HexEditor::paintEvent(QPaintEvent *event)
         // paint address area
         if (_addressArea)
         {
-            painter.fillRect(QRect(-pxOfsX, event->rect().top(), _pxPosHexX - _pxGapAdrHex, height()), _addressAreaColor);
+            painter.fillRect(QRect(-pxOfsX, dataTopY, _pxPosHexX - _pxGapAdrHex, height()), _addressAreaColor);
 
             {
                 QString address;
@@ -1715,7 +1747,7 @@ void HexEditor::paintEvent(QPaintEvent *event)
                 const quint64 addrMask = (maskBitsCount >= 64) ? ~quint64(0)
                                                                 : ((quint64(1) << maskBitsCount) - 1);
 
-                for (int row = 0, pxPosY = _pxCharHeight; row <= rowsCount; row++, pxPosY += rowStridePx)
+                for (int row = 0, pxPosY = pxPosStartY; row <= rowsCount; row++, pxPosY += rowStridePx)
                 {
                     // Skip empty rows (duplicate line breaks produce rows with same start byte)
                     if (row + 1 < _visualRowStartBytes.size()
@@ -1761,11 +1793,11 @@ void HexEditor::paintEvent(QPaintEvent *event)
         {
             // ASCII area starts flush with the separator line (no gap between hex and ascii backgrounds)
             const int asciiAreaStartX = _pxPosAsciiX - (_pxGapHexAscii / 2);
-            painter.fillRect(QRect(asciiAreaStartX - pxOfsX, event->rect().top(), width(), height()), _asciiAreaColor);
+            painter.fillRect(QRect(asciiAreaStartX - pxOfsX, dataTopY, width(), height()), _asciiAreaColor);
 
             // Draw the separator line on top of the ASCII background
             painter.setPen(Qt::gray);
-            painter.drawLine(asciiAreaStartX - pxOfsX, event->rect().top(), asciiAreaStartX - pxOfsX, height());
+            painter.drawLine(asciiAreaStartX - pxOfsX, dataTopY, asciiAreaStartX - pxOfsX, height());
 
             ensureAsciiAreaWidthCache();
         }
@@ -2754,7 +2786,7 @@ void HexEditor::paintEvent(QPaintEvent *event)
     // Paint continuous graphics tile canvas over ASCII area (after all rows)
     if (_asciiArea) {
         const int rowStridePx = _pxCharHeight + kHexRowExtraGapPx;
-        const int pxPosStartY = _pxCharHeight;
+        const int pxPosStartY = _pxColumnNumbersHeight + _pxCharHeight;
         paintGraphicsArea(painter, pxOfsX, rowStridePx, pxPosStartY);
         paintGraphicsCursor(painter, pxOfsX, rowStridePx, pxPosStartY);
     }
@@ -2765,7 +2797,7 @@ void HexEditor::paintEvent(QPaintEvent *event)
         painter.setPen(QPen(_hexAreaGridColor, 1));
 
         const int rowStridePx = _pxCharHeight + kHexRowExtraGapPx;
-        int pxPosStartY = _pxCharHeight;
+        const int pxPosStartY = _pxColumnNumbersHeight + _pxCharHeight;
         int pxPosEndY = pxPosStartY + (_rowsShown + 1) * rowStridePx;
 
         // Draw vertical grid lines every 4 bytes (between groups)
@@ -2773,7 +2805,7 @@ void HexEditor::paintEvent(QPaintEvent *event)
         for (int col = 4; col < _bytesPerLine; col += 4)
         {
             int pxPosX = _pxPosHexX + col * hexStridePx - ((_pxCharWidth + kHexColumnExtraGapPx) / 2) - pxOfsX;
-            painter.drawLine(pxPosX, pxPosStartY - _pxCharHeight, pxPosX, pxPosEndY);
+            painter.drawLine(pxPosX, _pxColumnNumbersHeight, pxPosX, pxPosEndY);
         }
     }
 
