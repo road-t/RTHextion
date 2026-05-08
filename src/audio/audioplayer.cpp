@@ -36,11 +36,39 @@ AudioPlayer::~AudioPlayer()
     stop();
 }
 
+void AudioPlayer::clearLoadedSample()
+{
+    if (m_audioBuffer.isOpen())
+        m_audioBuffer.close();
+    m_wavData.clear();
+    m_pcmPayload.clear();
+    m_sampleRate = 0;
+    m_sampleCount = 0;
+    m_playbackSampleRate = 0;
+}
+
+bool AudioPlayer::playbackAvailable() const
+{
+#ifdef HAVE_QT_MULTIMEDIA
+    return !QMediaDevices::audioOutputs().isEmpty();
+#else
+    return false;
+#endif
+}
+
 // ─── Load / Build ──────────────────────────────────────────────────
 
 void AudioPlayer::loadSample(const QVector<int16_t> &pcm16, int sampleRate)
 {
     stop();
+    clearLoadedSample();
+
+    if (pcm16.isEmpty() || sampleRate <= 0) {
+        m_lastError = tr("Failed to decode audio sample");
+        return;
+    }
+
+    m_lastError.clear();
     m_sampleRate = sampleRate;
     m_playbackSampleRate = sampleRate;
     m_sampleCount = pcm16.size();
@@ -49,10 +77,16 @@ void AudioPlayer::loadSample(const QVector<int16_t> &pcm16, int sampleRate)
 
 void AudioPlayer::loadFromRaw(const QByteArray &rawData, AudioSampleFormat format)
 {
+    stop();
+    clearLoadedSample();
+
     int rate = 0;
     const auto pcm = AudioDetector::decodeToPCM16(rawData, format, &rate);
-    if (pcm.isEmpty())
+    if (pcm.isEmpty()) {
+        m_lastError = tr("Failed to decode audio sample");
         return;
+    }
+
     loadSample(pcm, rate);
 }
 
@@ -68,23 +102,26 @@ void AudioPlayer::buildWavData(const QVector<int16_t> &pcm16, int sampleRate)
 
 // ─── Playback ──────────────────────────────────────────────────────
 
-void AudioPlayer::play()
+bool AudioPlayer::play()
 {
-    play(0, 1.0);
+    return play(0, 1.0);
 }
 
-void AudioPlayer::play(int sampleRateOverride, double speedMultiplier)
+bool AudioPlayer::play(int sampleRateOverride, double speedMultiplier)
 {
 #ifndef HAVE_QT_MULTIMEDIA
     Q_UNUSED(sampleRateOverride);
     Q_UNUSED(speedMultiplier);
-    return;
+    m_lastError = tr("Audio playback is unavailable in this build");
+    return false;
 #else
     stop();
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
 
-    if (m_pcmPayload.isEmpty() || m_sampleRate <= 0)
-        return;
+    if (m_pcmPayload.isEmpty() || m_sampleRate <= 0) {
+        m_lastError = tr("No audio sample loaded");
+        return false;
+    }
 
     const int baseRate = (sampleRateOverride > 0) ? sampleRateOverride : m_sampleRate;
     const int effectiveRate = qBound(1000, static_cast<int>(baseRate * speedMultiplier), 192000);
@@ -96,8 +133,15 @@ void AudioPlayer::play(int sampleRateOverride, double speedMultiplier)
     fmt.setSampleFormat(QAudioFormat::Int16);
 
     const QAudioDevice defaultDev = QMediaDevices::defaultAudioOutput();
-    if (!defaultDev.isFormatSupported(fmt))
-        return;
+    if (defaultDev.isNull()) {
+        m_lastError = tr("No audio output device is available");
+        return false;
+    }
+    if (!defaultDev.isFormatSupported(fmt)) {
+        m_lastError = tr("Audio output device does not support %1 Hz mono 16-bit PCM")
+                          .arg(effectiveRate);
+        return false;
+    }
 
     m_audioSink.reset(new QAudioSink(defaultDev, fmt, this));
     QAudioSink *sink = m_audioSink.get();
@@ -112,7 +156,9 @@ void AudioPlayer::play(int sampleRateOverride, double speedMultiplier)
     m_audioBuffer.setBuffer(&m_pcmPayload);
     m_audioBuffer.open(QIODevice::ReadOnly);
     sink->start(&m_audioBuffer);
+    m_lastError.clear();
     emit playbackStarted();
+    return true;
 #endif
 }
 

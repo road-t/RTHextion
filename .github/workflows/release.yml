@@ -23,6 +23,7 @@ jobs:
           host: 'mac'
           target: 'desktop'
           arch: 'clang_64'
+          modules: 'qtmultimedia'
           cache: true
 
       - name: Install Capstone (macOS arm64)
@@ -33,6 +34,7 @@ jobs:
         run: |
           mkdir build_ci && cd build_ci
           ${QT_ROOT_DIR}/bin/qmake ../src/rthextion.pro CONFIG+=release QMAKE_APPLE_DEVICE_ARCHS=arm64
+          grep -q "QtMultimedia" Makefile || { echo "Qt Multimedia is not linked into the macOS arm64 build"; exit 1; }
           make -j$(sysctl -n hw.logicalcpu)
 
       - name: Install DMG packager
@@ -101,12 +103,14 @@ jobs:
           host: 'mac'
           target: 'desktop'
           arch: 'clang_64'
+          modules: 'qtmultimedia'
           cache: true
 
       - name: Build
         run: |
           mkdir build_ci && cd build_ci
           ${QT_ROOT_DIR}/bin/qmake ../src/rthextion.pro CONFIG+=release QMAKE_APPLE_DEVICE_ARCHS=x86_64
+          grep -q "QtMultimedia" Makefile || { echo "Qt Multimedia is not linked into the macOS x86_64 build"; exit 1; }
           make -j$(sysctl -n hw.logicalcpu)
 
       - name: Install DMG packager
@@ -173,6 +177,7 @@ jobs:
         with:
           version: '6.8.*'
           arch: 'win64_msvc2022_64'
+          modules: 'qtmultimedia'
           cache: true
 
       - name: Cache libiconv (vcpkg)
@@ -272,6 +277,12 @@ jobs:
             exit /b 1
           )
 
+          findstr /i /c:"QtMultimedia" Makefile >nul
+          if errorlevel 1 (
+            echo ERROR: Generated Makefile does not contain Qt Multimedia linkage
+            exit /b 1
+          )
+
           nmake
 
       - name: Deploy Qt dependencies
@@ -302,6 +313,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             qt6-base-dev qt6-base-dev-tools qt6-tools-dev-tools qt6-l10n-tools \
+            qt6-multimedia-dev \
             clang \
             libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 \
             libfontconfig1-dev libfreetype6-dev libxrender-dev \
@@ -326,6 +338,7 @@ jobs:
           "$QMAKE_BIN" -v
           mkdir build_ci && cd build_ci
           "$QMAKE_BIN" ../src/rthextion.pro CONFIG+=release QMAKE_CC=clang QMAKE_CXX=clang++
+          grep -q "QtMultimedia" Makefile || { echo "Qt Multimedia is not linked into the Linux x86_64 build"; exit 1; }
           set -o pipefail
           make -j$(nproc) 2>&1 | tee build.log
 
@@ -401,6 +414,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             qt6-base-dev qt6-base-dev-tools qt6-tools-dev-tools qt6-l10n-tools \
+            qt6-multimedia-dev \
             clang \
             libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 \
             libfontconfig1-dev libfreetype6-dev libxrender-dev \
@@ -422,6 +436,7 @@ jobs:
 
           mkdir build_ci && cd build_ci
           "$QMAKE_BIN" ../src/rthextion.pro CONFIG+=release QMAKE_CC=clang QMAKE_CXX=clang++
+          grep -q "QtMultimedia" Makefile || { echo "Qt Multimedia is not linked into the Linux arm64 build"; exit 1; }
           make -j$(nproc)
 
       - name: Prepare AppImage resources

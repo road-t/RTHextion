@@ -5,6 +5,7 @@
 #include <QByteArray>
 #include <QVector>
 #include <QBuffer>
+#include <QString>
 #include <memory>
 #include "audiodetector.h"
 
@@ -35,6 +36,8 @@ public:
 
     bool isPlaying() const;
     bool isLoaded() const { return !m_wavData.isEmpty(); }
+    bool playbackAvailable() const;
+    QString lastError() const { return m_lastError; }
 
     /// Duration in milliseconds.
     int durationMs() const;
@@ -61,8 +64,8 @@ public:
     static QByteArray encodeToDPCM(const QVector<int16_t> &pcm16);
 
 public slots:
-    void play();
-    void play(int sampleRateOverride, double speedMultiplier);
+    bool play();
+    bool play(int sampleRateOverride, double speedMultiplier);
     void stop();
 
 signals:
@@ -71,6 +74,7 @@ signals:
 
 private:
     void buildWavData(const QVector<int16_t> &pcm16, int sampleRate);
+    void clearLoadedSample();
 
     std::unique_ptr<QAudioSink, AudioSinkDeleter> m_audioSink;
     QBuffer m_audioBuffer;
@@ -79,6 +83,7 @@ private:
     int m_sampleRate = 0;
     int m_sampleCount = 0;
     int m_playbackSampleRate = 0;
+    QString m_lastError;
 };
 
 #endif // AUDIOPLAYER_H

@@ -27,13 +27,14 @@ jobs:
           host: 'mac'
           target: 'desktop'
           arch: 'clang_64'
+          modules: 'qtmultimedia'
           cache: true
 
       - name: Install Qt 6 (Linux)
         if: runner.os == 'Linux'
         run: |
           python3 -m pip install aqtinstall
-          python3 -m aqt install-qt linux desktop 6.7.3 linux_gcc_64 -O "$HOME/Qt"
+          python3 -m aqt install-qt linux desktop 6.7.3 linux_gcc_64 --modules qtmultimedia -O "$HOME/Qt"
           echo "QT_ROOT_DIR=$HOME/Qt/6.7.3/gcc_64" >> "$GITHUB_ENV"
           echo "$HOME/Qt/6.7.3/gcc_64/bin" >> "$GITHUB_PATH"
 
@@ -47,7 +48,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 \
-            libegl1 libfontconfig1 libcapstone-dev pkg-config
+            libegl1 libfontconfig1 libcapstone-dev pkg-config qt6-multimedia-dev
 
       - name: Run tests
         env:
@@ -71,6 +72,7 @@ jobs:
         with:
           version: '6.8.*'
           arch: 'win64_msvc2022_64'
+          modules: 'qtmultimedia'
           cache: true
 
       - name: Setup vcpkg (C:/vcpkg)
@@ -120,6 +122,12 @@ jobs:
           findstr /i /c:"capstone" Makefile >nul
           if errorlevel 1 (
             echo ERROR: Generated Makefile does not contain capstone linkage
+            exit /b 1
+          )
+
+          findstr /i /c:"QtMultimedia" Makefile >nul
+          if errorlevel 1 (
+            echo ERROR: Generated Makefile does not contain Qt Multimedia linkage
             exit /b 1
           )
 

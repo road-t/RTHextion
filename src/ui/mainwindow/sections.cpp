@@ -2125,6 +2125,8 @@ void MainWindow::playAudioAtCursor()
             updateAudioPlaybackCursor();
             if (m_audioPlaybackCursorTimer)
                 m_audioPlaybackCursorTimer->stop();
+            m_audioPlaybackStartOffset = -1;
+            m_audioPlaybackLength = 0;
             statusBar()->showMessage(tr("Playback stopped"), 2000);
         });
     }
@@ -2137,15 +2139,33 @@ void MainWindow::playAudioAtCursor()
     }
 
     m_audioPlayer->loadFromRaw(sampleData, fmt);
+    if (!m_audioPlayer->isLoaded()) {
+        if (m_audioPlaybackCursorTimer)
+            m_audioPlaybackCursorTimer->stop();
+        m_audioPlaybackStartOffset = -1;
+        m_audioPlaybackLength = 0;
+        statusBar()->showMessage(m_audioPlayer->lastError(), 5000);
+        return;
+    }
+
     int rateOverride = (sec && useSectionAudio) ? sectionAudioSampleRate(*sec, m_detectedRomType) : 0;
     double speed = (sec && useSectionAudio) ? sectionAudioSpeed(*sec) : 1.0;
     if (m_audioDock) {
         rateOverride = m_audioDock->selectedSampleRate();
         speed = m_audioDock->playbackSpeed();
     }
+
+    if (!m_audioPlayer->play(rateOverride, speed)) {
+        if (m_audioPlaybackCursorTimer)
+            m_audioPlaybackCursorTimer->stop();
+        m_audioPlaybackStartOffset = -1;
+        m_audioPlaybackLength = 0;
+        statusBar()->showMessage(m_audioPlayer->lastError(), 5000);
+        return;
+    }
+
     m_audioPlaybackStartOffset = playOffset;
     m_audioPlaybackLength = playLen;
-    m_audioPlayer->play(rateOverride, speed);
     updateAudioPlaybackCursor();
     m_audioPlaybackCursorTimer->start();
 
@@ -2161,6 +2181,8 @@ void MainWindow::stopAudioPlayback()
         m_audioPlaybackCursorTimer->stop();
     if (m_audioPlayer && m_audioPlayer->isPlaying())
         m_audioPlayer->stop();
+    m_audioPlaybackStartOffset = -1;
+    m_audioPlaybackLength = 0;
 }
 
 void MainWindow::updateAudioPlaybackCursor()
