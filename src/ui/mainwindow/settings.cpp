@@ -17,6 +17,7 @@ using namespace MainWindowInternal;
 #include <QDesktopServices>
 #include <QUrl>
 #include <QScrollBar>
+#include <QSignalBlocker>
 #include <QMessageBox>
 #ifdef Q_OS_MAC
 #include "macostheme.h"
@@ -122,7 +123,7 @@ void MainWindow::readSettings()
     hexEdit->setAddressAreaColor(settings.value("AddressAreaColor", palette().alternateBase().color()).value<QColor>());
     hexEdit->setSelectionColor(settings.value("SelectionColor", palette().highlight().color()).value<QColor>());
     hexEdit->setFont(settings.value("WidgetFont", QFont("Courier New", 14)).value<QFont>());
-    hexEdit->setShowColumnNumbers(settings.value("ShowColumnNumbers", true).toBool());
+    hexEdit->setShowColumnNumbers(settings.value("ShowColumnNumbers", false).toBool());
     hexEdit->setColumnNumbersFont(settings.value("ColumnNumbersFont", hexEdit->font()).value<QFont>());
     hexEdit->setAddressFontColor(settings.value("AddressFontColor", palette().color(QPalette::WindowText)).value<QColor>());
     hexEdit->setAddressZeroByteFontColor(settings.value("AddressZeroByteFontColor", QColor(0xCC, 0xCC, 0xCC)).value<QColor>());
@@ -156,9 +157,11 @@ void MainWindow::readSettings()
             sectionHeaderFont.setBold(true);
         hexEdit->setSectionHeaderFont(sectionHeaderFont);
     }
+    applyProjectColumnNumbersState(hexEdit, m_document ? m_document->projectFilePath : QString());
 
     if (showAddressAreaAct)
         showAddressAreaAct->setChecked(hexEdit->addressArea());
+    syncColumnNumbersAction();
     if (showAsciiAreaAct)
         showAsciiAreaAct->setChecked(hexEdit->asciiArea());
     rebuildDefaultViewMenu();
@@ -678,7 +681,7 @@ void MainWindow::updateHexEditorSettings()
         editor->setAddressAreaColor(settings.value("AddressAreaColor").value<QColor>());
         editor->setSelectionColor(settings.value("SelectionColor").value<QColor>());
         editor->setFont(settings.value("WidgetFont").value<QFont>());
-        editor->setShowColumnNumbers(settings.value("ShowColumnNumbers", true).toBool());
+        editor->setShowColumnNumbers(settings.value("ShowColumnNumbers", false).toBool());
         editor->setColumnNumbersFont(settings.value("ColumnNumbersFont", editor->font()).value<QFont>());
         editor->setAddressFontColor(settings.value("AddressFontColor").value<QColor>());
         editor->setAddressZeroByteFontColor(settings.value("AddressZeroByteFontColor", settings.value("AddressFontColor").value<QColor>()).value<QColor>());
@@ -709,6 +712,7 @@ void MainWindow::updateHexEditorSettings()
                 sectionHeaderFont.setBold(true);
             editor->setSectionHeaderFont(sectionHeaderFont);
         }
+        applyProjectColumnNumbersState(editor, session->document ? session->document->projectFilePath : QString());
         editor->setScrollMapChangesBgColor(settings.value("ScrollMapPtrBgColor", QColor(0xd0, 0xd0, 0xd0)).value<QColor>());
         editor->setScrollMapTargetBgColor(settings.value("ScrollMapTargetBgColor", QColor(0xd0, 0xd0, 0xd0)).value<QColor>());
         editor->setScrollMapWidth(settings.value("ScrollMapWidth", 12).toInt());
@@ -722,6 +726,7 @@ void MainWindow::updateHexEditorSettings()
 
     if (showAddressAreaAct && hexEdit)
         showAddressAreaAct->setChecked(hexEdit->addressArea());
+    syncColumnNumbersAction();
     if (showAsciiAreaAct && hexEdit)
         showAsciiAreaAct->setChecked(hexEdit->asciiArea());
     rebuildDefaultViewMenu();
@@ -758,10 +763,6 @@ void MainWindow::writeSettings()
         settings.setValue("AddressAreaWidth", hexEdit->addressWidth());
         settings.setValue("BytesPerLine", hexEdit->bytesPerLine());
         settings.setValue("ScrollMapWidth", hexEdit->scrollMapWidth());
-        settings.setValue("ShowColumnNumbers", hexEdit->showColumnNumbers());
-        settings.setValue("ColumnNumbersFont", hexEdit->columnNumbersFont());
-        settings.setValue("ColumnNumbersFontColor", hexEdit->columnNumbersFontColor());
-        settings.setValue("ColumnNumbersBackgroundColor", hexEdit->columnNumbersBackgroundColor());
     }
 
     // Save all open tabs as a per-tab state array.
@@ -890,6 +891,16 @@ void MainWindow::saveProjectDockVisibilityState() const
     settings.setValue(pfx + QStringLiteral("/dockAudioVisible"), m_audioDock ? m_audioDock->isVisible() : false);
 }
 
+void MainWindow::saveProjectColumnNumbersState() const
+{
+    if (!hexEdit || !m_document || m_document->projectFilePath.isEmpty())
+        return;
+
+    auto &settings = AppSettings::instance();
+    const QString pfx = projectUiSettingsPrefix(m_document->projectFilePath);
+    settings.setValue(pfx + QStringLiteral("/showColumnNumbers"), hexEdit->showColumnNumbers());
+}
+
 void MainWindow::saveProjectDefaultViewState() const
 {
     if (!m_document || m_document->projectFilePath.isEmpty() || !m_currentSession)
@@ -964,6 +975,25 @@ void MainWindow::restoreProjectDefaultViewState(const QString &projectPath, Edit
 
     if (targetSession == m_currentSession)
         applyDefaultViewState(targetSession);
+}
+
+void MainWindow::applyProjectColumnNumbersState(HexEditor *editor, const QString &projectPath) const
+{
+    if (!editor || projectPath.isEmpty())
+        return;
+
+    auto &settings = AppSettings::instance();
+    const QString pfx = projectUiSettingsPrefix(projectPath);
+    editor->setShowColumnNumbers(settings.value(pfx + QStringLiteral("/showColumnNumbers"), false).toBool());
+}
+
+void MainWindow::syncColumnNumbersAction()
+{
+    if (!showColumnNumbersAct || !hexEdit)
+        return;
+
+    const QSignalBlocker blocker(showColumnNumbersAct);
+    showColumnNumbersAct->setChecked(hexEdit->showColumnNumbers());
 }
 
 

@@ -273,6 +273,8 @@ void MainWindow::openProjectFile(const QString &path)
         restoreState(doc.dockLayoutState);
     restoreProjectDockVisibilityState(path);
     restoreProjectDefaultViewState(path, m_currentSession);
+    applyProjectColumnNumbersState(hexEdit, path);
+    syncColumnNumbersAction();
     if (!doc.tablesColumnsState.isEmpty())
         m_tablesDock->restoreColumnsState(doc.tablesColumnsState);
     updateDockAreaActions();
@@ -458,6 +460,7 @@ bool MainWindow::saveProjectImpl(const QString &path)
         auto &settings = AppSettings::instance();
         settings.setValue(QStringLiteral("LastProjectFile"), path);
     }
+    saveProjectColumnNumbersState();
     addToRecentProjects(path);
     m_document->clearDirty();
     updateWindowTitle();

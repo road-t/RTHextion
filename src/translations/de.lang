@@ -553,6 +553,7 @@ Show=Zeigen
 Show changed byte locations on the side map=Geänderte Bytes auf der Seitenkarte anzeigen
 Show changes=Änderungen anzeigen
 Show column numbers=Spaltennummern anzeigen
+Column numbers=Spaltennummern
 Show current (edited) file content=Aktuelle (bearbeitbare) Inhalte anzeigen
 Show grid=Raster anzeigen
 Show multibyte frame=Multibyte-Zeichenrahmen anzeigen

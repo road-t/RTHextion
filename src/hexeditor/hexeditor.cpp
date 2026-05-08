@@ -26,7 +26,7 @@ HexEditor::HexEditor(QWidget *parent) : QAbstractScrollArea(parent), _addressAre
     setAsciiFontColor(QPalette::WindowText);
     setHexAreaBackgroundColor(Qt::white);
     setHexAreaGridColor(QColor(0x99, 0x99, 0x99));
-    setShowColumnNumbers(true);
+    setShowColumnNumbers(false);
     setColumnNumbersFont(this->font());
     setColumnNumbersFontColor(this->palette().color(QPalette::WindowText));
     setColumnNumbersBackgroundColor(this->palette().alternateBase().color());

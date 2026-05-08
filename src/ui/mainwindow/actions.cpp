@@ -301,6 +301,8 @@ void MainWindow::retranslateUi()
         showStatusEncodingAct->setText(tr("Encoding"));
     showSignedValuesAct->setText(tr("Show signed values"));
     showAddressAreaAct->setText(tr("Address area"));
+    if (showColumnNumbersAct)
+        showColumnNumbersAct->setText(tr("Column numbers"));
     if (asciiAreaMenu)
         asciiAreaMenu->setTitle(tr("ASCII area"));
     if (showAsciiAreaAct)
@@ -1196,6 +1198,10 @@ void MainWindow::createActions()
     showAddressAreaAct->setCheckable(true);
     showAddressAreaAct->setChecked(true);
 
+    showColumnNumbersAct = new QAction(tr("Column numbers"), this);
+    showColumnNumbersAct->setCheckable(true);
+    showColumnNumbersAct->setChecked(false);
+
     asciiAreaMenu = new QMenu(tr("ASCII area"), this);
     showAsciiAreaAct = asciiAreaMenu->addAction(tr("Show"));
     showAsciiAreaAct->setCheckable(true);
@@ -1240,6 +1246,17 @@ void MainWindow::createActions()
             { updateValuePanels(); });
     connect(showAddressAreaAct, &QAction::toggled, this, [this](bool checked)
             { hexEdit->setAddressArea(checked); });
+        connect(showColumnNumbersAct, &QAction::toggled, this, [this](bool checked)
+            {
+            if (!hexEdit)
+                return;
+
+            hexEdit->setShowColumnNumbers(checked);
+            hexEdit->viewport()->update();
+
+            if (m_document && !m_document->projectFilePath.isEmpty())
+                saveProjectColumnNumbersState();
+            });
     connect(showAsciiAreaAct, &QAction::toggled, this, [this](bool checked)
             {
                 hexEdit->setAsciiArea(checked);
@@ -1467,6 +1484,7 @@ void MainWindow::createMenus()
 
     panelsMenu = viewMenu->addMenu(tr("Panels"));
     panelsMenu->addAction(showAddressAreaAct);
+    panelsMenu->addAction(showColumnNumbersAct);
     panelsMenu->addMenu(asciiAreaMenu);
     panelsMenu->addSeparator();
     showStatusBarAct = panelsMenu->addAction(tr("Status bar"));

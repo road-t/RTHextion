@@ -357,6 +357,7 @@ void MainWindow::restoreSession(EditorSession *session)
 
     applySelectedTable();
     rebuildDefaultViewMenu();
+    syncColumnNumbersAction();
 
     toggleShowChanges();
 

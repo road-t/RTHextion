@@ -553,6 +553,7 @@ Show=展示
 Show changed byte locations on the side map=在侧图上显示修改的字节
 Show changes=显示更改
 Show column numbers=显示列编号
+Column numbers=列编号
 Show current (edited) file content=显示当前（可编辑）内容
 Show grid=显示网格
 Show multibyte frame=显示多字节字符帧

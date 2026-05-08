@@ -144,7 +144,7 @@ namespace
         if (!settings.contains("SectionHeaderFontColor"))
             settings.setValue("SectionHeaderFontColor", QApplication::palette().color(QPalette::WindowText));
         if (!settings.contains("ShowColumnNumbers"))
-            settings.setValue("ShowColumnNumbers", true);
+            settings.setValue("ShowColumnNumbers", false);
         if (!settings.contains("ColumnNumbersFontColor"))
             settings.setValue("ColumnNumbersFontColor", QApplication::palette().color(QPalette::WindowText));
         if (!settings.contains("ColumnNumbersBackgroundColor"))

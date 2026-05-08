@@ -233,7 +233,7 @@ void OptionsDialog::saveCurrentSettings()
     m_originalSettings.selectionColor = ui->lbSelectionColor->palette().color(ui->lbSelectionColor->backgroundRole());
     m_originalSettings.hexFontColor = ui->lbHexFontColor->palette().color(ui->lbHexFontColor->backgroundRole());
     m_originalSettings.hexAreaBgColor = ui->lbHexAreaBackground->palette().color(ui->lbHexAreaBackground->backgroundRole());
-    m_originalSettings.showColumnNumbers = m_cbShowColumnNumbers ? m_cbShowColumnNumbers->isChecked() : true;
+    m_originalSettings.showColumnNumbers = m_cbShowColumnNumbers ? m_cbShowColumnNumbers->isChecked() : false;
     m_originalSettings.columnNumbersFont = m_pbColumnNumbersFont ? m_pbColumnNumbersFont->font() : ui->pbWidgetFont->font();
     m_originalSettings.columnNumbersFontColor = m_lbColumnNumbersFontColor ? currentSwatchColor(m_lbColumnNumbersFontColor) : palette().color(QPalette::WindowText);
     m_originalSettings.columnNumbersBgColor = m_lbColumnNumbersBgColor ? currentSwatchColor(m_lbColumnNumbersBgColor) : palette().alternateBase().color();
@@ -426,7 +426,7 @@ void OptionsDialog::readSettings()
     setColor(ui->lbHexFontColor, settings.value("HexFontColor", QPalette::WindowText).value<QColor>());
     setColor(ui->lbHexAreaBackground, settings.value("HexAreaBackgroundColor", QColor(Qt::white)).value<QColor>());
     if (m_cbShowColumnNumbers)
-        m_cbShowColumnNumbers->setChecked(settings.value("ShowColumnNumbers", true).toBool());
+        m_cbShowColumnNumbers->setChecked(settings.value("ShowColumnNumbers", false).toBool());
     if (m_pbColumnNumbersFont) {
         const QFont columnNumbersFont = settings.value("ColumnNumbersFont", settings.value("WidgetFont", ui->pbWidgetFont->font()).value<QFont>()).value<QFont>();
         m_pbColumnNumbersFont->setFont(columnNumbersFont);
@@ -518,7 +518,7 @@ void OptionsDialog::writeSettings()
     settings.setValue("AsciiFontColor", ui->lbAsciiFontColor->palette().color(ui->lbAsciiFontColor->backgroundRole()));
     settings.setValue("HexFontColor", ui->lbHexFontColor->palette().color(ui->lbHexFontColor->backgroundRole()));
     settings.setValue("HexAreaBackgroundColor", ui->lbHexAreaBackground->palette().color(ui->lbHexAreaBackground->backgroundRole()));
-    settings.setValue("ShowColumnNumbers", m_cbShowColumnNumbers ? m_cbShowColumnNumbers->isChecked() : true);
+    settings.setValue("ShowColumnNumbers", m_cbShowColumnNumbers ? m_cbShowColumnNumbers->isChecked() : false);
     if (m_pbColumnNumbersFont)
         settings.setValue("ColumnNumbersFont", m_pbColumnNumbersFont->font());
     if (m_lbColumnNumbersFontColor)
@@ -866,7 +866,7 @@ void OptionsDialog::updateAreaControls()
     ui->pbHexAreaGrid->setEnabled(gridEnabled);
     ui->lbHexAreaGrid->setEnabled(gridEnabled);
 
-    const bool columnNumbersEnabled = m_cbShowColumnNumbers ? m_cbShowColumnNumbers->isChecked() : true;
+    const bool columnNumbersEnabled = m_cbShowColumnNumbers ? m_cbShowColumnNumbers->isChecked() : false;
     if (m_pbColumnNumbersFont)
         m_pbColumnNumbersFont->setEnabled(columnNumbersEnabled);
     if (m_pbColumnNumbersFontColor)
@@ -948,7 +948,7 @@ void OptionsDialog::resetToDefaults()
     ui->pbWidgetFont->setFont(defaultFont);
     updateFontButtonText(defaultFont);
     if (m_cbShowColumnNumbers)
-        m_cbShowColumnNumbers->setChecked(true);
+        m_cbShowColumnNumbers->setChecked(false);
     if (m_pbColumnNumbersFont) {
         m_pbColumnNumbersFont->setFont(defaultFont);
         m_pbColumnNumbersFont->setText(

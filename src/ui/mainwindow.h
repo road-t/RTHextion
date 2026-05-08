@@ -199,6 +199,9 @@ private:
     void restoreProjectDockVisibilityState(const QString &projectPath);
     void saveProjectDefaultViewState() const;
     void restoreProjectDefaultViewState(const QString &projectPath, EditorSession *session = nullptr);
+    void saveProjectColumnNumbersState() const;
+    void applyProjectColumnNumbersState(HexEditor *editor, const QString &projectPath) const;
+    void syncColumnNumbersAction();
     void updateRecentFileMenu();
     void updateRecentTableMenu();
     void updateRecentProjectMenu();
@@ -405,6 +408,7 @@ private:
     QAction *showStatusEncodingAct = nullptr;
     QAction *showSignedValuesAct;
     QAction *showAddressAreaAct;
+    QAction *showColumnNumbersAct = nullptr;
     QAction *showAsciiAreaAct = nullptr;
     QMenu   *asciiAreaMenu = nullptr;
     QActionGroup *asciiAreaGroup = nullptr;

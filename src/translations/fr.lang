@@ -553,6 +553,7 @@ Show=Montrer
 Show changed byte locations on the side map=Afficher les octets modifiés sur la carte latérale
 Show changes=Afficher les modifications
 Show column numbers=Afficher les numéros de colonne
+Column numbers=Numéros de colonne
 Show current (edited) file content=Afficher le contenu actuel (modifiable)
 Show grid=Afficher la grille
 Show multibyte frame=Afficher le cadre de caractères multi-octets

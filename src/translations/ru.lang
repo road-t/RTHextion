@@ -553,6 +553,7 @@ Show=Показать
 Show changed byte locations on the side map=Показывать изменённые байты на боковой карте
 Show changes=Показать изменения
 Show column numbers=Показывать номера колонок
+Column numbers=Номера колонок
 Show current (edited) file content=Показать текущее (редактируемое) содержимое
 Show grid=Показать сетку
 Show multibyte frame=Показывать рамку многобайтных символов

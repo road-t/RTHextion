@@ -72,7 +72,7 @@ EditorTheme EditorTheme::defaultLight()
     t.hexAreaBgColor = QColor(Qt::white);
     t.hexFontColor = QColor(Qt::black);
     t.zeroByteFontColor = QColor(0xCC, 0xCC, 0xCC);
-    t.showColumnNumbers = true;
+    t.showColumnNumbers = false;
     t.columnNumbersFont = t.hexFont;
     t.columnNumbersFontColor = QColor(Qt::black);
     t.columnNumbersBackgroundColor = QColor(240, 240, 240);
@@ -115,7 +115,7 @@ EditorTheme EditorTheme::defaultDark()
     t.hexAreaBgColor = QColor(35, 35, 35);
     t.hexFontColor = QColor(0xDD, 0xDD, 0xDD);
     t.zeroByteFontColor = QColor(0x55, 0x55, 0x55);
-    t.showColumnNumbers = true;
+    t.showColumnNumbers = false;
     t.columnNumbersFont = t.hexFont;
     t.columnNumbersFontColor = QColor(0xCC, 0xCC, 0xCC);
     t.columnNumbersBackgroundColor = QColor(45, 45, 45);

@@ -2206,7 +2206,10 @@ void MainWindow::init()
     updateActionStates();
     enforceBottomDockEqualWidth();
 
-    setUnifiedTitleAndToolBarOnMac(true);
+#ifdef Q_OS_MAC
+    // Avoid Qt/AppKit startup layout crashes seen in the packaged macOS build.
+    setUnifiedTitleAndToolBarOnMac(false);
+#endif
 }
 
 // ---------- Session / tab management ----------

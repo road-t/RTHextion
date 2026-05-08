@@ -553,6 +553,7 @@ Show=見せる
 Show changed byte locations on the side map=変更されたバイトをサイドマップに表示
 Show changes=変更を表示
 Show column numbers=列番号を表示
+Column numbers=列番号
 Show current (edited) file content=現在の (編集可能な) コンテンツを表示する
 Show grid=グリッドを表示
 Show multibyte frame=マルチバイト文字フレームを表示
