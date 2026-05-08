@@ -26,11 +26,8 @@
         {
             "label": "Clean Debug Build",
             "type": "shell",
-            "command": "make clean && make -j4",
+            "command": "cd ${workspaceFolder} && rm -rf build_debug && mkdir build_debug && cd build_debug && /usr/local/bin/qmake6 -config debug ../src/rthextion.pro && make -j4",
             "args": [],
-            "options": {
-                "cwd": "${workspaceFolder}/build_debug"
-            },
             "presentation": {
                 "echo": true,
                 "reveal": "always",
